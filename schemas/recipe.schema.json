@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://solin.app/schemas/recipe.json",
+  "title": "Solin Recipe Schema",
+  "description": "Comprehensive JSON Schema for recipe objects in the Solin platform. Every recipe has structured data for ingredients, macros, steps, videos, and rich metadata to support video-first, mobile-first cooking experience.",
+  "type": "object",
+  "required": [
+    "title",
+    "servings",
+    "nutrition",
+    "ingredients",
+    "steps",
+    "video_url"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique recipe identifier (auto-generated)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Cooking, catchy title of the recipe"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Recipe story, origin, personal note, or cooking tips"
+    },
+    "video_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL to the video tutorial hosted on Cloudflare R2"
+    },
+    "transcript_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL to the associated transcript file (VTT/SRT format)"
+    },
+    "creator": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "Original content creator username"
+    },
+    "creator_source": {
+      "type": "string",
+      "format": "uri",
+      "description": "Link to the original TikTok / Instagram / YouTube post"
+    },
+    "servings": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Number of servings this recipe produces"
+    },
+    "prep_time_min": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Preparation time in minutes"
+    },
+    "cook_time_min": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cooking time in minutes"
+    },
+    "total_time_min": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total end-to-end time in minutes"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"],
+      "description": "Difficulty level for planning"
+    },
+    "rating": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "User rating (e.g. 9.9), null when unrated"
+    },
+    "cuisine": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Cuisine classification e.g. 'hungarian', 'italian'"
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true,
+      "maxItems": 20,
+      "description": "Topic tags for search / discovery (e.g. ['highprotein', 'quick'])"
+    },
+    "dietary_info": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "vegan", "vegetarian", "gluten-free", "keto", "paleo",
+          "lactose-free", "nut-free", "low-carb", "high-protein",
+          "dairy-free", "whole30", "pescatarian"
+        ]
+      },
+      "description": "Dietary profile badges"
+    },
+    "nutrition": {
+      "type": "object",
+      "description": "Per-serving nutritional data (all values in grams or mg)",
+      "required": ["calories"],
+      "properties": {
+        "calories": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Calories per serving (kcal)"
+        },
+        "protein": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Protein per serving (g)"
+        },
+        "carbs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total carbohydrates per serving (g)"
+        },
+        "fat": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total fat per serving (g)"
+        },
+        "fiber": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Dietary fiber per serving (g)"
+        },
+        "sugar": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total sugars per serving (g)"
+        },
+        "sodium": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Sodium per serving (mg)"
+        },
+        "cholesterol": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cholesterol per serving (mg)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ingredients": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "amount", "unit"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Ingredient name e.g. 'chicken breast'"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Quantity number"
+          },
+          "unit": {
+            "type": "string",
+            "enum": ["g", "kg", "mg", "ml", "l", "cup", "tbsp", "tsp", "pcs", "slice", "cloves", "pinch", "dash", "to taste", "optional"],
+            "description": "Standardized unit of measure"
+          },
+          "prep": {
+            "type": "string",
+            "description": "Preparation instructions e.g. 'chopped', 'diced', 'thinly sliced'"
+          },
+          "checked": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the user has checked this off while cooking"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Display order for the ingredient list"
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "instruction"],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "description": "Step number (1-based, for display)"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to do in this step"
+          },
+          "video_start": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}\\.\\d{3}$",
+            "description": "Timestamp in video when this step starts (HH:MM.mmm)"
+          },
+          "video_end": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}\\.\\d{3}$",
+            "description": "Timestamp when this step ends (HH:MM.mmm)"
+          },
+          "tips": {
+            "type": "string",
+            "description": "Extra tip, warning, or pro tip for this step"
+          },
+          "temperature": {
+            "type": "string",
+            "description": "Temperature setting for this step e.g. '180C', 'medium heat'"
+          },
+          "image": {
+            "type": "string",
+            "description": "URL to step-by-step photo"
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "images": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "format": "uri"},
+          "caption": {"type": "string"},
+          "alt": {"type": "string"},
+          "order": {"type": "integer"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "published", "archived"],
+      "default": "draft"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

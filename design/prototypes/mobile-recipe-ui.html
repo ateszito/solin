@@ -1,0 +1,501 @@
+<!-- ============================================================ -->
+<!-- Solin — Mobile Recipe UI Prototype v2 (Interactive)           -->
+<!-- Full recipe experience: video player, ingredients, macros,  -->
+<!-- steps with video sync, and ingredient check-off              -->
+<!-- Uses real TikTok video files from ~/Documents/VideoContent/   -->
+<!-- ============================================================ -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Solin — Javítom magam - Chicken & Sausage Pasta</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #FFFFFF;
+  color: #2D2D2D;
+  line-height: 1.5;
+  max-width: 430px;
+  margin: 0 auto;
+  overflow-x: hidden;
+  padding-bottom: 64px;
+}
+:root {
+  --primary: #FF6B6B;
+  --primary-dark: #E55A5A;
+  --secondary: #2D3436;
+  --text-primary: #2D2D2D;
+  --text-secondary: #8E8E93;
+  --bg: #FFFFFF;
+  --card: #F5F5F5;
+  --card-accent: #FFF3E0;
+  --success: #4CAF50;
+  --warning: #FFA726;
+  --border: #E0E0E0;
+}
+/* HEADER */
+.header {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-logo { font-size: 20px; font-weight: 700; color: var(--primary); }
+.header-actions { display: flex; gap: 12px; }
+.header-btn {
+  width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: var(--card); cursor: pointer; font-size: 16px;
+  display: grid; place-items: center;
+}
+/* VIDEO PLAYER */
+.video-container {
+  position: relative; width: 100%; aspect-ratio: 16/9; background: #000; overflow: hidden;
+}
+.video-container video { width: 100%; height: 100%; object-fit: cover; }
+.video-overlay {
+  position: absolute; top: 0; left: 0; right: 0; padding: 12px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 100%);
+  color: white; opacity: 1; transition: opacity 0.3s;
+}
+.video-overlay.hidden { opacity: 0; pointer-events: none; }
+.video-creator { font-size: 12px; font-weight: 600; }
+.video-title { font-size: 14px; font-weight: 600; margin-top: 2px; }
+.video-controls {
+  position: absolute; bottom: 0; left: 0; right: 0; padding: 12px;
+  background: linear-gradient(0deg, rgba(0,0,0,0.5) 0%, transparent 100%);
+}
+.video-progress-wrapper {
+  position: relative; width: 100%; height: 4px;
+  background: rgba(255,255,255,0.3); border-radius: 2px;
+  margin-bottom: 8px; cursor: pointer;
+}
+.video-progress {
+  height: 100%; background: var(--primary); border-radius: 2px; width: 0%;
+  transition: width 0.1s linear;
+}
+.video-controls-row { display: flex; align-items: center; justify-content: space-between; }
+.video-controls-left, .video-controls-right { display: flex; align-items: center; gap: 8px; }
+.video-ctrl-btn {
+  background: none; border: none; color: white; font-size: 18px;
+  cursor: pointer; padding: 4px; opacity: 0.9;
+}
+.video-ctrl-btn:hover { opacity: 1; }
+.video-timestamp { color: white; font-size: 12px; font-weight: 600; }
+/* RECIPE HEADER */
+.recipe-header { padding: 16px; border-bottom: 1px solid var(--border); }
+.recipe-title { font-size: 24px; font-weight: 800; color: var(--secondary); line-height: 1.2; margin-bottom: 8px; }
+.recipe-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.recipe-creator { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-secondary); }
+.recipe-creator-avatar {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--primary);
+  color: white; font-size: 10px; font-weight: 700; display: grid; place-items: center;
+}
+.recipe-rating {
+  display: flex; align-items: center; gap: 4px; font-size: 16px;
+  font-weight: 700; color: var(--warning);
+}
+.recipe-source { font-size: 12px; color: var(--primary); text-decoration: none; }
+/* ACTION BUTTONS */
+.action-buttons { display: flex; gap: 8px; padding: 12px 16px; }
+.action-btn {
+  flex: 1; padding: 12px; border-radius: 12px; font-size: 16px;
+  font-weight: 600; cursor: pointer; transition: all 0.2s; border: none;
+}
+.action-btn.primary { background: var(--primary); color: white; }
+.action-btn.primary:hover { background: var(--primary-dark); }
+.action-btn.secondary { background: var(--card); color: var(--text-primary); }
+.action-btn.secondary:hover { background: var(--border); }
+/* MACRO CARDS */
+.macros-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.macros-section-title {
+  font-size: 14px; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.macros-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.macro-card {
+  background: var(--card-accent); border-radius: 12px; padding: 12px 8px; text-align: center;
+}
+.macro-value { font-size: 28px; font-weight: 800; color: var(--primary); line-height: 1; }
+.macro-card.protein .macro-value { color: #4285f4; }
+.macro-card.carbs .macro-value { color: #4CAF50; }
+.macro-card.fat .macro-value { color: #FFA726; }
+.macro-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; font-weight: 500; }
+/* DESCRIPTION */
+.description-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.description-text { font-size: 16px; line-height: 1.6; color: var(--text-primary); }
+.description-toggle {
+  font-size: 14px; color: var(--primary); background: none; border: none;
+  cursor: pointer; font-weight: 600; margin-top: 8px;
+}
+.hashtag-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.hashtag {
+  background: var(--card-accent); padding: 4px 10px; border-radius: 16px;
+  font-size: 12px; color: var(--primary); font-weight: 600;
+}
+/* ACCORDION */
+.accordion-section { border-bottom: 1px solid var(--border); }
+.accordion-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px; cursor: pointer; user-select: none; background: white;
+  border: none; width: 100%; font-size: 18px; font-weight: 600;
+  color: var(--secondary); text-align: left;
+}
+.accordion-header:hover { background: var(--card); }
+.accordion-chevron { transition: transform 0.3s; font-size: 14px; color: var(--text-secondary); }
+.accordion-header.collapsed .accordion-chevron { transform: rotate(-90deg); }
+.accordion-content {
+  overflow: hidden; transition: max-height 0.3s ease-out; max-height: 1000px;
+}
+.accordion-content.collapsed { max-height: 0; }
+/* PROGRESS */
+.progress-wrapper { padding: 0 16px; margin-bottom: 8px; }
+.progress-bar { width: 100%; height: 6px; background: var(--card); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--success); border-radius: 3px; transition: width 0.3s ease-out; }
+.progress-text { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+/* INGREDIENTS */
+.ingredients-section { padding-bottom: 8px; }
+.ingredient-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; cursor: pointer; transition: background 0.2s;
+}
+.ingredient-item:hover { background: var(--card); }
+.ingredient-item.checked { opacity: 0.5; }
+.ingredient-item.checked .ingredient-name { text-decoration: line-through; }
+.ingredient-left { display: flex; align-items: center; gap: 10px; }
+.ingredient-checkbox {
+  width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--border);
+  display: grid; place-items: center; transition: all 0.2s ease-out;
+  background: white; flex-shrink: 0;
+}
+.ingredient-item.checked .ingredient-checkbox { background: var(--success); border-color: var(--success); }
+.ingredient-item.checked .ingredient-checkbox::after {
+  content: '✓'; color: white; font-size: 14px; font-weight: 700;
+}
+.ingredient-name { font-size: 16px; color: var(--text-primary); }
+.ingredient-amount { font-size: 14px; color: var(--text-secondary); }
+/* STEPS */
+.steps-section { padding-bottom: 8px; }
+.step-item {
+  padding: 16px; border-left: 4px solid transparent; margin-left: 16px;
+  cursor: default; transition: all 0.2s;
+}
+.step-item.active { border-left-color: var(--primary); background: var(--card-accent); }
+.step-left { display: flex; align-items: flex-start; gap: 12px; }
+.step-number {
+  width: 32px; height: 32px; border-radius: 50%; background: var(--card);
+  color: var(--text-secondary); font-size: 16px; font-weight: 700;
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.step-item.active .step-number { background: var(--primary); color: white; }
+.step-content { flex: 1; }
+.step-instruction { font-size: 16px; color: var(--text-primary); margin-bottom: 6px; }
+.step-timestamp { font-size: 12px; color: var(--text-secondary); }
+.step-video-link {
+  font-size: 12px; color: var(--primary); text-decoration: none;
+  font-weight: 600; display: inline-block; margin-top: 4px;
+}
+.step-video-link:hover { text-decoration: underline; }
+.step-tip { font-size: 14px; color: var(--warning); margin-top: 6px; font-style: italic; }
+/* BOTTOM NAV */
+.bottom-nav {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: 430px; background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(10px); border-top: 1px solid var(--border);
+  display: flex; justify-content: space-around; padding: 8px 0; z-index: 100;
+}
+.nav-item {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: none; cursor: pointer; font-size: 10px;
+  color: var(--text-secondary); font-weight: 600; padding: 4px 8px;
+}
+.nav-item.active { color: var(--primary); }
+.nav-icon { font-size: 22px; margin-bottom: -2px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-logo">☆ Solin</div>
+  <div class="header-actions">
+    <button class="header-btn">🔍</button>
+    <button class="header-btn">🔔</button>
+    <button class="header-btn">👤</button>
+  </div>
+</header>
+
+<!-- VIDEO PLAYER -->
+<div class="video-container">
+  <video id="recipeVideo" poster="">
+    <source src="../Documents/VideoContent/video1.mp4" type="video/mp4">
+    Your browser does not support the video tag.
+  </video>
+  <div class="video-overlay" id="videoOverlay">
+    <div class="video-creator">iamvargacsaba</div>
+    <div class="video-title">Javítom magam - Chicken & Sausage Pasta</div>
+  </div>
+  <div class="video-controls">
+    <div class="video-progress-wrapper" id="progressWrapper">
+      <div class="video-progress" id="videoProgress"></div>
+    </div>
+    <div class="video-controls-row">
+      <div class="video-controls-left">
+        <button class="video-ctrl-btn" id="replayBtn">⏪</button>
+        <button class="video-ctrl-btn" id="playPauseBtn">▶️</button>
+        <button class="video-ctrl-btn" id="forwardBtn">⏩</button>
+      </div>
+      <div class="video-timestamp" id="videoTimestamp">0:00 / 1:02</div>
+      <div class="video-controls-right">
+        <button class="video-ctrl-btn" id="volumeBtn">🔊</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECIPE TITLE -->
+<div class="recipe-header">
+  <h1 class="recipe-title">Javítom magam<br>Chicken & Sausage Pasta</h1>
+  <div class="recipe-meta">
+    <span class="recipe-creator">
+      <span class="recipe-creator-avatar">iv</span> iamvargacsaba
+    </span>
+    <span class="recipe-rating">★ 9.9</span>
+    <a class="recipe-source" href="https://vm.tiktok.com/ZN88s6bGY" target="_blank">Source: TikTok →</a>
+  </div>
+</div>
+
+<!-- ACTION BUTTONS -->
+<div class="action-buttons">
+  <button class="action-btn primary" onclick="alert('Recipe saved! ❤️')">❤ Save</button>
+  <button class="action-btn secondary" onclick="alert('Recipe shared! 📤')">📤 Share</button>
+</div>
+
+<!-- MACRO CARDS -->
+<div class="macros-section">
+  <div class="macros-section-title">NUTRITION PER SERVING</div>
+  <div class="macros-row">
+    <div class="macro-card"><div class="macro-value">850</div><div class="macro-label">kcal</div></div>
+    <div class="macro-card protein"><div class="macro-value">45</div><div class="macro-label">protein (g)</div></div>
+    <div class="macro-card carbs"><div class="macro-value">48</div><div class="macro-label">carbs (g)</div></div>
+    <div class="macro-card fat"><div class="macro-value">29</div><div class="macro-label">fat (g)</div></div>
+  </div>
+</div>
+
+<!-- DESCRIPTION -->
+<div class="description-section">
+  <p class="description-text" id="descriptionText">
+    High-protein chicken and sausage pasta dish — a delicious dinner that hits all the macros!
+    This recipe from iamvargacsaba combines tender chicken breast with savory sausage in a rich
+    creamy tomato sauce, served over perfectly cooked pasta with fresh spinach and grated parmesan.
+    <span id="descriptionExtra" style="display:none;">
+      Divided into 5 servings for meal prep friendly portions. Each serving packs 45g of protein
+      to keep you fueled throughout the day. Rating: 9.9/10 from the creator! 🫡
+    </span>
+  </p>
+  <button class="description-toggle" id="descriptionToggle" onclick="toggleDescription()">[▼ Show more]</button>
+  <div class="hashtag-row">
+    <span class="hashtag">#highprotein</span>
+    <span class="hashtag">#quick</span>
+    <span class="hashtag">#dinner</span>
+    <span class="hashtag">#chicken</span>
+    <span class="hashtag">#pasta</span>
+  </div>
+</div>
+
+<!-- INGREDIENTS ACCORDION -->
+<div class="accordion-section ingredients-section">
+  <button class="accordion-header" id="ingredientsHeader" onclick="toggleAccordion('ingredients')">
+    <span>🛒 Ingredients (13)</span>
+    <span class="accordion-chevron">▼</span>
+  </button>
+  <div class="accordion-content" id="ingredientsContent">
+    <div class="progress-wrapper">
+      <div class="progress-bar"><div class="progress-fill" id="ingredientProgress" style="width: 0%"></div></div>
+      <div class="progress-text" id="ingredientProgressText">0 / 13 ingredients checked</div>
+    </div>
+    <div id="ingredientList"></div>
+  </div>
+</div>
+
+<!-- STEPS ACCORDION -->
+<div class="accordion-section steps-section">
+  <button class="accordion-header" id="stepsHeader" onclick="toggleAccordion('steps')">
+    <span>👨‍🍳 Steps (8)</span>
+    <span class="accordion-chevron">▼</span>
+  </button>
+  <div class="accordion-content" id="stepsContent">
+    <div class="progress-wrapper">
+      <div class="progress-bar"><div class="progress-fill" id="stepProgress" style="width: 0%"></div></div>
+      <div class="progress-text" id="stepProgressText">Step 0 / 8</div>
+    </div>
+    <div id="stepList"></div>
+  </div>
+</div>
+
+<!-- BOTTOM NAV -->
+<nav class="bottom-nav">
+  <button class="nav-item active"><span class="nav-icon">🏠</span>Home</button>
+  <button class="nav-item"><span class="nav-icon">🔍</span>Search</button>
+  <button class="nav-item"><span class="nav-icon">❤️</span>Saved</button>
+  <button class="nav-item"><span class="nav-icon">👤</span>Profile</button>
+</nav>
+
+<script>
+const ingredients = [
+  { name: 'Red onion', amount: 200, unit: 'g', prep: 'chopped' },
+  { name: 'Sausage', amount: 50, unit: 'g', prep: 'diced' },
+  { name: 'Chicken breast', amount: 650, unit: 'g', prep: 'diced' },
+  { name: 'Salt (iodized)', amount: 1, unit: 'pinch', prep: '' },
+  { name: 'Chili', amount: 1, unit: 'dash', prep: 'to taste' },
+  { name: 'Smoked paprika', amount: 1, unit: 'tsp', prep: '' },
+  { name: 'Black pepper', amount: 1, unit: 'pinch', prep: 'freshly ground' },
+  { name: 'Garlic', amount: 3, unit: 'cloves', prep: 'minced' },
+  { name: 'Tomato paste', amount: 3, unit: 'tbsp', prep: '' },
+  { name: 'Cream or rice cream', amount: 160, unit: 'g', prep: '' },
+  { name: 'Pasta (cooked)', amount: 240, unit: 'g', prep: '' },
+  { name: 'Spinach', amount: 80, unit: 'g', prep: 'optional' },
+  { name: 'Parmesan', amount: 40, unit: 'g', prep: 'grated' }
+];
+let checkedIngredients = new Set();
+const steps = [
+  { number: 1, instruction: 'Chop 200g red onion and add to bowl, then add 50g diced sausage', start: '00:06.720', end: '00:11.600', temp: 'medium heat' },
+  { number: 2, instruction: 'Dice 650g chicken breast and add to the pan', start: '00:11.800', end: '00:15.600' },
+  { number: 3, instruction: 'Season with iodized salt, chili, smoked paprika, black pepper, and minced garlic', start: '00:20.200', end: '00:25.760' },
+  { number: 4, instruction: 'Once the meat is cooked, add 3 tbsp tomato paste', start: '00:31.840', end: '00:34.960' },
+  { number: 5, instruction: 'Add 160g cream (or rice cream) and a splash of water', start: '00:35.120', end: '00:37.880' },
+  { number: 6, instruction: 'Add 240g cooked pasta to the sauce', start: '00:41.200', end: '00:43.240' },
+  { number: 7, instruction: 'Add 80g spinach (optional but recommended)', start: '00:46.080', end: '00:48.960' },
+  { number: 8, instruction: 'Top with 40g grated parmesan and serve', start: '00:49.000', end: '00:51.200', tips: 'Best served fresh and hot!' }
+];
+
+function renderIngredients() {
+  const list = document.getElementById('ingredientList');
+  list.innerHTML = '';
+  ingredients.forEach((ing, i) => {
+    const item = document.createElement('div');
+    item.className = 'ingredient-item' + (checkedIngredients.has(i) ? ' checked' : '');
+    item.onclick = () => toggleIngredient(i);
+    item.innerHTML = '<div class="ingredient-left">' +
+      '<div class="ingredient-checkbox"></div><div>' +
+      '<div class="ingredient-name">' + ing.name + '</div>' +
+      '<div class="ingredient-amount">' + ing.amount + ' ' + ing.unit + (ing.prep ? ' — ' + ing.prep : '') + '</div></div></div>';
+    list.appendChild(item);
+  });
+}
+
+function toggleIngredient(i) {
+  checkedIngredients.has(i) ? checkedIngredients.delete(i) : checkedIngredients.add(i);
+  const pct = (checkedIngredients.size / ingredients.length) * 100;
+  document.getElementById('ingredientProgress').style.width = pct + '%';
+  document.getElementById('ingredientProgressText').textContent = checkedIngredients.size + ' / ' + ingredients.length + ' ingredients checked';
+  renderIngredients();
+}
+
+function renderSteps() {
+  const list = document.getElementById('stepList');
+  list.innerHTML = '';
+  steps.forEach((step) => {
+    const item = document.createElement('div');
+    item.className = 'step-item';
+    item.id = 'step-' + step.number;
+    item.innerHTML = '<div class="step-left"><div class="step-number">' + step.number + '</div>' +
+      '<div class="step-content"><div class="step-instruction">' + step.instruction + '</div>' +
+      '<div class="step-timestamp">📺 ' + step.start + ' — ' + step.end + '</div>' +
+      (step.temp ? '<div class="step-timestamp">🌡 ' + step.temp + '</div>' : '') +
+      (step.tips ? '<div class="step-tip">💡 ' + step.tips + '</div>' : '') +
+      '<button class="step-video-link" onclick="jumpToStep(\'' + step.start + '\')">▶ Jump to video</button></div></div>';
+    list.appendChild(item);
+  });
+  updateStepProgress(0);
+}
+
+function updateStepProgress(sn) {
+  const pct = (sn / steps.length) * 100;
+  document.getElementById('stepProgress').style.width = pct + '%';
+  document.getElementById('stepProgressText').textContent = 'Step ' + sn + ' / ' + steps.length;
+  document.querySelectorAll('.step-item').forEach(function(el) { el.classList.remove('active'); });
+  if (sn > 0 && sn <= steps.length) { document.getElementById('step-' + sn).classList.add('active'); }
+}
+
+function parseTimestamp(ts) {
+  var parts = ts.split(':'); var secParts = parts[1].split('.');
+  return parseInt(parts[0]) * 60 + parseInt(secParts[0]) + parseInt(secParts[1]) / 1000;
+}
+
+function jumpToStep(ts) {
+  var video = document.getElementById('recipeVideo');
+  var secs = parseTimestamp(ts); video.currentTime = secs; video.play();
+  updateStepProgress(0);
+  for (var i = 0; i < steps.length; i++) {
+    var s = parseTimestamp(steps[i].start), e = parseTimestamp(steps[i].end);
+    if (secs >= s - 0.5 && secs <= e + 0.5) { updateStepProgress(i + 1); break; }
+  }
+}
+
+function formatTime(s) {
+  var m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+document.getElementById('descriptionToggle').onclick = function() {
+  var extra = document.getElementById('descriptionExtra');
+  var toggle = document.getElementById('descriptionToggle');
+  if (extra.style.display === 'none') { extra.style.display = 'inline'; toggle.textContent = '[▲ Show less]'; }
+  else { extra.style.display = 'none'; toggle.textContent = '[▼ Show more]'; }
+};
+
+function toggleAccordion(name) {
+  var header = document.getElementById(name + 'Header');
+  var content = document.getElementById(name + 'Content');
+  header.classList.toggle('collapsed');
+  content.classList.toggle('collapsed');
+}
+
+var video = document.getElementById('recipeVideo');
+var playBtn = document.getElementById('playPauseBtn');
+var progress = document.getElementById('videoProgress');
+var overlay = document.getElementById('videoOverlay');
+
+playBtn.onclick = function() {
+  if (video.paused) { video.play(); playBtn.textContent = '⏸'; }
+  else { video.pause(); playBtn.textContent = '▶️'; }
+};
+document.getElementById('forwardBtn').onclick = function() { video.currentTime = Math.min(video.currentTime + 15, video.duration); };
+document.getElementById('replayBtn').onclick = function() { video.currentTime = 0; video.play(); playBtn.textContent = '⏸'; updateStepProgress(0); };
+
+video.ontimeupdate = function() {
+  var pct = (video.currentTime / video.duration) * 100;
+  progress.style.width = pct + '%';
+  var cur = formatTime(video.currentTime), dur = formatTime(video.duration || 0);
+  document.getElementById('videoTimestamp').textContent = cur + ' / ' + dur;
+  var curSec = video.currentTime, stepIdx = 0;
+  for (var i = 0; i < steps.length; i++) {
+    if (curSec >= parseTimestamp(steps[i].start) && curSec < parseTimestamp(steps[i].end)) { stepIdx = i + 1; break; }
+  }
+  if (curSec > 0 && stepIdx === 0) { var lastStart = parseTimestamp(steps[7].start); if (curSec >= lastStart) stepIdx = 8; }
+  if (curSec === 0) stepIdx = 0;
+  updateStepProgress(stepIdx);
+};
+
+video.onloadeddata = function() {
+  var dur = video.duration;
+  document.getElementById('videoTimestamp').textContent = '0:00 / ' + formatTime(dur);
+};
+
+video.onmouseenter = function() { overlay.classList.add('hidden'); };
+video.onmouseleave = function() { overlay.classList.remove('hidden'); };
+
+renderIngredients();
+renderSteps();
+</script>
+</body>
+</html>

@@ -1,0 +1,403 @@
+/* ============================================================
+ * Solin — VideoPlayer.css
+ * Styles for the Solin VideoPlayer React component.
+ * Mobile-first, responsive up to desktop. All values use the
+ * Solin design system color palette and spacing scale.
+ * ============================================================ */
+
+/* === CSS CUSTOM PROPERTIES (Solin Design System) === */
+.solin-video-player {
+  --solin-primary: #FF6B6B;
+  --solin-primary-dark: #E55A5A;
+  --solin-secondary: #2D3436;
+  --solin-text-primary: #2D2D2D;
+  --solin-text-secondary: #8E8E93;
+  --solin-bg: #FFFFFF;
+  --solin-card: #F5F5F5;
+  --solin-card-accent: #FFF3E0;
+  --solin-success: #4CAF50;
+  --solin-warning: #FFA726;
+  --solin-border: #E0E0E0;
+  --solin-macro-color: var(--solin-primary);
+}
+
+/* === VIDEO PLAYER === */
+.solin-video-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: #000;
+  overflow: hidden;
+  cursor: pointer;
+}
+.solin-video-wrapper video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.solin-video-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.5) 0%, transparent 100%);
+  color: white;
+  transition: opacity 0.3s ease;
+  opacity: 1;
+  pointer-events: none;
+}
+.solin-video-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.solin-video-creator {
+  font-size: 12px;
+  font-weight: 600;
+}
+.solin-video-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.solin-video-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.5) 0%, transparent 100%);
+  transition: opacity 0.3s ease;
+}
+.solin-video-controls.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.solin-video-progress-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.solin-video-progress-fill {
+  height: 100%;
+  background: var(--solin-primary);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+.solin-video-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.solin-video-controls-left,
+.solin-video-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.solin-video-ctrl-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  opacity: 0.9;
+  transition: opacity 0.2s ease;
+}
+.solin-video-ctrl-btn:hover {
+  opacity: 1;
+}
+.solin-video-timestamp {
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* === RECIPE HEADER === */
+.solin-recipe-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--solin-border);
+}
+.solin-recipe-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--solin-secondary);
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+.solin-recipe-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--solin-text-secondary);
+}
+.solin-recipe-creator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* === MACRO CARDS === */
+.solin-macros-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--solin-border);
+}
+.solin-macros-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--solin-text-secondary);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.solin-macros-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.solin-macro-card {
+  background: var(--solin-card-accent);
+  border-radius: 8px;
+  padding: 8px;
+  text-align: center;
+}
+.solin-macro-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--solin-macro-color);
+  line-height: 1;
+}
+.solin-macro-card.solin-protein .solin-macro-value {
+  color: #4285f4;
+}
+.solin-macro-card.solin-carbs .solin-macro-value {
+  color: var(--solin-success);
+}
+.solin-macro-card.solin-fat .solin-macro-value {
+  color: var(--solin-warning);
+}
+.solin-macro-label {
+  font-size: 11px;
+  color: var(--solin-text-secondary);
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+/* === ACCORDION === */
+.solin-accordion {
+  border-bottom: 1px solid var(--solin-border);
+}
+.solin-accordion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  background: white;
+  border: none;
+  width: 100%;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--solin-secondary);
+  text-align: left;
+  transition: background 0.2s ease;
+}
+.solin-accordion-header:hover {
+  background: var(--solin-card);
+}
+.solin-accordion-chevron {
+  transition: transform 0.3s ease;
+  font-size: 14px;
+  color: var(--solin-text-secondary);
+}
+.solin-accordion-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+  max-height: 500px;
+}
+.solin-accordion-content.collapsed {
+  max-height: 0;
+  border-bottom: none;
+}
+
+/* === PROGRESS === */
+.solin-progress-wrapper {
+  padding: 0 16px 4px;
+}
+.solin-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--solin-card);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.solin-progress-fill {
+  height: 100%;
+  background: var(--solin-success);
+  border-radius: 3px;
+  transition: width 0.3s ease-out;
+}
+.solin-progress-text {
+  font-size: 12px;
+  color: var(--solin-text-secondary);
+  margin-top: 2px;
+}
+
+/* === INGREDIENTS === */
+.solin-ingredient-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.solin-ingredient-item:hover {
+  background: var(--solin-card);
+}
+.solin-ingredient-item.checked {
+  opacity: 0.5;
+}
+.solin-ingredient-item.checked .solin-ingredient-name {
+  text-decoration: line-through;
+}
+.solin-ingredient-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.solin-ingredient-checkbox {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--solin-border);
+  display: grid;
+  place-items: center;
+  transition: all 0.2s ease-out;
+  background: white;
+  flex-shrink: 0;
+}
+.solin-ingredient-item.checked .solin-ingredient-checkbox {
+  background: var(--solin-success);
+  border-color: var(--solin-success);
+}
+.solin-ingredient-item.checked .solin-ingredient-checkbox::after {
+  content: '\\2713';
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+}
+.solin-ingredient-name {
+  font-size: 16px;
+  color: var(--solin-text-primary);
+}
+.solin-ingredient-amount {
+  font-size: 13px;
+  color: var(--solin-text-secondary);
+}
+
+/* === STEPS === */
+.solin-step-item {
+  padding: 12px 16px;
+  border-left: 3px solid transparent;
+  margin-left: 16px;
+  transition: all 0.2s ease;
+}
+.solin-step-item.active {
+  border-left-color: var(--solin-primary);
+  background: var(--solin-card-accent);
+}
+.solin-step-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.solin-step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--solin-card);
+  color: var(--solin-text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.solin-step-item.active .solin-step-number {
+  background: var(--solin-primary);
+  color: white;
+}
+.solin-step-content {
+  flex: 1;
+}
+.solin-step-instruction {
+  font-size: 15px;
+  color: var(--solin-text-primary);
+  margin-bottom: 4px;
+}
+.solin-step-timestamp {
+  font-size: 11px;
+  color: var(--solin-text-secondary);
+}
+.solin-step-tip {
+  font-size: 13px;
+  color: var(--solin-warning);
+  margin-top: 4px;
+  font-style: italic;
+}
+.solin-step-video-link {
+  font-size: 12px;
+  color: var(--solin-primary);
+  text-decoration: none;
+  font-weight: 600;
+  display: inline-block;
+  margin-top: 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.solin-step-video-link:hover {
+  text-decoration: underline;
+}
+
+/* === RESPONSIVE: TABLET (≥768px) === */
+@media (min-width: 768px) {
+  .solin-video-player {
+    max-width: 768px;
+    margin: 0 auto;
+  }
+  .solin-macros-grid {
+    gap: 12px;
+  }
+}
+
+/* === RESPONSIVE: DESKTOP (≥1024px) === */
+@media (min-width: 1024px) {
+  .solin-video-player {
+    max-width: 1024px;
+  }
+}
+
+/* === DARK MODE SUPPORT === */
+@media (prefers-color-scheme: dark) {
+  .solin-video-player {
+    --solin-bg: #1A1A1A;
+    --solin-text-primary: #E0E0E0;
+    --solin-text-secondary: #9E9E9E;
+    --solin-card: #2A2A2A;
+    --solin-border: #3A3A3A;
+    --solin-card-accent: #3A2A20;
+  }
+  .solin-recipe-header,
+  .solin-accordion-header {
+    background: var(--solin-bg);
+  }
+}
