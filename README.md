@@ -91,6 +91,19 @@ open design/prototypes/mobile-recipe-ui.html
 - Auth: Clerk / Supabase Auth
 - Deploy: Fly.io (API) + Vercel (Web)
 
+## Cloudflare (domain creation)
+
+Cloudflare integration is **enabled**. The credentials are stored in
+`.env` (root, gitignored) — do not hardcode them in source. Reference
+these env vars from any code/script that talks to the Cloudflare API:
+
+- `CLOUDFLARE_API_TOKEN` — verified active (2026-08-26 via
+  `/client/v4/user/tokens/verify`)
+- `CLOUDFLARE_ACCOUNT_ID` — account `8c4c2d3d…`
+- `CLOUDFLARE_ZONE_ID` — zone `ateszito.com`
+
+For the full production template (R2, Redis), see `docs/ENVIRONMENTS.md`.
+
 ## Design System
 
 - Primary: #FF6B6B
