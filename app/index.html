@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#FF6B6B" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Solin — Recipe Platform</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="app-header">
+  <div class="header-left">
+    <span class="logo">S</span>
+    <h1>Solin</h1>
+    <span class="version">v3</span>
+  </div>
+  <div class="header-right">
+    <span id="recipe-count" class="pill">0 recipes</span>
+  </div>
+</header>
+
+<main id="app" class="app-main">
+  <!-- ================= BROWSE ================= -->
+  <section class="view" id="view-browse">
+    <div class="toolbar">
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search recipes, ingredients, tags…" autocomplete="off" />
+      </div>
+      <div class="tagbar" id="tagbar"></div>
+    </div>
+    <div class="recipe-grid" id="recipe-grid"></div>
+    <p id="browse-empty" class="empty hidden">No recipes match your search.</p>
+  </section>
+
+  <!-- ================= RECIPE DETAIL ================= -->
+  <section class="view hidden" id="view-recipe">
+    <button class="back-btn" id="back-btn">← Back to recipes</button>
+    <article class="recipe-detail" id="recipe-detail"></article>
+  </section>
+
+  <!-- ================= EDIT ================= -->
+  <section class="view hidden" id="view-edit">
+    <button class="back-btn" id="edit-back">← Back to recipe</button>
+    <h2 class="view-title">Edit recipe</h2>
+    <p class="hint">Your corrections are saved on this device (localStorage) and layered on top of the original recipe. Resetting restores the original data.</p>
+    <form id="edit-form" class="card edit-form"></form>
+    <div class="edit-actions">
+      <button id="edit-save" class="btn primary">Save changes</button>
+      <button id="edit-reset" class="btn ghost">Reset to original</button>
+    </div>
+  </section>
+
+  <!-- ================= INVENTORY ================= -->
+  <section class="view hidden" id="view-inventory">
+    <h2 class="view-title">Ingredient inventory</h2>
+    <p class="hint">Your permanent pantry: base ingredients and their known substitutes. Add anything from your recipes, and Solin will use this list for matching and substitutions.</p>
+
+    <div class="card inventory-add">
+      <h3>Add a base ingredient</h3>
+      <div class="inline-form">
+        <input id="inv-name" type="text" placeholder="e.g. onion" />
+        <input id="inv-qty" type="text" placeholder="qty (optional)" />
+        <input id="inv-unit" type="text" placeholder="unit" />
+        <button id="inv-add" class="btn primary">Add</button>
+      </div>
+      <h4 class="muted" style="margin-top:14px">Add a substitute (alternative ingredient)</h4>
+      <div class="inline-form">
+        <select id="sub-for" class="grow"></select>
+        <input id="sub-name" type="text" placeholder="alternative name" />
+        <button id="sub-add" class="btn">Add</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Your inventory <span id="inv-count" class="pill"></span></h3>
+      <ul id="inv-list" class="inv-list"></ul>
+    </div>
+    <p class="hint">Substitutes are checked as partial matches (lower credit) when Solin recommends what to cook.</p>
+  </section>
+
+  <!-- ================= MATCH ================= -->
+  <section class="view hidden" id="view-match">
+    <h2 class="view-title">What can I cook?</h2>
+    <p class="hint">Add what you have at home right now. Solin matches it against every recipe — direct hits count full, a known substitute counts partial. If only a few items are missing, it tells you exactly what to grab.</p>
+
+    <div class="card match-panel">
+      <h3>What I have at home <span id="match-count" class="pill"></span></h3>
+      <div class="chip-input" id="chip-input">
+        <input id="match-item" type="text" placeholder="type an ingredient + Enter (e.g. chicken breast)" />
+      </div>
+      <div class="chip-presets" id="chip-presets">
+        <span class="presets-label">Quick add:</span>
+      </div>
+      <div class="match-actions">
+        <button id="match-clear" class="btn ghost sm">Clear all</button>
+        <button id="match-run" class="btn primary">Match recipes now</button>
+      </div>
+    </div>
+
+    <div id="match-results"></div>
+  </section>
+</main>
+
+<nav class="bottom-nav" id="bottom-nav">
+  <button data-nav="browse" class="active"><span class="nav-ic">▤</span><span>Browse</span></button>
+  <button data-nav="inventory"><span class="nav-ic">▣</span><span>Inventory</span></button>
+  <button data-nav="match"><span class="nav-ic">◎</span><span>What&nbsp;I&nbsp;have</span></button>
+</nav>
+
+<div id="toast" class="toast hidden"></div>
+<script src="data.js"></script>
+<script src="state.js"></script>
+<script src="core.js"></script>
+<script src="browse.js"></script>
+<script src="detail.js"></script>
+<script src="edit.js"></script>
+<script src="inventory.js"></script>
+<script src="match.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
