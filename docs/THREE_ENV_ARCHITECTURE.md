@@ -437,7 +437,7 @@ If any of A1–A12 fails, the tester blocks back to the owning slice with the it
 
 | Slice (task) | Implements from this doc |
 |--------------|--------------------------|
-| **git + CI/CD** (t_58e056e5) | D1, D2, D5, D10, D11; §2, §5, §7, §8, §9-steps-1; `.github/workflows/ci.yml`; branch protection; `CHANGELOG.md` |
+| **git + CI/CD** (t_99bf9f02) | D1, D2, D5, D10, D11; §2, §5, §7, §8, §9-steps-1; `.github/workflows/ci.yml`; branch protection; `CHANGELOG.md` |
 | **env-aware app** (t_3b487364) | D3, D7, D12; §3 (contract), §4.2 (compose), §7.2 (test hooks); `.env.example`, read `SOLIN_ENV`/`APP_VERSION`, UI badge; `schemas/` per-env seeds; `backend/app/config.py` reads Tier B vars |
 | **DNS + containers** (t_8e54481c) | D4, D6, D8; §1, §4.1, §4.3, §9; tunnel ingress; CNAME records; volumes; retire old `solin-staging` container; `expose_local.sh` re-use |
 
