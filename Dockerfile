@@ -6,8 +6,8 @@
 # NOTE on VideoContent: in the repo, app/VideoContent is a git SYMLINK to
 # ~/Documents/VideoContent (outside the repo). `docker COPY` does NOT follow
 # cross-context symlinks, so the mp4s are missing unless materialized. The
-# build MUST be run from a context where app/VideoContent holds real files
-# (this repo has a script: `make web-root`, or copy manually before build).
+# the build MUST be run from a context where app/VideoContent holds real files
+# (copy app/ + the VideoContent folder into a build dir, replacing the symlink).
 # Baking into the image (vs. a runtime bind mount) is required because a
 # bind mount from TCC-protected ~/Documents stalls gvisor container start.
 FROM nginx:alpine
