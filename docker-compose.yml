@@ -1,0 +1,16 @@
+# Solin staging — nginx serving the staging-branch checkout on :8080.
+# Used by: solin.ateszito.com (Cloudflare tunnel -> localhost:8080)
+#
+# The videos (VideoContent/*.mp4) are BAKED INTO the image (COPY app/).
+# In the repo, app/VideoContent is a git symlink to ~/Documents/VideoContent
+# (outside repo) and docker COPY won't follow it, so build from a context that
+# materializes it (see Dockerfile header). A runtime bind mount from the
+# TCC-protected ~/Documents path is avoided because it stalls gvisor container
+# start on this Docker Desktop / gvisor setup.
+services:
+  solin-staging:
+    image: solin-staging:latest
+    container_name: solin-staging
+    ports:
+      - "8080:80"
+    restart: unless-stopped
