@@ -45,3 +45,6 @@ Thumbs.db
 
 # DB dumps
 *.sql.gz
+
+# CI/CD state (logs, last-seen markers, snapshots)
+/.cicd/
