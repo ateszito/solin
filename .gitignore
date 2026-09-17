@@ -1,9 +1,12 @@
 Solin — Recipe Platform
 
-# Environment files
+# Environment files — per-tier files (.env.development / .env.staging /
+# .env.production) ARE committed and are the single source of truth for
+# each env's configuration (blueprint sec 3.2, 3.3). Only the local
+# secrets file and ad-hoc overrides stay out of git.
 .env
 .env.local
-.env.production
+.env.*.local
 
 # Python
 __pycache__
@@ -36,11 +39,12 @@ npm-debug.log*
 
 # Sensitive
 secrets/
-*.env
 
 # OS
 Thumbs.db
-.DS_Store
 
 # DB dumps
 *.sql.gz
+
+# CI/CD state (logs, last-seen markers, snapshots)
+/.cicd/

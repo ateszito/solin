@@ -1,16 +1,123 @@
-# Solin staging — nginx serving the staging-branch checkout on :8080.
-# Used by: solin.ateszito.com (Cloudflare tunnel -> localhost:8080)
+# Solin — 3-environment canonical compose file
+# (THREE_ENV_ARCHITECTURE.md §4.2, blueprint D5/D6/D7/D8)
 #
-# The videos (VideoContent/*.mp4) are BAKED INTO the image (COPY app/).
-# In the repo, app/VideoContent is a git symlink to ~/Documents/VideoContent
-# (outside repo) and docker COPY won't follow it, so build from a context that
-# materializes it (see Dockerfile header). A runtime bind mount from the
-# TCC-protected ~/Documents path is avoided because it stalls gvisor container
-# start on this Docker Desktop / gvisor setup.
+# Topology: three isolated stacks (web + db each) on a shared user network
+# solin_net. Per-env named volumes for Postgres so data SURVIVES rebuild
+# (deploy = `docker compose up -d --force-recreate`, never `down -v`).
+#
+# Ports (blueprint D1):  prod 8080 · staging 8081 · dev 8082
+# Edge: Cloudflare tunnel mac-studio-tunnel routes each subdomain to its
+# local port (see §4.3).
+#
+# Images are BUILT per-branch and tagged solin:{env} (CI passes the tag).
+# APP_VERSION / DB passwords are injected at deploy time via the local .env
+# (gitignored) or the self-hosted runner's env — never committed.
+name: solin
+
+networks:
+  solin_net:
+    name: solin_net
+
+volumes:
+  vol_solin_dev_pg:
+  vol_solin_staging_pg:
+  vol_solin_prod_pg:
+
+x-web: &web-base
+  networks: [solin_net]
+  restart: unless-stopped
+
 services:
-  solin-staging:
-    image: solin-staging:latest
-    container_name: solin-staging
-    ports:
-      - "8080:80"
+  # ---- PRODUCTION  (main branch → solin.ateszito.com :8080) ----
+  solin-prod-web:
+    <<: *web-base
+    image: solin:prod
+    container_name: solin-prod-web
+    ports: ["8080:80"]
+    environment:
+      SOLIN_ENV: production
+      APP_VERSION: ${PROD_APP_VERSION:-v0.1.0+placeholder}
+      API_BASE_URL: https://solin.ateszito.com
+      PUBLIC_BASE_URL: https://solin.ateszito.com
+      CORS_ORIGINS: https://solin.ateszito.com
+      FEATURE_ALLOW_EDIT: "true"
+      FEATURE_INVISIBILITY: "true"
+      DEBUG: "false"
+  solin-prod-db:
+    image: postgres:16
+    container_name: solin-prod-db
+    environment:
+      POSTGRES_DB: solin_prod
+      POSTGRES_USER: solin
+      POSTGRES_PASSWORD: ${PROD_DB_PASSWORD:-solin}
+    volumes:
+      - vol_solin_prod_pg:/var/lib/postgresql/data
+      # schema + seeds — Postgres initdb runs these ALPHABETICALLY on
+      # FIRST boot of the named volume only (blueprint sec 9-step-6):
+      - ./schemas/database.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./seed/common_seed.sql:/docker-entrypoint-initdb.d/02_common_seed.sql:ro
+      - ./seed/production_seed.sql:/docker-entrypoint-initdb.d/03_production_seed.sql:ro
+    networks: [solin_net]
+    restart: unless-stopped
+
+  # ---- STAGING  (staging branch → solin-staging.ateszito.com :8081) ----
+  solin-staging-web:
+    <<: *web-base
+    image: solin:staging
+    container_name: solin-staging-web
+    ports: ["8081:80"]
+    environment:
+      SOLIN_ENV: staging
+      APP_VERSION: ${STAGING_APP_VERSION:-v0.1.0-rc1+placeholder}
+      API_BASE_URL: https://solin-staging.ateszito.com
+      PUBLIC_BASE_URL: https://solin-staging.ateszito.com
+      CORS_ORIGINS: https://solin-staging.ateszito.com
+      FEATURE_ALLOW_EDIT: "true"
+      FEATURE_INVISIBILITY: "true"
+      DEBUG: "false"
+  solin-staging-db:
+    image: postgres:16
+    container_name: solin-staging-db
+    environment:
+      POSTGRES_DB: solin_staging
+      POSTGRES_USER: solin
+      POSTGRES_PASSWORD: ${STAGING_DB_PASSWORD:-solin}
+    volumes:
+      - vol_solin_staging_pg:/var/lib/postgresql/data
+      # schema + seeds — runs on FIRST boot of the named volume only (sec 9-step-6)
+      - ./schemas/database.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./seed/common_seed.sql:/docker-entrypoint-initdb.d/02_common_seed.sql:ro
+      - ./seed/staging_seed.sql:/docker-entrypoint-initdb.d/03_staging_seed.sql:ro
+    networks: [solin_net]
+    restart: unless-stopped
+
+  # ---- DEVELOPMENT  (feature/* → solin-dev.ateszito.com :8082) ----
+  solin-dev-web:
+    <<: *web-base
+    image: solin:dev
+    container_name: solin-dev-web
+    ports: ["8082:80"]
+    environment:
+      SOLIN_ENV: development
+      APP_VERSION: ${DEV_APP_VERSION:-v0.1.0-dev+placeholder}
+      API_BASE_URL: https://solin-dev.ateszito.com
+      PUBLIC_BASE_URL: https://solin-dev.ateszito.com
+      CORS_ORIGINS: https://solin-dev.ateszito.com
+      FEATURE_ALLOW_EDIT: "true"
+      FEATURE_INVISIBILITY: "true"
+      DEBUG: "true"
+  solin-dev-db:
+    image: postgres:16
+    container_name: solin-dev-db
+    environment:
+      POSTGRES_DB: solin_dev
+      POSTGRES_USER: solin
+      POSTGRES_PASSWORD: ${DEV_DB_PASSWORD:-solin}
+    volumes:
+      - vol_solin_dev_pg:/var/lib/postgresql/data
+      # schema + seeds — runs on FIRST boot of the named volume only (sec 9-step-6)
+      - ./schemas/database.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./seed/common_seed.sql:/docker-entrypoint-initdb.d/02_common_seed.sql:ro
+      - ./seed/development_seed.sql:/docker-entrypoint-initdb.d/03_development_seed.sql:ro
+    networks: [solin_net]
     restart: unless-stopped

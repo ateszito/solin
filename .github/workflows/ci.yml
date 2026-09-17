@@ -1,0 +1,54 @@
+# Solin CI/CD — GitHub Actions pipeline (primary path per blueprint sec 7)
+#
+# NOTE (as of Sep 2026): this repo's token has Contents rw but no
+# Administration scope, so a self-hosted runner cannot be REGISTERED with it
+# yet. To activate this workflow:
+#   1. push this file to the repo,
+#   2. register a runner (needs Administration scope / `gh auth login`):
+#       https://github.com/ateszito/solin/settings/actions/runners
+#      The Mac already runs Docker, so the runner executes jobs locally.
+#   3. the workflow then activates on the next push.
+# Until then the EQUIVALENT pipeline runs locally:
+#   scripts/ci/ci-poll.sh (launchd, every 60s) -> scripts/ci/deploy.sh
+# — see DEPLOY.md. The deploy steps are IDENTICAL in both paths.
+name: ci
+
+on:
+  push:
+    branches: [dev, staging, main, "feature/**"]
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  REPO_ROOT: /Users/agnesbudai/Documents/Solin
+
+jobs:
+  deploy:
+    name: build + deploy (${{ github.ref_name }})
+    runs-on: [self-hosted, solin]
+    steps:
+      - name: Checkout (repo path is the canonical worktree on this Mac)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: /tmp/solin-ci-${{ github.run_number }}
+
+      - name: Resolve target env
+        id: envmap
+        run: |
+          case "${{ github.ref_name }}" in
+            dev)        echo env=dev     >> "$GITHUB_OUTPUT" ;;
+            staging)    echo env=staging >> "$GITHUB_OUTPUT" ;;
+            main)       echo env=prod    >> "$GITHUB_OUTPUT" ;;
+            feature/*)  echo env=dev     >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::no env mapping for ${{ github.ref_name }}" >&2; exit 1 ;;
+          esac
+
+      - name: Build + deploy + smoke check
+        run: bash "$REPO_ROOT/scripts/ci/deploy.sh" "${{ steps.envmap.outputs.env }}" "${{ github.sha }}"
+
+      - name: Auto-rollback on failure
+        if: failure()
+        run: bash "$REPO_ROOT/scripts/ci/rollback.sh" "${{ steps.envmap.outputs.env }}" || true
