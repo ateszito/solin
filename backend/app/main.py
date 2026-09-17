@@ -7,23 +7,59 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
-# App configuration
+from .config import settings  # single source of truth for every env var (Tier A + B)
+
+# App configuration — version, env label, and docs all come from the
+# environment (APP_VERSION / SOLIN_ENV), never hard-coded.
 app = FastAPI(
     title="Solin",
     description="Mobile-first recipe platform for sharing, discovering, and managing recipes with video integration.",
-    version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    version=settings.app_version,
+    docs_url="/docs" if settings.debug or settings.env == "development" else None,
+    redoc_url="/redoc" if settings.debug or settings.env == "development" else None,
 )
 
-# CORS
+# CORS — driven by CORS_ORIGINS (blueprint sec 3.2). Fallback to localhost
+# for local dev only when CORS_ORIGINS is empty AND we aren't a named env.
+_origins = settings.cors_origins
+if not _origins and settings.env == "unknown":
+    _origins = ["http://localhost:3000", "http://localhost:3001"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# /api/env — the "current environment name" endpoint (blueprint acceptance #5).
+# /healthz — liveness; reports env + version for the CI smoke test in sec 7.4.
+@app.get("/api/env", tags=["meta"])
+def api_env() -> dict:
+    """Non-secret env identity. Safe over the wire; no credentials."""
+    return {
+        "env": settings.env,
+        "app_version": settings.app_version,
+        "public_base_url": settings.public_base_url,
+        "api_base_url": settings.api_base_url,
+        "feature_allow_edit": settings.feature_allow_edit,
+        "feature_invisibility": settings.feature_invisibility,
+        "debug": settings.debug,
+    }
+
+@app.get("/healthz", tags=["meta"])
+def healthz() -> dict:
+    """Live/dead probe returning env identity + version.
+
+    The CI smoke test (blueprint sec 7.4) curls this after every deploy to
+    confirm the container came up AND it is the one we just deployed (env +
+    version fingerprint must match)."""
+    return {
+        "status": "ok",
+        "env": settings.env,
+        "app_version": settings.app_version,
+        "db_configured": bool(settings.database_url),
+    }
 
 # ------ Pydantic models ------
 

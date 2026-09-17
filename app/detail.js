@@ -103,7 +103,7 @@ window.Detail = (function () {
         <p class="detail-sub">👤 ${esc(r.creator)} · ${esc(r.cuisine)} · ⏱ ${esc(r.totalMin)} perc · 🍽 ${esc(r.servings)} adag${hasEdits ? ' <span class="pill" style="background:#E6F7E6;color:#1E7D33">✎ szerkesztve</span>' : ""}</p>
         <p class="detail-sub">${(r.dietary || []).map((d) => `<span class="hashtag">${esc(d)}</span>`).join("")}</p>
         <div class="detail-actions">
-          <button class="btn primary" id="edit-open">✎ Szerkesztés</button>
+          ${window.SolinCfg && window.SolinCfg.flag("edit") ? `<button class="btn primary" id="edit-open">✎ Szerkesztés</button>` : ""}
           <a class="btn" href="${esc(r.source)}" target="_blank" rel="noopener">Forrás: TikTok ↗</a>
           <button class="btn" id="cook-listen">▶ Főzéskezdéshez</button>
         </div>
@@ -116,7 +116,8 @@ window.Detail = (function () {
     `;
 
     // wire interactions
-    $("#edit-open").addEventListener("click", () => openEdit(r.id));
+    const editBtn = $("#edit-open");
+    if (editBtn) editBtn.addEventListener("click", () => openEdit(r.id));
     const video = $("#det-video");
     $("#cook-listen").addEventListener("click", () => {
       video.currentTime = (r.steps && r.steps[0] ? r.steps[0].t : 0);
