@@ -1,12 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  com.ateszito.solin-ci — Solin push→deploy trigger (60s poll of
-  ateszito/solin branch tips → scripts/ci/deploy.sh <env>).
-  See DEPLOY.md in the repo.
-  Install:  cp scripts/ci/com.ateszito.solin-ci.plist ~/Library/LaunchAgents/
-            launchctl load ~/Library/LaunchAgents/com.ateszito.solin-ci.plist
-  Remove:   launchctl unload ~/Library/LaunchAgents/com.ateszito.solin-ci.plist
+  com.ateszito.solin-ci — Solin push→deploy trigger (every 60 s).
+
+  Runtime tree (outside ~/Documents — macOS TCC blocks launchd from reading
+  that folder):
+    ~/SolinCI/ci-poll.sh   poller: fetch + dispatch deploys
+    ~/SolinCI/deploy.py    docker build + web-recreate + smoke checks
+    ~/SolinCI/rollback.py  one-command rollback
+    ~/SolinCI/repo         git worktree (build source, cloned from GitHub)
+    ~/SolinCI/state/       logs, last-seen markers, DB snapshots
+
+  Canonical scripts live in the repo: ~/Documents/Solin/scripts/ci/ —
+  sync with: bash ~/SolinCI/sync.sh
+
+  Branch → env map:
+    dev     → solin-dev.ateszito.com     :8082
+    staging → solin-staging.ateszito.com :8081
+    main    → solin.ateszito.com         :8080
+    feature/* (unpromoted) → dev
+
+  Install: launchctl load -w ~/Library/LaunchAgents/com.ateszito.solin-ci.plist
+  Remove:  launchctl unload -w ~/Library/LaunchAgents/com.ateszito.solin-ci.plist
+  Docs:    DEPLOY.md in the repo
 -->
 <plist version="1.0">
 <dict>
@@ -15,22 +31,25 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/agnesbudai/Documents/Solin/scripts/ci/ci-poll.sh</string>
+    <string>-f</string>
+    <string>/Users/agnesbudai/SolinCI/ci-poll.sh</string>
   </array>
   <key>StartInterval</key>
   <integer>60</integer>
   <key>RunAtLoad</key>
   <true/>
-  <key>StandardOutPath</key>
-  <string>/Users/agnesbudai/Documents/Solin/.cicd/launchd.out.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/agnesbudai/Documents/Solin/.cicd/launchd.err.log</string>
+  <key>ExitTimeOut</key>
+  <integer>3700</integer>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
     <string>/Users/agnesbudai</string>
     <key>PATH</key>
-    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/agnesbudai/SolinCI/state/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/agnesbudai/SolinCI/state/launchd.err.log</string>
 </dict>
 </plist>

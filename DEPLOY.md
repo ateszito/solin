@@ -5,83 +5,110 @@
 > `feature/* → staging` (on approval it auto-deploys to **solin-staging**),
 > then a PR `staging → main` — **it will auto-deploy to prod
 > (solin.ateszito.com) after merge**. No manual `docker restart` ever.
-> Rollback of any environment: `./scripts/ci/rollback.sh <env>`.
+> Rollback of any environment: `python3 ~/SolinCI/rollback.py <env>`.
 
 Single source of truth for the architecture: `docs/THREE_ENV_ARCHITECTURE.md`.
 
 ## 1. Environments
 
-| Branch     | Environment | URL                            | Port | Image tag    |
-|------------|-------------|--------------------------------|------|--------------|
-| `dev`      | development | solin-dev.ateszito.com         | 8082 | `solin:dev` |
-| `feature/*`| development | solin-dev.ateszito.com (unpromoted feature tips) | 8082 | `solin:dev` |
-| `staging`  | staging     | solin-staging.ateszito.com     | 8081 | `solin:staging` |
-| `main`     | production  | solin.ateszito.com             | 8080 | `solin:prod` |
+| Branch      | Environment | URL                            | Port | Image tag    |
+|-------------|-------------|--------------------------------|------|--------------|
+| `feature/*` | development | solin-dev.ateszito.com         | 8082 | `solin:dev`    |
+| `dev`       | development | solin-dev.ateszito.com         | 8082 | `solin:dev`    |
+| `staging`   | staging     | solin-staging.ateszito.com     | 8081 | `solin:staging`|
+| `main`      | production  | solin.ateszito.com             | 8080 | `solin:prod`   |
 
-Each environment is an isolated Docker stack: `<env>-web` (nginx, serving the
-app built from its branch) + `<env>-db` (Postgres 16 with its **named volume**
-`vol_solin_<env>_pg`). DB data never leaves the volume; deploys only recreate
-the **web** container, so staging/prod data is preserved across rebuilds
-(blueprint D7).
+Each environment is an isolated Docker stack: `solin-<env>-web` (nginx,
+serving the app built from its branch) + `solin-<env>-db` (Postgres 16 with
+its **named volume** `vol_solin_<env>_pg`). DB data never leaves the volume;
+deploys recreate only the **web** container, so staging/prod data survives
+rebuilds (blueprint D7).
 
 ## 2. Branch model & approval gates
 
 ```
-main      (production — PR-only, 1 approving review, no force push, no delete)
-  └── staging   (PR-only by convention — merge feature/* → staging)
-        └── dev     (workhorse for dev-env)
-              └── feature/<topic>   ← you develop here
+main      (production — protected: PR-only, ≥1 approving review, no force-push)
+  └── staging   (staging — merge feature/* → staging here)
+        └── dev     (workhorse — dev-env deploys land here)
+              └── feature/<talkative-word>   ← new work starts here
 ```
 
-- **Promotion is merge-driven.** A push to `dev` deploys dev; a merge into
-  `staging` deploys staging; a merge into `main` deploys prod.
-- `main` is protected on GitHub (verified): required PR review (≥1 approval),
-  no force pushes, no deletions.
-- **Conventions** (from the project brief): new work starts as a branch cut
-  from `main`, named `feature/<talkative-word>` (e.g. `feature/update`);
-  `staging` and `main` change **only via merge requests**, never direct commits.
-  Versioning: every build gets `v0.1.0-<tier>+<short-sha>` and the immutable
-  tag `solin-deploy-<env>-<short-sha>`; releases are logged in `CHANGELOG.md`.
+- **Promotion is merge-driven.** Push to `dev` deploys dev; merge into
+  `staging` deploys staging; merge into `main` deploys prod.
+- `main` is protected on GitHub (verified via API): required pull request
+  review (1 approval), no force pushes, no deletions.
+- **Conventions:** new work = a branch off `main` named `feature/<word>`
+  (e.g. `feature/update`); `staging` and `main` change **only via merge
+  requests**, never direct commits.
+- **Versioning:** every build is baked with
+  `v0.1.0-<tier>+<sha7>` (dev=`+sha7`, staging=`-rc1+sha7`, prod=`+sha7`)
+  and also an immutable tag `solin-deploy-<env>-<sha7>`; releases are logged
+  in `CHANGELOG.md`.
 
-## 3. CI/CD pipeline
+## 3. The pipeline
 
-**Trigger.** GitHub can't push us an event yet (the repo's token has
-Contents rw, but registering a self-hosted runner / creating webhooks on the
-repo needs the Administration scope). So on this Mac the trigger is a
-**launchd poller** (`com.ateszito.solin-ci`, every 60 s) that fetches the
-branch tips and deploys whichever moved — pushing lands on the environment in
-well under the 5-minute budget. The forward path (same steps, event-driven)
-is `.github/workflows/ci.yml` — activate it once a runner is registered
-(Admin-scope token, or `gh auth login` + register from
-`github.com/ateszito/solin/settings/actions/runners`).
+**Trigger.** A launchd agent (`com.ateszito.solin-ci`) polls the branch tips
+every 60 s and deploys whichever moved. Push → live in **well under the
+5-minute budget**, no manual docker steps.
 
-**Steps per deploy** (`scripts/ci/deploy.sh <env> <sha>`):
+Why a poller and not a GitHub Actions runner: the repo token has
+Contents rw but no Administration scope, so it can't register a self-hosted
+runner or create a repo webhook on this private repo. A token with the
+Administration scope (or an org PAT) unlocks the Actions path — the workflow
+YAML for it is committed at `.github/workflows/ci.yml` and can be flipped on
+once that token exists.
 
-1. build context with `app/VideoContent` symlink materialized into real files
-   (Docker `COPY` does not follow symlinks — blueprint D12);
-2. staging/prod: `pg_dumpall` pre-deploy snapshot → `.cicd/`;
-3. `docker build` the tier image (bakes `_solin.env.js`, `/healthz`,
-   `/api/healthz.json` from build-args, blueprint sec 7.3) → `solin:<env>`
-   + immutable `solin-deploy-<env>-<sha7>`;
-4. rollback pointer: tag the previous image as `rollback-<env>` + record the
-   image ID in `.cicd/last-rollback-target-<env>`;
-5. `docker compose up -d --force-recreate <web>` — **restart** the web
-   container only (DB + volume untouched → no data loss, no manual
-   restart needed);
-6. smoke check: `curl /healthz` locally **and** through the public
-   subdomain; the body must contain the tier name and the commit short-sha,
-   otherwise the deploy fails and the poller retries.
+**Runtime layout.** macOS privacy (TCC) blocks launchd agents from reading
+`~/Documents`, so the pipeline runtime lives in `~/SolinCI`:
+
+```
+~/SolinCI/
+  repo/          git clone of ateszito/solin (build source)
+  deploy.py      build + deploy + smoke-check engine
+  rollback.py    one-command rollback
+  ci-poll.sh     60 s poller (the trigger)
+  sync.sh        copies the scripts from the repo into place
+  state/         logs, last-seen markers, pre-deploy DB snapshots
+  VideoContent   → ~/Documents/VideoContent (symlink)
+```
+
+Source of truth for the scripts stays in this repo under `scripts/ci/` —
+after editing, run `bash ~/SolinCI/sync.sh`. The launchd agent plist is in
+`scripts/ci/com.ateszito.solin-ci.plist`; install with:
+
+```bash
+cp scripts/ci/com.ateszito.solin-ci.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.ateszito.solin-ci.plist
+```
+
+**Steps per deploy** (`deploy.py <env> <sha>`):
+
+1. build context in `~/SolinCI/build-ctx` with `app/VideoContent`
+   materialized into real files (Docker `COPY` doesn't follow the repo's
+   symlink; gvisor can't bind-mount from TCC-protected folders — D12);
+2. staging/prod: `pg_dumpall -U solin` snapshot → `~/SolinCI/state/`
+   (D7 data safety before any change);
+3. `docker build` the tier image with per-env build-args — bakes
+   `_solin.env.js`, `/healthz`, `/api/healthz.json` (blueprint sec 7.3);
+   tags: `solin:<env>` + immutable `solin-deploy-<env>-<sha7>`;
+4. rollback pointer: previous image retagged `rollback-<env>`, ID recorded
+   in `state/last-rollback-<env>`;
+5. `docker compose up -d --force-recreate solin-<env>-web` — web container
+   only; DB container + named volume untouched (no data loss);
+6. smoke checks: `/healthz` + `/api/healthz.json` on the local port AND
+   through the public subdomain must report the right tier + baked commit —
+   otherwise the deploy is marked FAILED and retried on the next poll.
 
 **Rollback (one command):**
 
 ```bash
-./scripts/ci/rollback.sh dev       # or: staging | prod
+python3 ~/SolinCI/rollback.py dev      # or: staging | prod
+python3 ~/SolinCI/rollback.py prod solin-deploy-prod-a1b2c3d   # any older build
 ```
 
-It retags the previous image over `solin:<env>`, recreates the web container,
-and re-runs the smoke checks. Anything older is available too —
-`docker image ls | grep solin-deploy-<env>` lists every immutable build;
-pass any of them as the 2nd argument.
+It retags the previous image over `solin:<env>`, recreates the web container
+with the matching runtime env, and re-runs the smoke checks. Full history:
+`docker image ls | grep solin-deploy-<env>`.
 
 ## 4. Everyday runbook
 
@@ -90,32 +117,38 @@ pass any of them as the 2nd argument.
 git checkout -b feature/my-feature main
 # ...edit...
 git add -A && git commit -m "feat: my feature"
-git push -u origin feature/my-feature          # -> deploys to solin-dev
-gh pr create --base staging                    # (or GitHub UI)
-# after review: PR feature/* -> staging  -> merges, deploys to solin-staging
-gh pr create --base main                       # after staging sign-off
-# PR staging -> main merges -> deploys to solin.ateszito.com
+git push -u origin feature/my-feature
+#   → within ~1 minute solin-dev.ateszito.com serves the change
+# approve and promote:
+#   PR feature/*  → staging   → merges: solin-staging.ateszito.com updates
+#   PR staging    → main      → merges: solin.ateszito.com updates
 
-# deploy a specific commit directly (same pipeline)
-./scripts/ci/deploy.sh staging a1b2c3d
+# operate the pipeline (all from the terminal, no IDE needed)
+bash ~/SolinCI/ci-poll.sh                        # trigger one poll cycle now
+python3 ~/SolinCI/deploy.py staging a1b2c3d      # deploy a specific commit
+python3 ~/SolinCI/rollback.py prod               # one-command rollback
+tail -f ~/SolinCI/state/poll.log                 # watch deploys happen
+launchctl list | grep solin-ci                   # poller running?
+launchctl kickstart -k gui/501/com.ateszito.solin-ci   # nudge it
 
-# roll back any environment, one command
-./scripts/ci/rollback.sh prod
-
-# manual trigger of the push pipeline (normally automatic via launchd)
-./scripts/ci/ci-poll.sh
-
-# logs
-tail -f .cicd/poll.log .cicd/deploy-<env>.log
+# data (per-env Postgres 16, named volumes — survives web rebuilds)
+docker exec -it solin-dev-db     psql -U solin -d solin_dev
+docker exec solin-staging-db     pg_dumpall -U solin
+docker exec solin-prod-db        pg_dumpall -U solin
 ```
 
 ## 5. State & troubleshooting
 
-- `.cicd/` (gitignored): poller state (`last-seen-*`), logs, snapshots.
-- Failed deploys self-retry on the next poll; the last success per env is in
-  `.cicd/last-successful-<env>`.
-- No docker/credentials: `docker ps`, `docker login -u ateszito`,
-  and a usable GitHub token (currently `~/.git-cred-solin`, chmod 600).
-- Public checks go through the Cloudflare tunnel `mac-studio-tunnel`
-  (remote ingress v4: solin→:8080, solin-staging→:8081, solin-dev→:8082);
-  if the tunnel itself is down, check `launchctl list | grep cloudflared`.
+- `~/SolinCI/state/` — `poll.log` (dispatch), `deploy-<env>.log` (full
+  build output), `last-seen-<branch>` (deployed tips), `pre-deploy-*.sql`
+  (snapshots), `last-rollback-<env>` / `last-successful-<env>` (pointers).
+- Failed deploys self-retry on the next poll; the deploy log keeps all
+  attempts.
+- Credentials: git uses `credential.helper store` (`~/.git-cred-solin`,
+  chmod 600); Docker uses Docker Desktop's daemon (GUI, full TCC).
+- Public routing: Cloudflare tunnel `mac-studio-tunnel` remote ingress
+  (v4) maps solin→:8080, solin-staging→:8081, solin-dev→:8082; if a
+  subdomain misbehaves, `launchctl list | grep cloudflared` and then
+  `launchctl kickstart -k gui/501/com.ateszito.cloudflared`.
+- Poller silent? Check `state/launchd.err.log`, then
+  `launchctl kickstart gui/501/com.ateszito.solin-ci`.

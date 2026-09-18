@@ -1,101 +1,94 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Solin CI/CD — push trigger (poller)
+# Solin CI/CD — push trigger (poller) — RUNTIME copy in ~/SolinCI
 #
-# Trigger half of the pipeline. GitHub can't send us a push event (repo token
-# has Contents read+write but no Administration scope → can't register a
-# self-hosted Actions runner or create a webhook on this repo), so we poll
-# the remote branch tips with the existing git credentials. Runs from launchd
-# every 60s (com.ateszito.solin-ci.plist): a push lands on its environment
-# within the 5-minute acceptance window. scripts/ci/trigger-now.sh = immediate.
+# Why here and not in the repo: macOS TCC (privacy) blocks launchd agents
+# from reading ~/Documents. The repo's canonical copy is
+# ~/Documents/Solin/scripts/ci/ci-poll.sh — keep them in sync (see sync.sh).
 #
-# Deploy map:
-#   dev branch      -> dev      solin-dev.ateszito.com    :8082
-#   staging branch  -> staging  solin-staging.ateszito.com :8081
-#   main branch     -> prod     solin.ateszito.com         :8080
-#   feature/*       -> dev      (unless the tip is already promoted, i.e. is
-#   (unpromoted)                an ancestor of staging or main — the merge that
-#                               promotes it fires the staging/prod deploy)
+# Every 60 s: fetch tip of dev / staging / main (+ unpromoted feature/*),
+# and deploy any branch whose tip moved → docker build + web recreate +
+# smoke check. First run seeds state; the next poll does the initial
+# reconciliation of all three environments to their branch tips.
 #
-# Approval gates = the merges themselves: feature/*→staging and staging→main
-# go through review (main requires 1 approving PR review, no direct pushes).
-# On first-ever run the poller reconciles EVERY environment to its branch tip.
+# Branch → env:
+#   dev      → solin-dev.ateszito.com     :8082
+#   staging  → solin-staging.ateszito.com :8081
+#   main     → solin.ateszito.com         :8080   (approval = PR merge)
+#   feature/*→ dev env, unless already promoted (ancestor of staging/main)
 # ============================================================================
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-STATE_DIR="$REPO_ROOT/.cicd"
-mkdir -p "$STATE_DIR"
-cd "$REPO_ROOT"
+CI="$HOME/SolinCI"
+REPO="$CI/repo"
+ST="$CI/state"
+mkdir -p "$ST" || exit 1
+cd "$REPO" 2>/dev/null || { echo "[poll] FATAL: no worktree at $REPO"; exit 1; }
+echo "[poll] $(date -u +%Y-%m-%dT%H:%M:%SZ) tick" >> "$ST/poll.log"
 
-# ---- portable lock (macOS has no flock; mkdir is atomic) -------------------
-LOCKDIR="$STATE_DIR/lock"
-acquire() {
-  mkdir "$LOCKDIR" 2>/dev/null && return 0
-  then_ts="$(cat "$LOCKDIR/ts" 2>/dev/null || echo 0)"
-  now_ts="$(date +%s)"
-  if [ $((now_ts - then_ts)) -gt 1200 ]; then
-    rm -rf "$LOCKDIR" 2>/dev/null
-    mkdir "$LOCKDIR" 2>/dev/null && return 0
-  fi
-  return 1
-}
-if ! acquire; then echo "[poll] another poll in progress — skipping"; exit 0; fi
-date +%s > "$LOCKDIR/ts"
-trap 'rm -rf "$LOCKDIR" 2>/dev/null' EXIT
+# ---- portable lock (mkdir is atomic; no flock on macOS) ----------------------
+LOCK="$ST/lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  age=$(( $(date +%s) - $(cat "$LOCK/ts" 2>/dev/null || echo 0) ))
+  if [ "$age" -gt 1800 ]; then rm -rf "$LOCK"; mkdir "$LOCK" 2>/dev/null || exit 0; fi
+  echo "[poll] locked — skipping" >> "$ST/poll.log"; exit 0
+fi
+date +%s > "$LOCK/ts"
+trap 'rm -rf "$LOCK" 2>/dev/null' EXIT
 
-# ---- fetch -----------------------------------------------------------------
-git fetch origin --quiet --prune 2>>"$STATE_DIR/poll.err" || {
-   echo "[poll] warn: fetch failed: $(tail -1 "$STATE_DIR/poll.err" 2>/dev/null)"; }
+# ---- fetch -------------------------------------------------------------------
+git fetch origin --quiet --prune 2>>"$ST/git.err" || \
+  echo "[poll] WARN git fetch: $(tail -1 "$ST/git.err" 2>/dev/null)" >> "$ST/poll.log"
 
-# ---- first-ever run: seed so the NEXT poll reconciles every env ------------
-if [ ! -f "$STATE_DIR/last-seen-dev" ]; then
-  for b in dev staging main; do
-    echo "none" > "$STATE_DIR/last-seen-$b"
-  done
-  echo "[poll] first run — seeded; next poll (<=60s) reconciles all envs"
+# ---- first run: seed so the NEXT poll reconciles all 3 envs -------------------
+if [ ! -f "$ST/last-seen-dev" ]; then
+  for b in dev staging main; do echo none > "$ST/last-seen-$b"; done
+  echo "[poll] first run — seeded; next tick (<=60s) deploys all 3 envs" >> "$ST/poll.log"
   exit 0
 fi
 
-# ---- helpers ----------------------------------------------------------------
-state_of() { cat "$1" 2>/dev/null || echo "none"; }
-mark() { echo "$2" > "$1"; }
-
-run_deploy() { # $1 branch $2 env $3 sha
-  local b="$1" e="$2" s="$3"
-  echo "[poll] $b ${s:0:7} -> deploy $e"
-  if bash "$REPO_ROOT/scripts/ci/deploy.sh" "$e" "$s" >>"$STATE_DIR/poll.log" 2>&1; then
-    mark "$STATE_DIR/last-seen-$b" "$s"
-    echo "[poll] $e OK (${s:0:7})"
+# ---- deploy helper -------------------------------------------------------------
+deploy() { # $1 branch  $2 env  $3 sha
+  local br="$1" ev="$2" sha="$3"
+  echo "[poll] $br ${sha:0:7} -> deploy $ev" >> "$ST/poll.log"
+  local out
+  if out=$(git checkout -q "origin/$br" 2>&1); then
+    out=$(python3 "$CI/deploy.py" "$ev" "$sha" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "$sha" > "$ST/last-seen-$br"
+      echo "[poll] $ev OK   (${sha:0:7})" >> "$ST/poll.log"
+    else
+      echo "$out" >> "$ST/deploy-fail.log"
+      echo "[poll] $ev FAIL for $br (${sha:0:7}) — $(tail -2 "$ST/deploy-fail.log" | tr '\n' ' ')" >> "$ST/poll.log"
+    fi
   else
-    echo "[poll] $e FAILED for $b (${s:0:7}) — see $STATE_DIR/poll.log; will retry next poll"
+    echo "[poll] checkout $br failed: $out" >> "$ST/poll.log"
   fi
 }
 
-# ---- promote: dev / staging / main ------------------------------------------
+# ---- dev / staging / main --------------------------------------------------------
 for spec in "dev:dev" "staging:staging" "main:prod"; do
-  BR="${spec%%:*}"; ENV_="${spec##*:}"
-  SHA="$(git rev-parse "refs/remotes/origin/$BR" 2>/dev/null || echo '')"
-  [ -n "$SHA" ] || continue
-  [ "$(state_of "$STATE_DIR/last-seen-$BR")" = "$SHA" ] && continue
-  run_deploy "$BR" "$ENV_" "$SHA"
+  br="${spec%%:*}"; ev="${spec##*:}"
+  sha="$(git rev-parse "origin/$br" 2>/dev/null || true)"
+  [ -n "$sha" ] || continue
+  [ "$(cat "$ST/last-seen-$br" 2>/dev/null || echo none)" = "$sha" ] && continue
+  deploy "$br" "$ev" "$sha"
 done
 
-# ---- feature/* branches deploy to the dev env -------------------------------
-# A feature tip that is already an ancestor of staging or main is PROMOTED —
-# its staging/prod merge fired (or will fire) the real deploy, so skip it.
-SHA_STG="$(git rev-parse refs/remotes/origin/staging 2>/dev/null || echo '')"
-SHA_MAIN="$(git rev-parse refs/remotes/origin/main 2>/dev/null || echo '')"
-for BR in $(git for-each-ref --format '%(refname)' 'refs/remotes/origin/feature/*'); do
-  BNAME="${BR#refs/remotes/origin/}"
-  FSHA="$(git rev-parse "$BR" 2>/dev/null || echo '')"
-  [ -n "$FSHA" ] || continue
-  [ "$(state_of "$STATE_DIR/last-seen-$BNAME")" = "$FSHA" ] && continue
-  [ -n "$SHA_STG" ] && git merge-base --is-ancestor "$FSHA" "$SHA_STG" 2>/dev/null && \
-      { mark "$STATE_DIR/last-seen-$BNAME" "$FSHA"; continue; }
-  [ -n "$SHA_MAIN" ] && git merge-base --is-ancestor "$FSHA" "$SHA_MAIN" 2>/dev/null && \
-      { mark "$STATE_DIR/last-seen-$BNAME" "$FSHA"; continue; }
-  run_deploy "$BNAME" dev "$FSHA"
+# ---- feature/*: dev env unless promoted -------------------------------------------
+STG="$(git rev-parse origin/staging 2>/dev/null || true)"
+MNA="$(git rev-parse origin/main 2>/dev/null || true)"
+for ref in $(git for-each-ref --format='%(refname)' 'refs/remotes/origin/feature/*'); do
+  br="${ref#refs/remotes/origin/}"
+  sha="$(git rev-parse "$ref" 2>/dev/null || true)"
+  [ -n "$sha" ] || continue
+  [ "$(cat "$ST/last-seen-$br" 2>/dev/null || echo none)" = "$sha" ] && continue
+  promoted=0
+  [ -n "$STG" ] && git merge-base --is-ancestor "$sha" origin/staging 2>/dev/null && promoted=1
+  [ -n "$MNA" ] && git merge-base --is-ancestor "$sha" origin/main 2>/dev/null && promoted=1
+  if [ "$promoted" -eq 1 ]; then
+    echo "$sha" > "$ST/last-seen-$br"
+  else
+    deploy "$br" dev "$sha"
+  fi
 done
-
-echo "[poll] done $(date -u +%H:%M:%SZ)"
