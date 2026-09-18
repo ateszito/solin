@@ -22,7 +22,8 @@ Runtime layout (all outside ~/Documents — launchd TCC):
   ~/SolinCI/VideoContent symlink → ~/Documents/VideoContent (real mp4s)
   ~/SolinCI/state/      logs, last-seen markers, snapshots, env file
 """
-import os, sys, time, shutil, subprocess, urllib.request
+import os, sys, time, shutil, subprocess, urllib.request, signal
+from contextlib import contextmanager
 
 CI  = os.path.expanduser('~/SolinCI')
 ST  = os.path.join(CI, 'state')
@@ -31,23 +32,48 @@ VC  = os.path.join(CI, 'VideoContent')
 COMPOSE = os.path.join(REPO, 'docker-compose.yml')
 COMPOSE_DIR = REPO          # compose resolves relative paths from CWD
 
+# Base semver, read from the repo's VERSION file (single number, like
+# "0.1.1"). Each released cut just bumps that file. Per-tier suffix is
+# added by deploy.py (dev→-dev, staging→-rc1, prod→"").
+_VERSION_PATH = os.path.join(REPO, 'VERSION')
+if os.path.isfile(_VERSION_PATH):
+    BASE = open(_VERSION_PATH).read().strip().lstrip('v') or '0.1.0'
+else:
+    BASE = '0.1.0'
+
 ENVS = {
     'dev':     dict(tier='development', image='solin:dev',
                     svc='solin-dev-web', port=8082, sub='solin-dev.ateszito.com',
                     db='solin-dev-db', ver_var='DEV_APP_VERSION',
-                    version=lambda s: 'v0.1.0-dev+%s' % s, debug='true'),
+                    version=lambda s: 'v%s-dev+%s' % (BASE, s), debug='true'),
     'staging': dict(tier='staging', image='solin:staging',
                     svc='solin-staging-web', port=8081, sub='solin-staging.ateszito.com',
                     db='solin-staging-db', ver_var='STAGING_APP_VERSION',
-                    version=lambda s: 'v0.1.0-rc1+%s' % s, debug='false'),
+                    version=lambda s: 'v%s-rc1+%s' % (BASE, s), debug='false'),
     'prod':    dict(tier='production', image='solin:prod',
                     svc='solin-prod-web', port=8080, sub='solin.ateszito.com',
                     db='solin-prod-db', ver_var='PROD_APP_VERSION',
-                    version=lambda s: 'v0.1.0+%s' % s, debug='false'),
+                    version=lambda s: 'v%s+%s' % (BASE, s), debug='false'),
 }
 
 def sh(cmd, **kw):
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, **kw)
+
+class TCCStall(Exception):
+    pass
+
+def _alarm(t):
+    raise TCCStall('filesystem operation timed out after %ds — likely macOS TCC; run deploy from a GUI shell' % t)
+
+@contextmanager
+def stall_guard(seconds=60):
+    old = signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 def run(cmd, timeout=1800):
     r = sh(cmd, timeout=timeout)
@@ -106,13 +132,17 @@ def main():
         n_copied += 1
     vdst = os.path.join(app_ctx, 'VideoContent')
     os.makedirs(vdst)
+    # NOTE: vreal is a REAL directory (mirrored by refresh_videos.sh) — NOT a
+    # symlink into ~/Documents, which launchd-spawned processes can't follow
+    # under macOS TCC privacy rules.
     vreal = os.path.realpath(VC)
     nvid = 0
-    for f in sorted(os.listdir(vreal)):
-        src = os.path.join(vreal, f)
-        if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(vdst, f))
-            nvid += 1
+    with stall_guard(90):
+        for f in sorted(os.listdir(vreal)):
+            src = os.path.join(vreal, f)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(vdst, f))
+                nvid += 1
     shutil.copy2(os.path.join(REPO, 'Dockerfile'), os.path.join(ctx, 'Dockerfile'))
     ctx_kb = run(['du', '-sk', ctx]).split()
     L('[1] build context ready (%s files, %d videos, %s KB)'

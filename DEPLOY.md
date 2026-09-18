@@ -42,8 +42,9 @@ main      (production — protected: PR-only, ≥1 approving review, no force-pu
   requests**, never direct commits.
 - **Versioning:** every build is baked with
   `v0.1.0-<tier>+<sha7>` (dev=`+sha7`, staging=`-rc1+sha7`, prod=`+sha7`)
-  and also an immutable tag `solin-deploy-<env>-<sha7>`; releases are logged
-  in `CHANGELOG.md`.
+  and also an immutable tag `solin-deploy-<env>-<sha7>`; the base semver
+  comes from the `VERSION` file in the repo root (bump it for each release),
+  and releases are logged in `CHANGELOG.md`.
 
 ## 3. The pipeline
 
