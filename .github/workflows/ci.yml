@@ -1,16 +1,23 @@
-# Solin CI/CD — GitHub Actions pipeline (primary path per blueprint sec 7)
+# Solin CI/CD — GitHub Actions pipeline (forward path, blueprint D8)
 #
-# NOTE (as of Sep 2026): this repo's token has Contents rw but no
-# Administration scope, so a self-hosted runner cannot be REGISTERED with it
-# yet. To activate this workflow:
-#   1. push this file to the repo,
-#   2. register a runner (needs Administration scope / `gh auth login`):
-#       https://github.com/ateszito/solin/settings/actions/runners
-#      The Mac already runs Docker, so the runner executes jobs locally.
-#   3. the workflow then activates on the next push.
-# Until then the EQUIVALENT pipeline runs locally:
-#   scripts/ci/ci-poll.sh (launchd, every 60s) -> scripts/ci/deploy.sh
-# — see DEPLOY.md. The deploy steps are IDENTICAL in both paths.
+# STATUS (Sep 2026): the repo token has Contents rw but no Administration
+# scope, so a self-hosted runner cannot be REGISTERED with it yet. The
+# EQUIVALENT pipeline runs locally (macOS launchd, 60s poller):
+#   ~/SolinCI/ci-poll.sh -> ~/SolinCI/deploy.py   (see DEPLOY.md)
+#
+# Activating the Actions path (identical deploy steps):
+#   1. token with Administration scope (or `gh auth login`),
+#   2. register a runner labelled solin from
+#        github.com/ateszito/solin/settings/actions/runners — the Mac runs
+#        Docker already, jobs execute locally,
+#   3. this workflow activates on the next push; delete/stop the launchd
+#        poller to avoid double deploys.
+#
+# Deploy steps are shared: scripts/ci/deploy.py (<env> <sha>) does build →
+# web-container recreate → local + public smoke checks; rollback.py is the
+# one-command rollback. On failure the runner rolls the env back so a broken
+# deploy never leaves a tier down.
+
 name: ci
 
 on:
@@ -18,22 +25,22 @@ on:
     branches: [dev, staging, main, "feature/**"]
 
 concurrency:
-  group: deploy-${{ github.ref_name }}
+  group: solin-deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
-  REPO_ROOT: /Users/agnesbudai/Documents/Solin
+  CI_HOME: /Users/agnesbudai/SolinCI
 
 jobs:
   deploy:
     name: build + deploy (${{ github.ref_name }})
     runs-on: [self-hosted, solin]
     steps:
-      - name: Checkout (repo path is the canonical worktree on this Mac)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          path: /tmp/solin-ci-${{ github.run_number }}
+          path: ${{ env.CI_HOME }}/actions-${{ github.run_number }}
 
       - name: Resolve target env
         id: envmap
@@ -46,9 +53,9 @@ jobs:
             *) echo "::error::no env mapping for ${{ github.ref_name }}" >&2; exit 1 ;;
           esac
 
-      - name: Build + deploy + smoke check
-        run: bash "$REPO_ROOT/scripts/ci/deploy.sh" "${{ steps.envmap.outputs.env }}" "${{ github.sha }}"
+      - name: Build + deploy (+ local & public smoke checks)
+        run: python3 "${{ env.CI_HOME }}/deploy.py" "${{ steps.envmap.outputs.env }}" "${{ github.sha }}"
 
       - name: Auto-rollback on failure
         if: failure()
-        run: bash "$REPO_ROOT/scripts/ci/rollback.sh" "${{ steps.envmap.outputs.env }}" || true
+        run: python3 "${{ env.CI_HOME }}/rollback.py" "${{ steps.envmap.outputs.env }}" || true
