@@ -133,16 +133,80 @@ window.Detail = (function () {
       })
     );
 
-    // ingredient check-off
-    box.querySelectorAll("#ing-list li").forEach((li) => {
-      li.addEventListener("click", () => {
+    // ============================================================
+    // ingredient check-off — IN-PLACE DOM UPDATE (no full re-render)
+    // ------------------------------------------------------------
+    // WHY THIS LOOKS DIFFERENT FROM A naive addEventListener-on-each-<li>:
+    //   The old code called `render(r.id)` — box.innerHTML was replaced
+    //   wholesale, which (a) destroyed + re-created the <video> element
+    //   (playback position and play/pause state were lost) and (b) re-painted
+    //   the entire recipe detail on every single tick.  Both read as a
+    //   "full page refresh" from the user's perspective — this is the
+    //   bug this card fixes.
+    //
+    //   The replacement toggles the CSS `done` class on the <li>, updates
+    //   the ✓ glyph, and recomputes the "n / total kijelölve" counter +
+    //   progress-bar width — all against the ALREADY-MOUNTED DOM — so the
+    //   <video>, the description block, the macro cards, the steps list,
+    //   and the video↔step sync listeners are all left undisturbed.
+    //
+    //   We also attach to the container (#ing-list) instead of each <li>
+    //   so the handler survives any later DOM surgery on the list, and we
+    //   use `e.stopPropagation()` + `e.preventDefault()` defensively to
+    //   make sure the click can never bubble into a form submit or an
+    //   enclosing navigation element (belt & suspenders — the recipe
+    //   detail view has no <form>, but this kills the whole class of
+    //   "the checkbox was inside something that submits / navigates"
+    //   bugs by construction).
+    //
+    //   Data model: unchanged.  The per-session in-memory `checked` map
+    //   is the source of truth (refresh resets — same as the old code).
+    // ============================================================
+    const ingListEl = box.querySelector("#ing-list");
+
+    // Recompute just the progress line + bar; touch nothing else.
+    const recomputeIngredientProgress = () => {
+      const set = getChecked(r.id);
+      const total = (r.ingredients || []).length;
+      const done  = (r.ingredients || []).filter((i) => set.has(i.name)).length;
+      const pct   = total ? Math.round((done / total) * 100) : 0;
+      const section = ingListEl.closest(".detail-section");
+      if (!section) return;
+      const head = section.querySelector(".sec-head span");
+      if (head) head.textContent = `${done}/${total}`;
+      const cnt = section.querySelector(".ing-progress span");
+      if (cnt)  cnt.textContent = `${done} / ${total} kijelölve`;
+      const bar = section.querySelector(".prog-bar i");
+      if (bar)  bar.style.width = `${pct}%`;
+    };
+
+    if (ingListEl) {
+      ingListEl.addEventListener("click", (e) => {
+        const li = e.target && e.target.closest ? e.target.closest("li") : null;
+        if (!li || !ingListEl.contains(li)) return;          // only this list
+        e.preventDefault();                                    // kill native form-submit / link nav
+        e.stopPropagation();                                   // don't leak to section/outer handlers
+
+        // 1) toggle the in-memory source of truth
         const name = li.dataset.idx;
         const set = getChecked(r.id);
+        const doneBefore = set.size;
         if (set.has(name)) set.delete(name); else set.add(name);
-        render(r.id);
-        if (set.size === (r.ingredients || []).length) toast("Minden hozzávaló felhasznált! 🧑‍🍳");
+
+        // 2) reflect it on the DOM in place (no innerHTML rewrite)
+        li.classList.toggle("done", set.has(name));
+        const ck = li.querySelector(".ing-ck");
+        if (ck) ck.textContent = set.has(name) ? "✓" : "";
+
+        // 3) progress counter + bar
+        recomputeIngredientProgress();
+
+        // 4) celebration toast — only on an UPWARD transition to "all done"
+        if (set.size === (r.ingredients || []).length && set.size > doneBefore) {
+          toast("Minden hozzávaló felhasznált! 🧑‍🍳");
+        }
       });
-    });
+    }
 
     // step ↔ video sync
     const stepsEls = Array.from(box.querySelectorAll("#step-list li"));
