@@ -361,16 +361,24 @@ def resolve_ingredient(
     """
     if ingredient_id is None or isinstance(ingredient_id, bool):
         return None
-    if isinstance(ingredient_id, int):
-        if len(ingredients) and 0 <= ingredient_id < len(ingredients):
-            return ingredients[ingredient_id]
-        return None
     if isinstance(ingredient_id, str):
         nid = ingredient_id.strip().lower()
+        # Pydantic reads JSON ints as int, but JSON *strings* that are
+        # numeric ("2") still carry index meaning — accept them (doc:
+        # "0-based index or ingredient name").
+        if nid.isdigit():
+            idx = int(nid)
+            if len(ingredients) and 0 <= idx < len(ingredients):
+                return ingredients[idx]
+            return None
         for i in ingredients:
             name = i.get("name") if isinstance(i, dict) else getattr(i, "name", None)
             if str(name or "").strip().lower() == nid:
                 return i
+        return None
+    if isinstance(ingredient_id, int):
+        if len(ingredients) and 0 <= ingredient_id < len(ingredients):
+            return ingredients[ingredient_id]
         return None
     return None
 
