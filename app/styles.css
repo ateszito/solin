@@ -362,6 +362,66 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .toast { bottom: 20px; }
 }
 
+/* ============================================================
+   Recipe scaling — "🎚 Recept skálázása" (UC-07 / RECIPE_SCALING §6)
+   Panel sits above the existing Hozzávalók section, same .detail-section
+   card so the visual rhythm of the detail page is preserved.
+   ============================================================ */
+.scale-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.scale-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 6px;
+}
+.scale-title { font-weight: 700; font-size: 15px; }
+.scale-factor {
+  font-weight: 700; font-size: 14px; letter-spacing: .2px;
+  padding: 4px 10px; border-radius: 999px;
+  background: #F1F2F4; color: var(--text-2);
+  transition: background .18s, color .18s;
+}
+.scale-factor.active { background: #E6F7E6; color: #1E7D33; }
+.scale-help { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
+.scale-controls {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.scale-controls .grow { flex: 1 1 160px; min-width: 0; }
+.scale-controls select,
+.scale-controls input[type="number"] {
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; font-size: 14px; min-width: 0;
+}
+.scale-controls input[type="number"] { flex: 0 1 110px; min-width: 90px; }
+.scale-unit { min-width: 18px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.scale-panel.loading .scale-controls { opacity: .55; pointer-events: none; }
+.scale-status { margin-top: 10px; font-size: 13px; line-height: 1.45; }
+.scale-status.ok  { color: #1E7D33; }
+.scale-status.err { color: #C62828; }
+
+/* ingredient list: scaled / manual states */
+.ing-list li.scaled { background: rgba(30, 125, 51, 0.05); }
+.ing-list li.scaled .ing-text b { color: #1E7D33; }
+.ing-list .ing-manual-base { color: var(--text-2); }
+.scale-badge {
+  display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .2px; vertical-align: 1px;
+}
+.scale-badge.anchor { background: #FFF4E0; color: #B26A00; }
+.scale-badge.manual { background: #F1F2F4; color: var(--text-2); }
+
+/* mobile: stack the scale controls vertically for thumbs (375 px view) */
+@media (max-width: 480px) {
+  .scale-controls { flex-direction: column; align-items: stretch; }
+  .scale-controls input[type="number"] { flex: none; width: 100%; }
+  .scale-unit { display: inline-block; margin-top: -4px; }
+}
+
 /* landscape phone: keep detail compact */
 @media (max-width: 844px) and (orientation: landscape) and (display: initial) {
   .detail-media { max-height: 46vh; overflow: hidden; }
