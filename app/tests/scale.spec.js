@@ -5,12 +5,13 @@
    Covers spec §5 worked-example tables, §3 rounding, §4.0
    free-text fallback, §3.1 min-1 rule, and acceptances 1–5,7.
    ============================================================ */
-"use strict";
+   "use strict";
 
-// Minimal browser shim so scale.js (a window.* IIFE) loads under Node.
+   // Minimal browser shim so scale.js (a window.* IIFE) loads under Node.
 global.window = global;
 require("../scale.js");
 const S = global.window.SolinScale;
+let asyncWork = null; // populated by the async scaleViaApi group below
 
 let pass = 0, fail = 0;
 function eq(label, actual, expected) {
@@ -115,5 +116,94 @@ group("selectAnchors — spec §2.1 heuristic", () => {
   eq("mass rows sorted desc", order, ["csirkeemlő", "tészta", "vöröshagyma", "tejszín", "spenót", "kolbász", "parmezán"]);
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+/* ---- scaleViaApi — API client: apiBase resolution (SCALE-BRIDGE-001) ----
+   config.js exports apiBase as a FUNCTION (apiBase() → string). Before the
+   fix, scale.js read it as a string property, so the fetch URL became the
+   stringified function source and the API path was never reached.
+   These tests lock in BOTH shapes: function export (current config.js) and
+   plain-string export (defensive tolerance). */
+let scaleViaApiWork = null;
+group("scaleViaApi — apiBase resolution (SCALE-BRIDGE-001 regression)", () => {
+  const realCfg = global.window.SolinCfg;
+  const realFetch = global.fetch;
+  const apiPayload = {
+    scale_factor_num: 1.3,
+    anchor: { name: "csirkeemlő", unit: "g" },
+    ingredients: [
+      { name: "vöröshagyma", base_amount: 200, base_qty: "200 g", amount: 260, unit: "g", scalable: true },
+    ],
+  };
+  function stub(cfgApiBase) {
+    let capturedUrl = null;
+    global.window.SolinCfg = cfgApiBase === null ? undefined : { apiBase: cfgApiBase };
+    global.fetch = (url, opts) => {
+      capturedUrl = { url, opts };
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(apiPayload) });
+    };
+    return () => capturedUrl;
+  }
+  function restore() {
+    global.window.SolinCfg = realCfg;
+    global.fetch = realFetch;
+  }
+  scaleViaApiWork = (async () => {
+    // 1) FUNCTION export — the current config.js shape. Must be CALLED;
+    //    the URL must be the clean endpoint, not a stringified function.
+    const getFuncUrl = stub(() => "https://api.example.com");
+    const rFunc = await S.scaleViaApi("r-1", "csirkeemlő", 850, R1);
+    const funcUrl = getFuncUrl();
+    restore();
+    eq("function export: fetch CALLED (no silent local fallback)", !!funcUrl, true);
+    eq("function export: URL is the real endpoint",
+       funcUrl.url, "https://api.example.com/api/v1/recipes/r-1/scale");
+    eq("function export: not the stringified function source",
+       String(funcUrl.url).includes("function apiBase"), false);
+    eq("function export: mapping preserves API shape",
+       [rFunc.factor, rFunc.items[0].amount], [1.3, 260]);
+
+    // 2) STRING export — legacy/defensive shape must still work.
+    const getStringUrl = stub("https://api.example.com");
+    const rStr = await S.scaleViaApi("r-1", "csirkeemlő", 850, R1);
+    const strUrl = getStringUrl();
+    restore();
+    eq("string export: URL unchanged", strUrl.url,
+       "https://api.example.com/api/v1/recipes/r-1/scale");
+    eq("string export: still mapped", rStr.factor, 1.3);
+
+    // 3) EMPTY apiBase (baked "" same-origin config) → relative URL.
+    const getEmptyUrl = stub(() => "");
+    await S.scaleViaApi("r-1", "csirkeemlő", 850, R1);
+    const emptyUrl = getEmptyUrl();
+    restore();
+    eq("empty base: relative same-origin URL",
+       emptyUrl.url, "/api/v1/recipes/r-1/scale");
+
+    // 4) NO SolinCfg at all → still same-origin relative URL (|| "" guard).
+    const getNoCfgUrl = stub(null);
+    await S.scaleViaApi("r-1", "csirkeemlő", 850, R1);
+    const noCfgUrl = getNoCfgUrl();
+    restore();
+    eq("no SolinCfg: relative URL, no crash",
+       noCfgUrl.url, "/api/v1/recipes/r-1/scale");
+
+    // 5) API network failure → local-engine fallback (spec §7), unchanged.
+    global.window.SolinCfg = realCfg;
+    global.fetch = () => Promise.reject(new Error("ECONNREFUSED"));
+    const rFall = await S.scaleViaApi("r-1", "csirkeemlő", 850, R1);
+    restore();
+    eq("network error: falls back to local engine", rFall.items.length, R1.length);
+    eq("network error: fallback factor = 850/650", Math.round(rFall.factor * 1e4) / 1e4, 1.3077);
+  })();
+});
+
+// The scaleViaApi group above is async (stashes its work in `scaleViaApiWork`);
+// the rest of this file is synchronous. Await the async work before final tally
+// so `process.exit` doesn't fire before the API-client tests resolve. (Node CJS
+// has no top-level await, hence this Promise chain.)
+Promise.resolve(scaleViaApiWork).then(() => {
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+}).catch((e) => {
+  console.error("scaleViaApi tests crashed:", e);
+  process.exit(1);
+});

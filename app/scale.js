@@ -216,7 +216,13 @@ window.SolinScale = (function () {
      care which engine produced it.
      ------------------------------------------------------------ */
   async function scaleViaApi(recipeId, anchorName, available, ingredients) {
-    const apiBase = (window.SolinCfg && window.SolinCfg.apiBase) || "";
+    // config.js exports apiBase as a HELPER FUNCTION (window.SolinCfg.apiBase()),
+    // not a string property. Calling it via the same accessor the rest of the
+    // app uses keeps us consistent (config.js header: "go through
+    // window.SolinCfg — apiBase(), flag()"). We still tolerate a plain string
+    // export so either shape works.
+    const cfgApiBase = window.SolinCfg && window.SolinCfg.apiBase;
+    const apiBase = (typeof cfgApiBase === "function" ? cfgApiBase() : cfgApiBase) || "";
     const url = `${apiBase}/api/v1/recipes/${encodeURIComponent(recipeId)}/scale`;
     try {
       const res = await fetch(url, {
