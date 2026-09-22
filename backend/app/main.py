@@ -4,10 +4,15 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, field_validator
+from typing import List, Optional, Union
 
 from .config import settings  # single source of truth for every env var (Tier A + B)
+from .services.recipe_scaling import (
+    scale_recipe,
+    resolve_ingredient,
+    select_default_anchor,
+)
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -155,6 +160,58 @@ class HealthResponse(BaseModel):
     version: str
     environment: str
 
+class ScaleRequest(BaseModel):
+    """Body for ``POST /api/v1/recipes/{recipe_id}/scale`` (design §8).
+
+    ``ingredient_id`` is the per-ingredient stable id. The current schema has
+    no per-ingredient id, so it is accepted as a 0-based index *or* a name
+    (see :func:`services.recipe_scaling.resolve_ingredient`).
+    ``available_amount`` is how much of that ingredient the user has on hand.
+    """
+    ingredient_id: Union[int, str]
+    available_amount: Union[int, float, str]
+
+    @field_validator("available_amount", mode="before")
+    @classmethod
+    def _coerce_numeric(cls, v: Union[int, float, str]) -> Union[float, str]:
+        # design §8: non-numeric / non-finite available_amount is a 400.
+        # We raise HTTPException(400) so FastAPI surfaces a real 400 (a
+        # ValueError here would be caught and turned into a 422 by pydantic).
+        # The service re-validates positivity (which is a separate concern,
+        # and where we get to give a recipe-specific error message).
+        if isinstance(v, bool):
+            raise HTTPException(status_code=400, detail={"error": "available_amount must be a positive number"})
+        if isinstance(v, (int, float)):
+            if v != v or v in (float("inf"), float("-inf")):  # NaN / inf
+                raise HTTPException(status_code=400, detail={"error": "available_amount must be a finite number"})
+            return v
+        if isinstance(v, str):
+            s = v.strip().replace(",", ".")
+            if s in ("", "+", "-"):
+                raise HTTPException(status_code=400, detail={"error": "available_amount must be a positive number"})
+            try:
+                f = float(s)
+            except ValueError:
+                raise HTTPException(status_code=400, detail={"error": f"available_amount {v!r} is not a number"})
+            if f != f or f in (float("inf"), float("-inf")):  # NaN / inf
+                raise HTTPException(status_code=400, detail={"error": "available_amount must be a finite number"})
+            return s
+        raise HTTPException(status_code=400, detail={"error": "available_amount must be a positive number"})
+
+    @field_validator("available_amount", mode="after")
+    @classmethod
+    def _post_check(cls, v):
+        # pydantic's `Union[int, float, str]` lets it coerce "abc" -> "abc"
+        # before our `before` validator runs; this second pass catches that
+        # path with a proper 400. (Numeric and finite `before` already returned.)
+        if isinstance(v, str):
+            s = v.strip().replace(",", ".")
+            try:
+                float(s)
+            except ValueError:
+                raise HTTPException(status_code=400, detail={"error": f"available_amount {v!r} is not a number"})
+        return v
+
 # ------ In-memory data store ------
 
 _store: dict = {}
@@ -243,6 +300,51 @@ def delete_recipe(recipe_id: str):
     if recipe_id in _store:
         del _store[recipe_id]
     return JSONResponse(status_code=204, content=None)
+
+@app.post("/api/v1/recipes/{recipe_id}/scale")
+def scale_recipe_endpoint(recipe_id: str, body: ScaleRequest):
+    """POST /api/v1/recipes/{recipe_id}/scale (design §8).
+
+    Given a recipe, a target (anchor) ingredient and the user's available
+    amount, returns the full recalculated ingredient list.
+
+    Status codes:
+      * 200 — correctly scaled values (deterministic; every cell == base*f
+        ROUND_HALF_UP for its unit class).
+      * 400 — ``available_amount`` <= 0 / non-numeric / non-finite, or the
+        target's unit is not scalable (e.g. anchoring on "pinch").
+      * 404 — recipe not found, or ``ingredient_id`` not in this recipe.
+    """
+    recipe = _store.get(recipe_id)
+    if not recipe:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "not found",
+                "hint": f"recipe {recipe_id} does not exist; GET /api/v1/recipes for valid ids",
+            },
+        )
+
+    ingredients = recipe.ingredients
+    target = resolve_ingredient(ingredients, body.ingredient_id)
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "not found",
+                "hint": (
+                    "GET /api/v1/recipes/{recipe_id} for valid ingredient_ids "
+                    "(0-based index or ingredient name)"
+                ),
+            },
+        )
+
+    try:
+        result = scale_recipe(ingredients, body.available_amount, target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
+
+    return JSONResponse(status_code=200, content=result.to_response(recipe_id))
 
 @app.post("/api/v1/videos/upload")
 def upload_video(file_id: str, filename: str = ""):
