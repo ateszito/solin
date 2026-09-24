@@ -37,6 +37,10 @@ npm-debug.log*
 *.mov
 *.avi
 
+# Runtime / test artifacts
+/media/
+/.test_tmp/
+
 # Sensitive
 secrets/
 

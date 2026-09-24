@@ -22,3 +22,11 @@ if _BACKEND not in sys.path:
 # development) because they need a real Postgres + JWT secret. Tests don't —
 # pin to "unknown" so the suite is deterministic and DB-free.
 os.environ["SOLIN_ENV"] = "unknown"
+
+# Inventory storage roots: point both at a temp dir so the suite never writes
+# into the repo (products.json + seed images). MUST happen before any test
+# module imports `app.*` (config reads env at import time).
+_TMP = os.path.join(_HERE, ".test_tmp")
+os.makedirs(_TMP, exist_ok=True)
+os.environ.setdefault("SOLIN_DATA_DIR", os.path.join(_TMP, "data"))
+os.environ.setdefault("SOLIN_MEDIA_ROOT", os.path.join(_TMP, "media"))

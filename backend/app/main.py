@@ -1,9 +1,12 @@
 """FastAPI application entry point for Solin Recipe Platform."""
 
+import os
+
 import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Union
 
@@ -13,6 +16,9 @@ from .services.recipe_scaling import (
     resolve_ingredient,
     select_default_anchor,
 )
+from .inventory.routes import register as register_inventory
+from .inventory.media import MEDIA_URL_PREFIX, media_root
+from .inventory.service import default_service as _inv_svc
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -65,6 +71,29 @@ def healthz() -> dict:
         "app_version": settings.app_version,
         "db_configured": bool(settings.database_url),
     }
+
+# ------ Inventory module (contract use_cases.md §3) ------------------------
+# Router + the two error handlers (C8 shape) live on the app.
+register_inventory(app)
+
+# Serve uploaded product images at the canonical /media prefix (C7/§2):
+#   <MEDIA_ROOT>/inventory/<product_id>/<slot>/<filename>
+# StaticFiles is mounted on a dir that exists (seed images go there), so
+# creating it at import time is safe.
+_inv_media_root = media_root()
+os.makedirs(os.path.join(_inv_media_root, "inventory"), exist_ok=True)
+app.mount(MEDIA_URL_PREFIX, StaticFiles(directory=_inv_media_root), name="media")
+
+
+def seed_inventory() -> dict:
+    """Idempotent P1–P4 seed (contract §7). Called at startup and from tests."""
+    return _inv_svc.seed()
+
+
+# Seed on startup so a bare `uvicorn app.main:app` has the canonical
+# worked-example products (P1–P4) ready for QA. Idempotent — re-runs keep
+# existing rows and only write missing seed image files.
+seed_inventory()
 
 # ------ Pydantic models ------
 
