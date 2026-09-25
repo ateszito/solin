@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import media as m
 from .seed_data import (SEED_JPEG, SEED_PNG, seed_products)
+from .macros import aggregate_macro_result
 from .store import ProductStore
 from .validation import (
     ALLOWED_IMAGE_TYPES,
@@ -390,6 +391,23 @@ class InventoryService:
         return images[slot]
 
     # ---- seed (contract §7) --------------------------------------------------
+
+    def macro_count(
+            self,
+            ingredients: list,
+            products: Optional[Dict[str, dict]] = None,
+    ) -> Dict[str, Any]:
+        """Aggregate real macros + cost for a prepared food (contract §3.6/§4).
+
+        ``products=None`` → the service's own store snapshot (one read).
+        ``products={...}`` → curated catalog (test / multi-store use). The
+        pure engine lives in :mod:`app.inventory.macros`; this method is the
+        service-facing name the contract names (``macro_count``).
+        """
+        if products is None:
+            products = self.store.load()
+        return aggregate_macro_result(ingredients, products=products)
+
 
     def seed(self) -> Dict[str, str]:
         """Idempotent P1–P4 seed (contract §7) + seed image files for P1/P2.

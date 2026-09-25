@@ -63,6 +63,39 @@ async def create_product(body: dict) -> dict:
     return svc.create(body)
 
 
+@router.post("/macros/count")
+async def count_macros(body: dict) -> dict:
+    """POST /inventory/macros/count — real-macro aggregation (contract §3.6, §4).
+
+    Body: ``{"items": [ingredient_reference, ...]}`` where each item follows
+    the §1.3 shape ``{product_id, quantity, unit, name_override?, note?}``.
+
+    Response: the canonical §4.4 ``MacroResult``::
+
+        {
+          "totals": {7 macro keys},
+          "per_ingredient": [...],
+          "total_cost": {"amount", "currency"} | null,
+          "warnings": [{"code", "product_id"}]
+        }
+
+    Unresolved ingredients are *reported*, not raised: 200 + a row with an
+    all-zero macro block and ``PRODUCT_NOT_FOUND`` in ``warnings``.  The
+    pure engine is :func:`app.inventory.macros.aggregate_macro_result`;
+    this route is the HTTP convenience named by contract §3.6.
+    """
+    from .validation import InventoryError as _IE
+    items = body.get("items")
+    if not isinstance(items, list):
+        raise _IE("VALIDATION_ERROR", 400, "items must be a list",
+                  fields=["items"])
+    if not items:
+        raise _IE("VALIDATION_ERROR", 400,
+                  "items must contain at least one ingredient reference",
+                  fields=["items"])
+    return svc.macro_count(items)
+
+
 @router.get("")
 async def list_products(limit: int = 50, offset: int = 0,
                         search: Optional[str] = None) -> dict:

@@ -318,3 +318,137 @@ def test_upload_400_bad_slot_name(client, svc):
     # 400 VALIDATION_ERROR (slot whitelist) — product not found path also 404,
     # but slot is validated after existence; either is acceptable per contract.
     assert r.status_code in (400, 404)
+
+
+# ---------------------------------------------------------------------------
+# POST /inventory/macros/count — real-macro aggregation (contract §3.6, §4)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seeded(svc):
+    """Seed P1–P4 into the temp store so the canonical §5.3 fixture exists."""
+    svc.seed()
+    return svc
+
+
+def test_macros_count_canonical_3_ingredient_recipe(client, seeded):
+    """Acceptance: 3 sample ingredients → totals match hand-calculated
+    values (contract §5.3) within 0.1; cost 2.05 USD."""
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 200, "unit": "g"},
+        {"product_id": "p2", "quantity": 100, "unit": "g"},
+        {"product_id": "p3", "quantity": 10, "unit": "ml"},
+    ]})
+    assert r.status_code == 200, r.text
+    b = r.json()
+    expected = {"calories": 767.40, "protein": 69.90, "fat": 18.10,
+                "carbs": 78.80, "fiber": 2.10, "sugar": 0.10, "sodium": 150.00}
+    for k, v in expected.items():
+        assert abs(b["totals"][k] - v) <= 0.1, (k, b["totals"][k], v)
+    assert b["total_cost"] == {"amount": 2.05, "currency": "USD"}
+    assert [row["product_id"] for row in b["per_ingredient"]] == ["p1", "p2", "p3"]
+    # the cross-currency (EUR) p1 entry is excluded + warned, once
+    codes = [(w["code"], w["product_id"]) for w in b["warnings"]]
+    assert codes.count(("CROSS_CURRENCY_EXCLUDED", "p1")) == 1
+
+
+def test_macros_count_1_ingredient(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 200, "unit": "g"}]})
+    assert r.status_code == 200
+    b = r.json()
+    assert b["totals"]["calories"] == 330.0
+    assert b["total_cost"] == {"amount": 1.50, "currency": "USD"}
+
+
+def test_macros_count_5_ingredients(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 100, "unit": "g"},
+        {"product_id": "p2", "quantity": 50, "unit": "g"},
+        {"product_id": "p3", "quantity": 5, "unit": "ml"},
+        {"product_id": "p4", "quantity": 330, "unit": "ml"},
+        {"product_id": "p1", "quantity": 50, "unit": "g"},
+    ]})
+    assert r.status_code == 200
+    b = r.json()
+    # p1 100 g → 165.0; p2 50 g → 174.5; p3 5 ml → 44.2; p4 → 0; p1 50 g → 82.5
+    assert abs(b["totals"]["calories"] - 466.2) <= 0.11
+    # p4 has no prices; p3 neither. Row costs (quantized 2 dp) sum to the
+    # total: p1 100 g → round(0.7475)=0.75; p2 50 g → round(0.2745)=0.27;
+    # p1 50 g → round(0.37375)=0.37 → 0.75 + 0.27 + 0.37 = 1.39. Assert the
+    # invariant directly: total == sum(per_ingredient row costs).
+    assert b["total_cost"]["currency"] == "USD"
+    row_costs = [row["cost"] for row in b["per_ingredient"] if row["cost"] is not None]
+    assert abs(sum(row_costs) - b["total_cost"]["amount"]) < 0.005
+    assert round(b["total_cost"]["amount"], 2) == 1.39
+    assert len(b["per_ingredient"]) == 5
+
+
+def test_macros_count_missing_product_is_200_with_warning(client, seeded):
+    """Acceptance: missing ingredient → 200 + warning (not 500), zero row."""
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 100, "unit": "g"},
+        {"product_id": "ghost-product", "quantity": 5, "unit": "g"},
+    ]})
+    assert r.status_code == 200
+    b = r.json()
+    row = b["per_ingredient"][1]
+    assert row["product_id"] == "ghost-product"
+    assert row["macros"]["calories"] == 0.0
+    assert row["cost"] is None
+    assert "PRODUCT_NOT_FOUND" in row["warnings"]
+    assert any(w["code"] == "PRODUCT_NOT_FOUND" for w in b["warnings"])
+    # resolved ingredient still contributes
+    assert b["totals"]["calories"] == 165.0
+    assert b["total_cost"] == {"amount": 0.75, "currency": "USD"}
+
+
+def test_macros_count_unit_mismatch_flagged_not_fatal(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 250, "unit": "ml"}]})
+    assert r.status_code == 200
+    b = r.json()
+    assert "UNITS_INCOMPATIBLE" in b["per_ingredient"][0]["warnings"]
+    assert b["totals"]["calories"] == 0.0
+    assert b["total_cost"] is None
+
+
+def test_macros_count_empty_items_is_400(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": []})
+    assert r.status_code == 400
+    assert r.json()["code"] == "VALIDATION_ERROR"
+    assert "items" in r.json()["fields"]
+
+
+def test_macros_count_items_not_list_is_400(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": "p1"})
+    assert r.status_code == 400
+    assert r.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_macros_count_zero_quantity_row_is_zero(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 0, "unit": "g"}]})
+    assert r.status_code == 200
+    b = r.json()
+    assert b["totals"] == {k: 0.0 for k in b["totals"]}
+    assert b["per_ingredient"][0]["cost"] is None
+    assert b["total_cost"] is None
+
+
+def test_macros_count_large_quantity_stays_finite(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p2", "quantity": 1000000000, "unit": "g"}]})
+    assert r.status_code == 200
+    b = r.json()
+    # 10^9 g × 3.49 kcal/g (349 per 100 g) = 3.49×10^9 — finite, not inf/NaN
+    assert b["totals"]["calories"] == 3490000000.0
+    assert b["total_cost"]["amount"] == 5490000.0  # 0.00549 × 10^9
+
+
+def test_macros_count_name_override_in_response(client, seeded):
+    r = client.post("/inventory/macros/count", json={"items": [
+        {"product_id": "p1", "quantity": 100, "unit": "g",
+         "name_override": "Oyala breast"}]})
+    assert r.status_code == 200
+    assert r.json()["per_ingredient"][0]["name"] == "Oyala breast"
