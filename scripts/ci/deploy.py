@@ -205,7 +205,8 @@ def main():
             run(['docker', 'tag', old_api, 'rollback-dev-api'])
             open(api_rollback_file, 'w').write(old_api + '\n')
         api_ver = 'api-%s' % version
-        run(['docker', 'build', '-f', 'Dockerfile.api',
+        run(['docker', 'build',
+             '-f', os.path.join(ctx, 'Dockerfile.api'),
              '--build-arg', 'SOLIN_ENV=development',
              '--build-arg', 'APP_VERSION=%s' % version,
              '--build-arg', 'API_BASE_URL=https://%s' % d['sub'],
