@@ -284,7 +284,11 @@ def main():
     if env == 'dev':
         api_code = None
         for _ in range(60):
-            api_code, _ = http_get('http://127.0.0.1:%d/api/v1/inventory/?limit=1' % d['port'], timeout=5)
+            # No trailing slash: FastAPI redirect_slashes 307s `/inventory/` ->
+            # `/inventory` and rebuilds the Location WITHOUT our host port
+            # (Location: http://127.0.0.1/...), so urllib follows it to port 80
+            # and times out. Probe the exact no-slash path to avoid the redirect.
+            api_code, _ = http_get('http://127.0.0.1:%d/api/v1/inventory?limit=1' % d['port'], timeout=5)
             if api_code == 200:
                 break
             time.sleep(1)
