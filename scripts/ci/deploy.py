@@ -232,11 +232,43 @@ def main():
     # dev: web + api are recreated TOGETHER (blueprint D2); the api data/media
     # live in the vol_solin_dev_data named volume which is NOT touched here, so
     # seeded/created products survive a force-recreate exactly like the DBs do.
-    up_targets = [d['svc']]
+    #
+    # ORDER MATTERS (observed 2026-09-27): if the api image does not exist
+    # locally, `docker compose up` will try to PULL solin:dev-api from the
+    # registry — that wait hung a 600 s step and failed the deploy in a poller
+    # loop. So the api container is started FIRST, as its own compose
+    # step (image was just built in [3b] → no pull), with an explicit
+    # readiness probe (GET /api/v1/inventory via the api's own port path on
+    # the container network) BEFORE web is recreated. Web's `depends_on` is
+    # service_started (default condition) — nginx only needs the container to
+    # EXIST to resolve the upstream at config load.
     if env == 'dev':
-        up_targets.append('solin-dev-api')
+        run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d',
+             '--force-recreate', 'solin-dev-api'], timeout=600)
+        api_up = sh(['docker', 'inspect', '--format', '{{.State.Status}}', 'solin-dev-api']).stdout
+        L('[5] solin-dev-api container state: %s' % api_up)
+        # Readiness: the api binds 8000 INSIDE the container; probe it on the
+        # container network via docker exec of the web container? No — the web
+        # container is still the old image. Probe directly via the host: nginx
+        # isn't up yet, so use `docker network` + wget from the api container
+        # itself (it has python — use python urllib against 127.0.0.1:8000).
+        api_code = None
+        for _ in range(60):
+            r = sh(['docker', 'exec', 'solin-dev-api', 'python', '-c',
+                    'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('
+                    '\'http://127.0.0.1:8000/api/v1/inventory/?limit=0\', timeout=3).status==200 else 1)'],
+                   timeout=15)
+            if r.returncode == 0:
+                api_code = 200
+                break
+            time.sleep(1)
+        if api_code != 200:
+            logs = sh(['docker', 'logs', '--tail', '30', 'solin-dev-api']).stdout
+            L('[5] FAIL: solin-dev-api did not become ready after 60s\n%s' % logs)
+            raise SystemExit(1)
+        L('[5] solin-dev-api ready (200 on /api/v1/inventory inside container)')
     run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d',
-         '--force-recreate', *up_targets], timeout=600)
+         '--force-recreate', d['svc']], timeout=600)
     code = None
     for _ in range(60):
         code, _ = http_get('http://127.0.0.1:%d/healthz' % d['port'], timeout=5)
