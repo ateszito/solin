@@ -37,7 +37,7 @@ def svc(tmp_path, monkeypatch):
     import app.inventory.media as media_mod
     mount_dir = None
     for r in app.routes:
-        if getattr(r, "path", "") == "/media":
+        if getattr(r, "path", "") == "/api/v1/media":
             from fastapi.staticfiles import StaticFiles
             inner = getattr(r, "app", r)  # app.mount wraps the StaticFiles
             if isinstance(inner, StaticFiles):
@@ -79,7 +79,7 @@ def test_post_201_full_payload_roundtrip(client, svc):
             {"amount": 3.49, "currency": "EUR", "pack_size": 500, "source": "Lidl"},
         ],
     }
-    r = client.post("/inventory", json=payload)
+    r = client.post("/api/v1/inventory", json=payload)
     assert r.status_code == 201, r.text
     body = r.json()
     # Server-generated identity
@@ -103,7 +103,7 @@ def test_post_201_full_payload_roundtrip(client, svc):
 
 
 def test_post_400_missing_macro_field(client):
-    r = client.post("/inventory", json={
+    r = client.post("/api/v1/inventory", json={
         "name": "X", "base_unit": "g",
         "macros_per_100": {"calories": 10, "protein": 1, "fat": 1,
                            "carbs": 1, "fiber": 1, "sugar": 1},  # no sodium
@@ -115,13 +115,13 @@ def test_post_400_missing_macro_field(client):
 
 
 def test_post_400_negative_macro(client):
-    r = client.post("/inventory", json={
+    r = client.post("/api/v1/inventory", json={
         "name": "X", "base_unit": "g", "macros_per_100": _macro_block(calories=-5)})
     assert r.status_code == 400 and r.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_post_400_bad_base_unit(client):
-    r = client.post("/inventory", json={
+    r = client.post("/api/v1/inventory", json={
         "name": "X", "base_unit": "cup", "macros_per_100": _macro_block()})
     assert r.status_code == 400 and r.json()["code"] == "VALIDATION_ERROR"
 
@@ -129,7 +129,7 @@ def test_post_400_bad_base_unit(client):
 def test_post_400_non_numeric_macro(client):
     # §1.1: "missing or non-number" macro keys → MACRO_BLOCK_INCOMPLETE (400);
     # the service maps a non-numeric value to that code (a field-level defect).
-    r = client.post("/inventory", json={
+    r = client.post("/api/v1/inventory", json={
         "name": "X", "base_unit": "g",
         "macros_per_100": {"calories": "fast", "protein": 1, "fat": 1,
                            "carbs": 1, "fiber": 1, "sugar": 1, "sodium": 1}})
@@ -140,7 +140,7 @@ def test_post_400_non_numeric_macro(client):
 
 def test_post_422_macro_block_not_object(client):
     # A true type-shape mismatch (macro block not an object) → 422 UNPROCESSABLE.
-    r = client.post("/inventory", json={
+    r = client.post("/api/v1/inventory", json={
         "name": "X", "base_unit": "g", "macros_per_100": "165 kcal"})
     assert r.status_code == 422
     assert r.json()["code"] == "UNPROCESSABLE"
@@ -153,20 +153,20 @@ def test_post_422_macro_block_not_object(client):
 def test_list_search_and_pagination(client, svc):
     for name in ["Apple", "Banana", "Cherry", "Date"]:
         svc.create({"name": name, "base_unit": "g", "macros_per_100": _macro_block()})
-    r = client.get("/inventory", params={"limit": 2, "offset": 0})
+    r = client.get("/api/v1/inventory", params={"limit": 2, "offset": 0})
     assert r.status_code == 200
     b = r.json()
     assert b["total"] == 4 and len(b["items"]) == 2
-    r = client.get("/inventory", params={"search": "bana"})
+    r = client.get("/api/v1/inventory", params={"search": "bana"})
     assert r.json()["total"] == 1 and r.json()["items"][0]["name"] == "Banana"
 
 
 def test_get_200_and_404(client, svc):
     pid = svc.create({"name": "Solo", "base_unit": "ml",
                       "macros_per_100": _macro_block()})["id"]
-    r = client.get(f"/inventory/{pid}")
+    r = client.get(f"/api/v1/inventory/{pid}")
     assert r.status_code == 200 and r.json()["id"] == pid
-    r = client.get("/inventory/does-not-exist")
+    r = client.get("/api/v1/inventory/does-not-exist")
     assert r.status_code == 404 and r.json()["code"] == "NOT_FOUND"
 
 
@@ -181,7 +181,7 @@ def _mk(client, svc, name="Test"):
 
 def test_put_macros_only(client, svc):
     pid = _mk(client, svc)
-    r = client.put(f"/inventory/{pid}",
+    r = client.put(f"/api/v1/inventory/{pid}",
                    json={"macros_per_100": _macro_block(protein=40.0)})
     assert r.status_code == 200
     b = r.json()
@@ -194,10 +194,10 @@ def test_put_macros_only(client, svc):
 def test_put_prices_full_replacement(client, svc):
     pid = _mk(client, svc)
     # Start with 1 entry
-    client.put(f"/inventory/{pid}", json={"prices": [
+    client.put(f"/api/v1/inventory/{pid}", json={"prices": [
         {"amount": 1.00, "currency": "USD", "pack_size": 10}]})
     # Replace with 2 (different amounts) — old entry must disappear
-    r = client.put(f"/inventory/{pid}", json={"prices": [
+    r = client.put(f"/api/v1/inventory/{pid}", json={"prices": [
         {"amount": 2.00, "currency": "USD", "pack_size": 20},
         {"amount": 3.00, "currency": "EUR", "pack_size": 30},
     ]})
@@ -211,27 +211,27 @@ def test_put_prices_full_replacement(client, svc):
 def test_put_images_set_and_clear(client, svc):
     pid = _mk(client, svc)
     # Seed an "already uploaded" reference (simulates a prior §3.7 upload)
-    slot_ref = {"url": "/media/inventory/%s/product_photo/uploaded.jpg" % pid,
+    slot_ref = {"url": "/api/v1/media/inventory/%s/product_photo/uploaded.jpg" % pid,
                 "filename": "uploaded.jpg", "mime_type": "image/jpeg",
                 "byte_size": 100, "uploaded_at": "2026-01-01T00:00:00Z"}
-    r = client.put(f"/inventory/{pid}",
+    r = client.put(f"/api/v1/inventory/{pid}",
                    json={"images": {"product_photo": slot_ref}})
     assert r.status_code == 200
     assert r.json()["images"]["product_photo"]["url"].endswith("uploaded.jpg")
     # Now clear
-    r = client.put(f"/inventory/{pid}",
+    r = client.put(f"/api/v1/inventory/{pid}",
                    json={"images": {"product_photo": None}})
     assert r.json()["images"]["product_photo"] is None
 
 
 def test_put_400_unknown_field(client, svc):
     pid = _mk(client, svc)
-    r = client.put(f"/inventory/{pid}", json={"bogus_key": 1})
+    r = client.put(f"/api/v1/inventory/{pid}", json={"bogus_key": 1})
     assert r.status_code == 400 and r.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_put_404(client):
-    r = client.put("/inventory/ghost", json={"name": "Ghost"})
+    r = client.put("/api/v1/inventory/ghost", json={"name": "Ghost"})
     assert r.status_code == 404 and r.json()["code"] == "NOT_FOUND"
 
 
@@ -246,7 +246,7 @@ def test_delete_204_and_media_gone(client, svc, tmp_path):
     from app.inventory.media import media_root
     inv_dir = os.path.join(media_root(), "inventory", pid)
     assert os.path.isdir(inv_dir)
-    r = client.delete(f"/inventory/{pid}")
+    r = client.delete(f"/api/v1/inventory/{pid}")
     assert r.status_code == 204
     assert not os.path.isdir(inv_dir)  # media swept
     from app.inventory.validation import InventoryError as IE
@@ -260,7 +260,7 @@ def test_delete_204_and_media_gone(client, svc, tmp_path):
 
 def _upload(client, svc, pid, slot, name, data, ctype):
     return client.post(
-        f"/inventory/{pid}/images/{slot}",
+        f"/api/v1/inventory/{pid}/images/{slot}",
         files={"file": (name, io.BytesIO(data), ctype)},
     )
 
@@ -271,7 +271,7 @@ def test_upload_200_and_url_fetchable(client, svc):
     assert r.status_code == 200, r.text
     slot = r.json()
     assert slot["mime_type"] == "image/jpeg"
-    assert slot["url"].startswith("/media/inventory/%s/product_photo/" % pid)
+    assert slot["url"].startswith("/api/v1/media/inventory/%s/product_photo/" % pid)
     assert slot["byte_size"] == len(JPG)
     assert slot["original_name"] == "chicken.jpg"
     # Contract QA assertion: GET <url> returns the bytes with content-type.
@@ -280,7 +280,7 @@ def test_upload_200_and_url_fetchable(client, svc):
     assert got.content == JPG
     assert got.headers["content-type"].startswith("image/jpeg")
     # Product now reports the slot
-    assert client.get(f"/inventory/{pid}").json()["images"]["product_photo"]["url"] == slot["url"]
+    assert client.get(f"/api/v1/inventory/{pid}").json()["images"]["product_photo"]["url"] == slot["url"]
 
 
 def test_upload_replaces_previous(client, svc):
@@ -289,7 +289,7 @@ def test_upload_replaces_previous(client, svc):
     r2 = _upload(client, svc, pid, "label_photo", "b.png", PNG + b"x", "image/png")
     assert r1.json()["url"] != r2.json()["url"] or r2.json()["filename"] != r1.json()["filename"]
     # The product's stored slot is the NEW one
-    stored = client.get(f"/inventory/{pid}").json()["images"]["label_photo"]
+    stored = client.get(f"/api/v1/inventory/{pid}").json()["images"]["label_photo"]
     assert stored["filename"] == r2.json()["filename"]
     assert stored["byte_size"] == len(PNG) + 1
 
@@ -334,7 +334,7 @@ def seeded(svc):
 def test_macros_count_canonical_3_ingredient_recipe(client, seeded):
     """Acceptance: 3 sample ingredients → totals match hand-calculated
     values (contract §5.3) within 0.1; cost 2.05 USD."""
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 200, "unit": "g"},
         {"product_id": "p2", "quantity": 100, "unit": "g"},
         {"product_id": "p3", "quantity": 10, "unit": "ml"},
@@ -353,7 +353,7 @@ def test_macros_count_canonical_3_ingredient_recipe(client, seeded):
 
 
 def test_macros_count_1_ingredient(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 200, "unit": "g"}]})
     assert r.status_code == 200
     b = r.json()
@@ -362,7 +362,7 @@ def test_macros_count_1_ingredient(client, seeded):
 
 
 def test_macros_count_5_ingredients(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 100, "unit": "g"},
         {"product_id": "p2", "quantity": 50, "unit": "g"},
         {"product_id": "p3", "quantity": 5, "unit": "ml"},
@@ -386,7 +386,7 @@ def test_macros_count_5_ingredients(client, seeded):
 
 def test_macros_count_missing_product_is_200_with_warning(client, seeded):
     """Acceptance: missing ingredient → 200 + warning (not 500), zero row."""
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 100, "unit": "g"},
         {"product_id": "ghost-product", "quantity": 5, "unit": "g"},
     ]})
@@ -404,7 +404,7 @@ def test_macros_count_missing_product_is_200_with_warning(client, seeded):
 
 
 def test_macros_count_unit_mismatch_flagged_not_fatal(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 250, "unit": "ml"}]})
     assert r.status_code == 200
     b = r.json()
@@ -414,20 +414,20 @@ def test_macros_count_unit_mismatch_flagged_not_fatal(client, seeded):
 
 
 def test_macros_count_empty_items_is_400(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": []})
+    r = client.post("/api/v1/inventory/macros/count", json={"items": []})
     assert r.status_code == 400
     assert r.json()["code"] == "VALIDATION_ERROR"
     assert "items" in r.json()["fields"]
 
 
 def test_macros_count_items_not_list_is_400(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": "p1"})
+    r = client.post("/api/v1/inventory/macros/count", json={"items": "p1"})
     assert r.status_code == 400
     assert r.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_macros_count_zero_quantity_row_is_zero(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 0, "unit": "g"}]})
     assert r.status_code == 200
     b = r.json()
@@ -437,7 +437,7 @@ def test_macros_count_zero_quantity_row_is_zero(client, seeded):
 
 
 def test_macros_count_large_quantity_stays_finite(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p2", "quantity": 1000000000, "unit": "g"}]})
     assert r.status_code == 200
     b = r.json()
@@ -447,7 +447,7 @@ def test_macros_count_large_quantity_stays_finite(client, seeded):
 
 
 def test_macros_count_name_override_in_response(client, seeded):
-    r = client.post("/inventory/macros/count", json={"items": [
+    r = client.post("/api/v1/inventory/macros/count", json={"items": [
         {"product_id": "p1", "quantity": 100, "unit": "g",
          "name_override": "Oyala breast"}]})
     assert r.status_code == 200

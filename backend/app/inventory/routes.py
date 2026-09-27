@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from .service import default_service as svc
 from .validation import InventoryError
 
-router = APIRouter(prefix="/inventory", tags=["inventory"])
+router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
 # 10 MB hard stream cap on uploads (FastAPI's UploadFile spools to disk past
 # this anyway; we cap the *read* so a 50 MB upload 413s at the service

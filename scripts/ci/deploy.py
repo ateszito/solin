@@ -7,15 +7,19 @@ Usage:  deploy.py <dev|staging|prod> <commit-sha>
 Pipeline:
   1. build context at ~/SolinCI/build-ctx — app/ files + REAL video files
      (Docker COPY does not follow the repo's VideoContent symlink — D12)
+     + backend/ + requirements.txt + Dockerfile.api (dev API image, D2)
   2. pre-deploy pg_dumpall snapshot for staging/prod (data safety)
   3. docker build with per-tier build-args → solin:<env> + immutable tag
      (bakes /healthz, /api/healthz.json, _solin.env.js: tier + version)
+     + (dev only) docker build -f Dockerfile.api → solin:dev-api + immutable
   4. rollback pointer: previous image tagged rollback-<env> + state file
   5. compose up -d --force-recreate <web service> ONLY — DB + named volume
      untouched → no data loss, no manual container restart ever
+     (dev: web + api recreated together; api data volume survives)
   6. smoke checks: local :<port>/healthz + /api/healthz.json + public
      subdomain must all report the correct tier (and the baked commit),
      else the deploy FAILS and the poller retries next tick
+     (dev: + live API probes — /api/v1/inventory 200 + seed image 200)
 
 Runtime layout (all outside ~/Documents — launchd TCC):
   ~/SolinCI/repo        git clone of ateszito/solin (build source)
@@ -144,6 +148,11 @@ def main():
                 shutil.copy2(src, os.path.join(vdst, f))
                 nvid += 1
     shutil.copy2(os.path.join(REPO, 'Dockerfile'), os.path.join(ctx, 'Dockerfile'))
+    # --- API image context (dev-only, D2): backend code + deps + API dockerfile ---
+    shutil.copytree(os.path.join(REPO, 'backend'), os.path.join(ctx, 'backend'),
+                    ignore=shutil.ignore_patterns('__pycache__', 'media', '*.pyc'))
+    shutil.copy2(os.path.join(REPO, 'requirements.txt'), os.path.join(ctx, 'requirements.txt'))
+    shutil.copy2(os.path.join(REPO, 'Dockerfile.api'), os.path.join(ctx, 'Dockerfile.api'))
     ctx_kb = run(['du', '-sk', ctx]).split()
     L('[1] build context ready (%s files, %d videos, %s KB)'
       % (n_copied, nvid, ctx_kb[0] if ctx_kb else '?'))
@@ -184,6 +193,34 @@ def main():
     new_id = sh(['docker', 'image', 'inspect', d['image'], '--format', '{{.Id}}']).stdout.strip()
     L('[3] built %s -> %s (immutable: %s)' % (d['image'], new_id[:19], immutable))
 
+    # ---- 3b. (dev only) build + start the FastAPI backend (D2) -------------
+    API_IMAGE = 'solin:dev-api'
+    if env == 'dev':
+        # Dev-only secret: baked into the image (blueprint D2 — dev box only,
+        # no promotion to staging/prod yet). Deterministic so re-deploys are
+        # identical; not a secret worth hiding on a personal laptop.
+        api_rollback_file = os.path.join(ST, 'last-rollback-dev-api')
+        old_api = sh(['docker', 'image', 'inspect', API_IMAGE, '--format', '{{.Id}}']).stdout.strip()
+        if old_api:
+            run(['docker', 'tag', old_api, 'rollback-dev-api'])
+            open(api_rollback_file, 'w').write(old_api + '\n')
+        api_ver = 'api-%s' % version
+        run(['docker', 'build', '-f', 'Dockerfile.api',
+             '--build-arg', 'SOLIN_ENV=development',
+             '--build-arg', 'APP_VERSION=%s' % version,
+             '--build-arg', 'API_BASE_URL=https://%s' % d['sub'],
+             '--build-arg', 'PUBLIC_BASE_URL=https://%s' % d['sub'],
+             '--build-arg', 'CORS_ORIGINS=https://%s' % d['sub'],
+             '--build-arg', 'JWT_SECRET_KEY=solin-dev-local-jwt-%s' % version,
+             '--build-arg', 'DATABASE_URL=postgresql://solin:***@solin-dev-db:5432/solin_dev',
+             '-t', API_IMAGE, '-t', 'solin-deploy-dev-api-%s' % sha7,
+             ctx])
+        api_id = sh(['docker', 'image', 'inspect', API_IMAGE, '--format', '{{.Id}}']).stdout.strip()
+        L('[3b] built %s -> %s (immutable: solin-dev-api-%s)' % (API_IMAGE, api_id[:19], sha7))
+    else:
+        # staging/prod: keep the existing images; do NOT start an api container.
+        L('[3b] %s: api container not part of this tier yet (dev-only, D2)' % env)
+
     # ---- 4. runtime env file for compose ---------------------------------------
     envfile = os.path.join(ST, 'deploy-%s.env' % env)
     with open(envfile, 'w') as fh:
@@ -191,8 +228,15 @@ def main():
         fh.write('DEV_DB_PASSWORD=solin\nSTAGING_DB_PASSWORD=solin\nPROD_DB_PASSWORD=solin\n')
     L('[4] compose env file: %s (%s=%s)' % (os.path.basename(envfile), d['ver_var'], version))
 
-    # ---- 5. recreate the WEB container only (data preserved) --------------------
-    run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d', '--force-recreate', d['svc']], timeout=600)
+    # ---- 5. recreate WEB container (dev: + api; data preserved) ----------------
+    # dev: web + api are recreated TOGETHER (blueprint D2); the api data/media
+    # live in the vol_solin_dev_data named volume which is NOT touched here, so
+    # seeded/created products survive a force-recreate exactly like the DBs do.
+    up_targets = [d['svc']]
+    if env == 'dev':
+        up_targets.append('solin-dev-api')
+    run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d',
+         '--force-recreate', *up_targets], timeout=600)
     code = None
     for _ in range(60):
         code, _ = http_get('http://127.0.0.1:%d/healthz' % d['port'], timeout=5)
@@ -204,6 +248,18 @@ def main():
         L('[5] FAIL: %s did not serve 200 on :%d after 60s — %s' % (d['svc'], d['port'], ps))
         raise SystemExit(1)
     L('[5] %s serving 200 on :%d' % (d['svc'], d['port']))
+    if env == 'dev':
+        api_code = None
+        for _ in range(60):
+            api_code, _ = http_get('http://127.0.0.1:%d/api/v1/inventory/?limit=1' % d['port'], timeout=5)
+            if api_code == 200:
+                break
+            time.sleep(1)
+        if api_code != 200:
+            ps = sh(['docker', 'ps', '-a', '--filter', 'name=solin', '--format', '{{.Names}} {{.Status}}']).stdout
+            L('[5] FAIL: solin-dev-api did not serve /api/v1/inventory 200 after 60s — %s' % ps)
+            raise SystemExit(1)
+        L('[5] solin-dev-api serving /api/v1/inventory 200 (through solin-dev-web)')
 
     # ---- 6. smoke checks --------------------------------------------------------
     failures = 0
@@ -223,6 +279,20 @@ def main():
     check('%s /healthz' % d['svc'], 'http://127.0.0.1:%d/healthz' % d['port'], [d['tier']])
     check('%s /api/healthz.json' % d['svc'], 'http://127.0.0.1:%d/api/healthz.json' % d['port'], [d['tier'], sha7])
     check('public https://%s/healthz' % d['sub'], 'https://%s/healthz' % d['sub'], [d['tier']])
+    if env == 'dev':
+        # Live API probes (D3 smoke extension): the FastAPI inventory module
+        # and its seed media must be reachable over the public subdomain —
+        # this is the acceptance that makes A1–A5 true end-to-end.
+        check('public https://%s/api/v1/inventory' % d['sub'],
+              'https://%s/api/v1/inventory' % d['sub'], ['p1', 'Chicken'])
+        # Seed image over https — a 200 with any body proves static media is
+        # served (the bytes are binary; http_get decodes leniently).
+        code_img, img_body = http_get('https://%s/api/v1/media/inventory/p1/product_photo/seed.jpg' % d['sub'])
+        if code_img != 200:
+            failures += 1
+            L('[6] FAIL seed image HTTP %s over https: %s' % (code_img, img_body[:120]))
+        else:
+            L('[6] OK   seed image returned 200 over https (%d chars of binary decoded)' % len(img_body))
 
     if failures:
         L('===== deploy %s FAILED — roll forward on next push, or roll back: '

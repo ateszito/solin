@@ -64,14 +64,25 @@ RUN set -eu \
         > /usr/share/nginx/html/api/healthz.json \
     && echo "baked _solin.env.js + /healthz + /api/healthz.json for env=${SOLIN_ENV}"
 
-# ---- nginx: SPA + /healthz + /api/healthz (static fallbacks) ----
-# When the backend container is deployed on solin_net (blueprint sec 4.2),
-# replace the two static routes with `proxy_pass http://solin-<env>-api:8000`.
-# The bake + static /healthz below keeps this image standalone-runnable
-# until the FastAPI container lands — acceptance #5 is then met by the
-# backend container (also reading the same env vars, same shape).
-RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  location /healthz { default_type text/plain; }\n  location /api/ { try_files $uri $uri.json $uri.html =404; }\n  location / { try_files $uri $uri/ /index.html; }\n}\n' \
-    > /etc/nginx/conf.d/default.conf
+# ---- nginx: SPA + /healthz (/api/healthz.json static) + per-tier /api/ ----
+# Static-first (D3): exact-match blocks for the two CI-smoke probes are
+# served from the baked static files FIRST, so the smokes keep working even
+# if the API container is down.
+# DEV ONLY (D2/D5): everything else under /api/ is proxied to the
+# solin-dev-api container on solin_net (inventory, recipes, media).
+# STAGING/PROD (unchanged, D2 "dev for now"): /api/ keeps the static SPA
+# fallback exactly as before — their images have no upstream API behind
+# /api/* yet and must stay byte-compatible with the v0.1.3 behavior.
+# Because the choice is made at BUILD time (per tier), no runtime shell
+# conditional is needed — each tier's image bakes the config it needs.
+RUN if [ "${SOLIN_ENV}" = "development" ]; then \
+    API_LOC='location /api/ { proxy_pass http://solin-dev-api:8000; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_read_timeout 60s; }'; \
+  else \
+    API_LOC='location /api/ { try_files $uri $uri/ /index.html; }'; \
+  fi && \
+  printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$API_LOC" \
+    > /etc/nginx/conf.d/default.conf \
+    && echo "nginx config for env=${SOLIN_ENV} (proxy=${NGINX_API_LOCATION_DEV})"
 
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

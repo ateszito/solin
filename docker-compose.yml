@@ -22,6 +22,9 @@ volumes:
   vol_solin_dev_pg:
   vol_solin_staging_pg:
   vol_solin_prod_pg:
+  # Dev-API flat-file store + uploaded media (D2/D7): survives force-recreate
+  # exactly like the pg volumes do. NOT used by staging/prod yet.
+  vol_solin_dev_data:
 
 x-web: &web-base
   networks: [solin_net]
@@ -92,9 +95,32 @@ services:
     restart: unless-stopped
 
   # ---- DEVELOPMENT  (feature/* → solin-dev.ateszito.com :8082) ----
+  # FastAPI backend (D2, dev-only). Served through the web container's nginx
+  # `location /api/` proxy — no direct host port needed (keeps the host port
+  # map clean: 8082/8081/8080 are the SPA entry points). Solin_net DNS name
+  # `solin-dev-api` is the only thing nginx has to resolve.
+  # Data + media in vol_solin_dev_data (D7: survives deploys; seeds run
+  # idempotently at import, so first boot produces P1–P4).
+  solin-dev-api:
+    image: solin:dev-api
+    container_name: solin-dev-api
+    networks: [solin_net]
+    volumes:
+      - vol_solin_dev_data:/srv/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/inventory/?limit=0', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
   solin-dev-web:
     <<: *web-base
     image: solin:dev
+    # nginx resolves the `solin-dev-api` upstream at config LOAD — the api
+    # container must exist (or start alongside) or the web container fails
+    # with "host not found in upstream" (D2).
+    depends_on:
+      - solin-dev-api
     container_name: solin-dev-web
     ports: ["8082:80"]
     environment:

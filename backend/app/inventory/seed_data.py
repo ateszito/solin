@@ -54,7 +54,7 @@ def seed_products() -> list[dict]:
 
     Image slots reference the *seed* images the service layer writes on
     ``seed_inventory()`` — the URLs use the canonical
-    ``/media/inventory/<id>/<slot>/<name>`` namespace (contract C7/§2).
+    ``/api/v1/media/inventory/<id>/<slot>/<name>`` namespace (contract C7/§2).
     Timestamps are fixed so the store file is diffable.
     """
     ts = "2026-09-22T00:00:00Z"
@@ -79,14 +79,14 @@ def seed_products() -> list[dict]:
             ],
             "images": {
                 "product_photo": {
-                    "url": "/media/inventory/p1/product_photo/seed.jpg",
+                    "url": "/api/v1/media/inventory/p1/product_photo/seed.jpg",
                     "filename": "seed.jpg", "mime_type": "image/jpeg",
                     "byte_size": len(SEED_JPEG_BYTES),
                     "original_name": "chicken-breast.jpg",
                     "uploaded_at": ts,
                 },
                 "label_photo": {
-                    "url": "/media/inventory/p1/label_photo/seed.png",
+                    "url": "/api/v1/media/inventory/p1/label_photo/seed.png",
                     "filename": "seed.png", "mime_type": "image/png",
                     "byte_size": len(SEED_PNG_BYTES),
                     "original_name": "chicken-label.png",
@@ -114,14 +114,14 @@ def seed_products() -> list[dict]:
             ],
             "images": {
                 "product_photo": {
-                    "url": "/media/inventory/p2/product_photo/seed.jpg",
+                    "url": "/api/v1/media/inventory/p2/product_photo/seed.jpg",
                     "filename": "seed.jpg", "mime_type": "image/jpeg",
                     "byte_size": len(SEED_JPEG_BYTES),
                     "original_name": "rice.jpg",
                     "uploaded_at": ts,
                 },
                 "label_photo": {
-                    "url": "/media/inventory/p2/label_photo/seed.png",
+                    "url": "/api/v1/media/inventory/p2/label_photo/seed.png",
                     "filename": "seed.png", "mime_type": "image/png",
                     "byte_size": len(SEED_PNG_BYTES),
                     "original_name": "rice-label.png",

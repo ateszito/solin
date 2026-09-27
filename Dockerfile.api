@@ -1,0 +1,65 @@
+# Solin — FastAPI backend image (dev-only, D2)
+# One-off companion to the nginx SPA image (Dockerfile at repo root).
+# Serves app.main:app on :8000 and is reached through the web container's
+# nginx `location /api/` proxy — the public URL scheme is
+#   https://solin-dev.ateszito.com/api/v1/...
+#
+# Build (CI):
+#   docker build -f Dockerfile.api \
+#     --build-arg SOLIN_ENV=development --build-arg APP_VERSION=v0.1.3-dev+abc1234 \
+#     --build-arg API_BASE_URL=https://solin-dev.ateszito.com \
+#     --build-arg PUBLIC_BASE_URL=https://solin-dev.ateszito.com \
+#     --build-arg CORS_ORIGINS=https://solin-dev.ateszito.com \
+#     --build-arg JWT_SECRET_KEY=<local-secret> \
+#     --build-arg DATABASE_URL=postgresql://solin:***@solin-dev-db:5432/solin_dev \
+#     -t solin:dev-api .
+#
+# Data + media live in a named volume (vol_solin_dev_data, blueprint D7):
+#   /srv/data/store/products.json   (flat JSON store)
+#   /srv/data/media/inventory/...   (uploaded product images)
+# Seed runs at import time (idempotent) — first boot writes P1–P4 + images.
+#
+# Local-only secrets: dev is a personal dev box; this build bakes the JWT
+# secret in (blueprint D2 — dev-only, no promotion yet).
+
+FROM python:3.11-slim
+
+WORKDIR /srv
+
+COPY requirements.txt .
+
+# Pin: the backend only needs FastAPI + Uvicorn (spec §1d: no DB driver).
+# requirements.txt keeps pytest/httpx for the test suite — harmless at runtime.
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend/ ./backend/
+
+# ---- build-time env (baked so config.py's fail-fast passes at import) ----
+ARG SOLIN_ENV=development
+ARG APP_VERSION=v0.0.0-dev+local
+ARG API_BASE_URL=https://solin-dev.ateszito.com
+ARG PUBLIC_BASE_URL=https://solin-dev.ateszito.com
+ARG CORS_ORIGINS=https://solin-dev.ateszito.com
+ARG JWT_SECRET_KEY=***
+ARG DATABASE_URL=postgresql://solin:***@solin-dev-db:5432/solin_dev
+ENV \
+  SOLIN_ENV=$SOLIN_ENV \
+  APP_VERSION=$APP_VERSION \
+  API_BASE_URL=$API_BASE_URL \
+  PUBLIC_BASE_URL=$PUBLIC_BASE_URL \
+  CORS_ORIGINS=$CORS_ORIGINS \
+  JWT_SECRET_KEY=$JWT_SECRET_KEY \
+  DATABASE_URL=$DATABASE_URL \
+  SOLIN_DATA_DIR=/srv/data \
+  SOLIN_MEDIA_ROOT=/srv/data/media
+
+# Named volume target (binds vol_solin_dev_data at deploy time).
+VOLUME ["/srv/data"]
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/inventory/?limit=0', timeout=3).status==200 else 1)"
+
+# Single worker — the in-memory/thread-store contract assumes it (store.py doc).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "backend"]

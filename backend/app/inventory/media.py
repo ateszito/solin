@@ -2,10 +2,11 @@
 
 Single source of truth for:
 * where image FILES live on disk  → ``<MEDIA_ROOT>/inventory/<id>/<slot>/``
-* what their public URL is        → ``/media/inventory/<id>/<slot>/<filename>``
+* what their public URL is        → ``/api/v1/media/inventory/<id>/<slot>/<filename>``
 
-The URL prefix ``/media`` is canonical (already used by the seed docs in
-``seed_data.py``); :mod:`app.main` mounts a StaticFiles handler there.
+The URL prefix ``/api/v1/media`` is canonical — the whole backend is served
+under the same ``/api/`` namespace that the SPA's ``window.SolinCfg.apiBase()
++ '/api/v1/'`` expects.  :mod:`app.main` mounts a StaticFiles handler there.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from datetime import datetime, timezone
 from ..config import settings
 
 #: Canonical app-root-relative prefix for all media URLs (C7).
-MEDIA_URL_PREFIX = "/media"
+MEDIA_URL_PREFIX = "/api/v1/media"
 
 
 def media_root() -> str:

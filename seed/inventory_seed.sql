@@ -27,7 +27,7 @@ INSERT INTO inventory (
       {"id": "pr1", "amount": 2.99, "currency": "USD", "pack_size": 400.0, "source": "home", "captured_at": "2026-09-22T00:00:00Z"},
       {"id": "pr2", "amount": 3.49, "currency": "EUR", "pack_size": 500.0, "source": "Lidl", "captured_at": "2026-09-22T00:00:00Z"}
     ]',
-    '{"product_photo": {"url": "/media/inventory/p1/product_photo/seed.jpg", "filename": "seed.jpg", "mime_type": "image/jpeg", "byte_size": 314, "original_name": "chicken-breast.jpg", "uploaded_at": "2026-09-22T00:00:00Z"}, "label_photo": {"url": "/media/inventory/p1/label_photo/seed.png", "filename": "seed.png", "mime_type": "image/png", "byte_size": 73, "original_name": "chicken-label.png", "uploaded_at": "2026-09-22T00:00:00Z"}}',
+    '{"product_photo": {"url": "/api/v1/media/inventory/p1/product_photo/seed.jpg", "filename": "seed.jpg", "mime_type": "image/jpeg", "byte_size": 314, "original_name": "chicken-breast.jpg", "uploaded_at": "2026-09-22T00:00:00Z"}, "label_photo": {"url": "/api/v1/media/inventory/p1/label_photo/seed.png", "filename": "seed.png", "mime_type": "image/png", "byte_size": 73, "original_name": "chicken-label.png", "uploaded_at": "2026-09-22T00:00:00Z"}}',
     '2026-09-22T00:00:00Z',
     '2026-09-22T00:00:00Z'
 );
@@ -47,7 +47,7 @@ INSERT INTO inventory (
     '[
       {"id": "pr3", "amount": 5.49, "currency": "USD", "pack_size": 1000.0, "source": "home", "captured_at": "2026-09-22T00:00:00Z"}
     ]',
-    '{"product_photo": {"url": "/media/inventory/p2/product_photo/seed.jpg", "filename": "seed.jpg", "mime_type": "image/jpeg", "byte_size": 314, "original_name": "rice.jpg", "uploaded_at": "2026-09-22T00:00:00Z"}, "label_photo": {"url": "/media/inventory/p2/label_photo/seed.png", "filename": "seed.png", "mime_type": "image/png", "byte_size": 73, "original_name": "rice-label.png", "uploaded_at": "2026-09-22T00:00:00Z"}}',
+    '{"product_photo": {"url": "/api/v1/media/inventory/p2/product_photo/seed.jpg", "filename": "seed.jpg", "mime_type": "image/jpeg", "byte_size": 314, "original_name": "rice.jpg", "uploaded_at": "2026-09-22T00:00:00Z"}, "label_photo": {"url": "/api/v1/media/inventory/p2/label_photo/seed.png", "filename": "seed.png", "mime_type": "image/png", "byte_size": 73, "original_name": "rice-label.png", "uploaded_at": "2026-09-22T00:00:00Z"}}',
     '2026-09-22T00:00:00Z',
     '2026-09-22T00:00:00Z'
 );

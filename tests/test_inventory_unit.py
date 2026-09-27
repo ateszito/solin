@@ -152,16 +152,16 @@ def test_price_entry_bad_shapes():
 
 def test_image_slot_valid_and_rejects_fs_path():
     ok = validate_image_body(
-        {"url": "/media/inventory/p1/product_photo/a.jpg",
+        {"url": "/api/v1/media/inventory/p1/product_photo/a.jpg",
          "filename": "a.jpg", "mime_type": "image/jpeg", "byte_size": 100},
         "product_photo")
-    assert ok["url"].startswith("/media/")
+    assert ok["url"].startswith("/api/v1/media/")
     with pytest.raises(InventoryError) as e:
         validate_image_body({"url": "media/inventory/p1/x.jpg"}, "product_photo")
     assert e.value.code == "VALIDATION_ERROR"
     with pytest.raises(InventoryError) as e:
         validate_image_body(
-            {"url": "/media/inventory/p1/x.tiff", "mime_type": "image/tiff"},
+            {"url": "/api/v1/media/inventory/p1/x.tiff", "mime_type": "image/tiff"},
             "product_photo")
     assert e.value.code == "UNSUPPORTED_MEDIA_TYPE"
 
@@ -184,7 +184,7 @@ def test_slot_url_and_dir_convention(tmp_path, monkeypatch):
     import app.inventory.media as media_mod
     importlib.reload(media_mod)
     assert media_mod.slot_url("p1", "label_photo", "a.png") == \
-        "/media/inventory/p1/label_photo/a.png"
+        "/api/v1/media/inventory/p1/label_photo/a.png"
     assert media_mod.slot_dir("p1", "label_photo") == \
         os.path.join(str(tmp_path), "inventory", "p1", "label_photo")
 
