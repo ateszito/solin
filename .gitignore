@@ -16,7 +16,9 @@ __pycache__
 .mypy_cache
 /.venv/
 /venv/
-requirements.txt
+# NOTE: requirements.txt is intentionally NOT ignored — it is baked into the
+# Docker build context (Dockerfile.api) and copied by scripts/ci/deploy.py
+# from the CI clone. Keeping it tracked is load-bearing for the pipeline.
 
 # Node
 node_modules/
