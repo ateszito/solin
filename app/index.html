@@ -101,12 +101,48 @@
 
     <div id="match-results"></div>
   </section>
+  <!-- ================= FOOD COUNTER (real macros + price) ================= -->
+  <section class="view hidden" id="view-foodcounter">
+    <h2 class="view-title">Food &amp; Macro Counter</h2>
+    <p class="hint">Raktári termékek az API-ból, real makrókkal és ároptiókkal. Adj hozzá terméket, majd párosítsd egy étel alapanyagaival, és a számoló a tényleges makrókat + az elhasznált portiók árát adja. A mentett étel a localhoston (localStorage) marad a készüléken.</p>
+
+    <div class="card fc-product-card">
+      <div class="fc-card-head">
+        <h3>Terméklista <span id="fc-count" class="pill"></span></h3>
+        <div class="inline-form fc-searchwrap">
+          <input id="fc-search" type="search" placeholder="Keresés…" />
+          <button id="fc-search-btn" class="btn sm ghost">Keres</button>
+          <button id="fc-new" class="btn sm primary">+ új termék</button>
+        </div>
+      </div>
+      <ul id="fc-product-list" class="fc-products"></ul>
+      <div id="fc-detail"></div>
+    </div>
+
+    <div class="card fc-counter-card">
+      <h3>Keverék / étel makrók + ár</h3>
+      <div id="fc-rows" class="fc-rows"></div>
+      <div class="fc-counter-actions">
+        <button id="fc-addrow" class="btn sm ghost">+ sor</button>
+        <button id="fc-count-btn" class="btn sm primary">Számolás</button>
+        <button id="fc-load-canonical" class="btn sm ghost">Elvárt példa (p1 200 g + p2 100 g + p3 10 ml)</button>
+        <button id="fc-clear-rows" class="btn sm ghost">Sorok törlése</button>
+      </div>
+      <div id="fc-result"></div>
+    </div>
+
+    <div class="card fc-meals-card">
+      <h3>Mentett étel / párosítás</h3>
+      <div id="fc-meals"></div>
+    </div>
+  </section>
 </main>
 
 <nav class="bottom-nav" id="bottom-nav">
   <button data-nav="browse" class="active"><span class="nav-ic">▤</span><span>Browse</span></button>
   <button data-nav="inventory"><span class="nav-ic">▣</span><span>Inventory</span></button>
   <button data-nav="match"><span class="nav-ic">◎</span><span>What&nbsp;I&nbsp;have</span></button>
+  <button data-nav="foodcounter"><span class="nav-ic">⌬</span><span>Food&nbsp;Counter</span></button>
 </nav>
 
 <div id="toast" class="toast hidden"></div>
@@ -121,6 +157,7 @@
 <script src="edit.js"></script>
 <script src="inventory.js"></script>
 <script src="match.js"></script>
+<script src="foodcounter.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -9,7 +9,8 @@ window.SolinStore = (function () {
     edits:      "solin.edits.v1",     // { recipeId: {field: value, ...} } (incl. ingredients/steps arrays)
     inventory:  "solin.inventory.v1", // [{name, qty, unit, subs: [..]}]
     have:       "solin.have.v1",      // [string] — "what I have at home"
-    ui:         "solin.ui.v1"         // last active tab, filters
+    ui:         "solin.ui.v1",       // last active tab, filters
+    meals:      "solin.foodcounter.meals.v1" // [{id, name, items, totals, total_cost, saved_at}] — saved macro-count sessions
   };
 
   function load(key, fallback) {
@@ -83,6 +84,10 @@ window.SolinStore = (function () {
   function getUI()   { return load(K.ui, { tab: "browse", tag: null }); }
   function setUI(u)  { save(K.ui, u); }
 
+  /* ---- saved meals (food counter sessions, client-side) ---- */
+  function getMeals() { return load(K.meals, []); }
+  function saveMeals(l) { save(K.meals, l); }
+
   // Hungarian-tolerant normalization for ingredient matching
   function norm(s) {
     return String(s || "")
@@ -111,6 +116,7 @@ window.SolinStore = (function () {
     getInventory, setInventory, findByBase,
     getHave, setHave,
     getUI, setUI,
+    getMeals, saveMeals,
     norm, similar
   };
 })();
