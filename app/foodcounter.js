@@ -403,7 +403,13 @@ window.FoodCounter = (function () {
       const v = i.value.trim();
       if (v !== "") { const n = Number(v); if (!isNaN(n)) { mac[i.dataset.macro] = n; anyMac = true; } }
     });
-    if (anyMac) body.macros_per_100 = mac;
+    if (anyMac) {
+      // C4 rule: when the macro block is present, ALL seven keys are
+      // mandatory. Blank fields the user left empty become 0.
+      const ALL_MACROS = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium"];
+      body.macros_per_100 = {};
+      ALL_MACROS.forEach((k) => { body.macros_per_100[k] = (k in mac) ? mac[k] : 0; });
+    }
 
     const prices = [];
     formEl.querySelectorAll(".fc-price-row").forEach((row) => {
