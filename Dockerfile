@@ -75,14 +75,29 @@ RUN set -eu \
 # /api/* yet and must stay byte-compatible with the v0.1.3 behavior.
 # Because the choice is made at BUILD time (per tier), no runtime shell
 # conditional is needed — each tier's image bakes the config it needs.
+#
+# Cache header (dev only — t_01895707): the Cloudflare zone runs
+# browser_cache_ttl=14400 + cache_level=aggressive, which overrides ANY
+# numeric origin max-age (max-age=0/120/300 all arrive at the client as
+# max-age=14400). Only the `no-store` directive survives (cf-cache-status
+# BYPASS, client sees `cache-control: no-store`). So dev bakes
+# `add_header Cache-Control "no-store" always;` into the nginx vhost — every
+# browser hits the origin, CF never serves a stale edge copy, and a plain
+# GET of any app/*.js returns the just-deployed build. Staging/prod set
+# CC='' so their vhosts are byte-identical to before (no Cache-Control).
 RUN if [ "${SOLIN_ENV}" = "development" ]; then \
     API_LOC='location /api/ { proxy_pass http://solin-dev-api:8000; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_read_timeout 60s; }'; \
   else \
     API_LOC='location /api/ { try_files $uri $uri/ /index.html; }'; \
   fi && \
-  printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$API_LOC" \
+  if [ "${SOLIN_ENV}" = "development" ]; then \
+    CC='add_header Cache-Control "no-store" always;'; \
+  else \
+    CC=''; \
+  fi && \
+  printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
     > /etc/nginx/conf.d/default.conf \
-    && echo "nginx config for env=${SOLIN_ENV} (proxy=${NGINX_API_LOCATION_DEV})"
+    && echo "nginx config for env=${SOLIN_ENV} (proxy=${NGINX_API_LOCATION_DEV}, cache=${CC})"
 
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

@@ -26,7 +26,7 @@ Runtime layout (all outside ~/Documents — launchd TCC):
   ~/SolinCI/VideoContent symlink → ~/Documents/VideoContent (real mp4s)
   ~/SolinCI/state/      logs, last-seen markers, snapshots, env file
 """
-import os, sys, time, shutil, subprocess, urllib.request, signal
+import os, sys, time, json, shutil, subprocess, urllib.request, signal
 from contextlib import contextmanager
 
 CI  = os.path.expanduser('~/SolinCI')
@@ -95,6 +95,42 @@ def http_get(url, timeout=20):
             return r.getcode(), r.read().decode('utf-8', 'replace')
     except Exception as e:
         return None, repr(e)
+
+def cf_purge_hostname(hostname):
+    """Best-effort Cloudflare purge by hostname (t_01895707). Returns (ok:bool, msg).
+    Never raises — a purge failure must NOT fail a deploy (the dev image already
+    sends Cache-Control: no-store, so browsers revalidate regardless). Reads
+    CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID from env (or falls back to the
+    repo .env.development). Logs a clear reason when it cannot purge (e.g.
+    token missing `zone.cache_purge` edit permission, currently 401)."""
+    token = os.environ.get('CLOUDFLARE_API_TOKEN')
+    zone  = os.environ.get('CLOUDFLARE_ZONE_ID')
+    if not (token and zone):
+        envfile = os.path.join(REPO, '.env.development')
+        if os.path.isfile(envfile):
+            for line in open(envfile):
+                line = line.strip()
+                if line.startswith('CLOUDFLARE_API_TOKEN=') and not line.lstrip('#').startswith('#'):
+                    token = line.split('=', 1)[1].strip().strip('"\'')
+                if line.startswith('CLOUDFLARE_ZONE_ID='):
+                    zone = line.split('=', 1)[1].strip()
+    if not (token and zone):
+        return False, 'no CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID — purge skipped'
+    url = 'https://api.cloudflare.com/client/v4/zones/%s/purge_cache' % zone
+    body = json.dumps({'purge_by_hostname': [hostname]}).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={'Authorization': 'Bearer ' + token,
+                 'Content-Type': 'application/json',
+                 'User-Agent': UA}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            resp = json.loads(r.read())
+            if resp.get('success'):
+                return True, 'purge requested for %s' % hostname
+            return False, 'purge api success=false: %s' % json.dumps(resp)[:160]
+    except Exception as e:
+        return False, repr(e)[:180]
 
 def main():
     if len(sys.argv) != 3:
@@ -339,6 +375,19 @@ def main():
     with open(os.path.join(ST, 'last-successful-%s' % env), 'w') as fh:
         fh.write('sha=%s version=%s snapshot=%s at=%s\n'
                  % (sha, version, snap, time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())))
+    # ---- 6b. best-effort Cloudflare edge purge (t_01895707) -----------
+    # Belt & suspenders for the stale-4h app/*.js bug: the dev image now bakes
+    # `Cache-Control: no-store` into the vhost so every browser revalidates with
+    # the origin, but we ALSO kick a purge of the zone edge for this hostname
+    # to clear any copies cached under the old max-age. Non-fatal on purpose:
+    # the current token lacks `zone.cache_purge` edit permission (401), so log
+    # the reason and keep going — the no-store header already guarantees
+    # freshness for new visitors.
+    ok, msg = cf_purge_hostname(d['sub'])
+    if ok:
+        L('[7] CF purge: %s' % msg)
+    else:
+        L('[7] CF purge skipped (non-fatal): %s' % msg)
     L('===== deploy %s OK in %.0fs — https://%s now serves %s ====='
       % (env, time.time() - T0, d['sub'], version))
     L('     rollback if needed: python3 ~/SolinCI/rollback.py %s' % env)
