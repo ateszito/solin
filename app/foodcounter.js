@@ -213,6 +213,11 @@ window.FoodCounter = (function () {
   }
 
   async function fillForm(id) {
+    // `id` being present IS the edit case — derive isEdit in THIS scope.
+    // (Bug: the template below referenced isEdit, which was previously only
+    //  declared in openForm's block → `isEdit is not defined` → panel stuck
+    //  on "Betöltés…" forever. openForm no longer needs its own isEdit.)
+    const isEdit = !!id;
     const panel = $("#fc-detail");
     panel.innerHTML = '<p class="hint">Betöltés…</p>';
     let p;
@@ -436,6 +441,12 @@ window.FoodCounter = (function () {
     if (body.prices.some((pr) => pr.amount == null || isNaN(pr.amount))) {
       toast("Ársor: a összeg legyen szám");
       if (errEl) errEl.textContent = "Ársor: a összeg legyen szám";
+      return;
+    }
+    // backend (validation.py:189) requires pack_size > 0 on EVERY price row
+    if (body.prices.some((pr) => pr.pack_size == null || isNaN(pr.pack_size) || pr.pack_size <= 0)) {
+      toast("Ársor: minden sorhoz adj meg csomagméretet");
+      if (errEl) errEl.textContent = "Ársor: minden sorhoz adj meg csomagméretet";
       return;
     }
     try {

@@ -172,8 +172,15 @@ window.Detail = (function () {
       ${esc(r.description)}
       ${macroCards(r)}
       ${ingredientSection(r, null)}
+      <div id="pairing"></div>
       ${stepsSection(r)}
     `;
+
+    // Pairing panel (recept ↔ termék): render the card now that the DOM is in place
+    if (window.Pairing) {
+      const pg = box.querySelector("#pairing");
+      if (pg) Pairing.renderCard(r);
+    }
 
     // wire interactions
     const editBtn = $("#edit-open");

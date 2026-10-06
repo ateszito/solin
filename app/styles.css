@@ -557,3 +557,65 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .fc-rows .fc-row [data-cq] { width: 90px; }
   .fc-table th:nth-child(8), .fc-table td:nth-child(8) { display: none; }
 }
+
+/* ============================================================
+   Pairing (recept ↔ termék) — recipe-detail real-macro pairing
+   (classes: pg-*) — same palette as the rest of the app.
+   ============================================================ */
+#pairing { margin-bottom: 14px; }
+.pg-badge {
+  font-size: 11.5px; font-weight: 800; padding: 2px 9px; border-radius: 999px;
+  background: var(--secondary-bg); color: var(--text-2);
+}
+.pg-badge.on { background: #E6F7E6; color: #1E7D33; }
+.pg-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+.pg-actions .btn { flex: 0 0 auto; }
+
+.pg-rows { list-style: none; margin: 0; padding: 0; }
+.pg-row {
+  border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  padding: 10px; margin-bottom: 8px;
+}
+.pg-row.paired { border-color: #BFE3BF; background: #F7FCF7; }
+.pg-rowtop { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.pg-name { font-weight: 700; font-size: 14px; }
+.pg-basehint { font-size: 12px; color: var(--text-2); font-weight: 600; }
+.pg-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pg-controls select, .pg-controls input {
+  flex: 0 0 auto; width: auto; padding: 8px 10px; font-size: 13.5px; background: #fff;
+}
+.pg-controls .pg-prod { flex: 1 1 160px; min-width: 0; }
+.pg-controls .pg-amt { flex: 0 1 110px; min-width: 90px; }
+.pg-controls .pg-unit { flex: 0 0 auto; min-width: 84px; }
+
+/* result table */
+.pg-result-card { background: #fff; }
+.pg-result-card h4 { margin: 0 0 8px; font-size: 13px; letter-spacing: .3px; }
+.pg-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.pg-table th, .pg-table td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid var(--line); }
+.pg-table th { background: var(--secondary-bg); font-size: 11.5px; }
+.pg-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.pg-total { margin-top: 6px; }
+.pg-tt { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 10px; }
+.pg-tt b { font-size: 15px; }
+.pg-totalprice {
+  display: flex; align-items: baseline; gap: 12px; padding: 12px;
+  background: var(--card-bg); border: 2px solid var(--primary); border-radius: 12px;
+}
+.pg-totalprice .lbl { font-size: 11.5px; font-weight: 800; letter-spacing: .5px; color: var(--text-2); }
+.pg-totalprice .val { font-size: 22px; font-weight: 800; color: var(--primary-dark); }
+.pg-warn {
+  display: inline-block; font-size: 10.5px; font-weight: 700; color: #B26A00;
+  background: #FFF4E0; border-radius: 999px; padding: 1px 7px; margin: 2px;
+}
+.pg-warns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.pg-result .scale-status { margin: 8px 0; }
+
+/* mobile: stack the pairing controls (phone ~390 px) */
+@media (max-width: 480px) {
+  .pg-controls .pg-prod { flex: 1 1 100%; }
+  .pg-controls .pg-amt { flex: 1 1 45%; min-width: 0; }
+  .pg-controls .pg-unit { flex: 1 1 45%; min-width: 0; }
+  .pg-actions .btn { flex: 1 1 40%; }
+  .pg-table th:nth-child(8), .pg-table td:nth-child(8) { display: none; }
+}
