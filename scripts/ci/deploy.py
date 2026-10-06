@@ -106,14 +106,30 @@ def cf_purge_hostname(hostname):
     token = os.environ.get('CLOUDFLARE_API_TOKEN')
     zone  = os.environ.get('CLOUDFLARE_ZONE_ID')
     if not (token and zone):
+        # Fallback 1: repo .env.development (any live, uncommented key).
         envfile = os.path.join(REPO, '.env.development')
         if os.path.isfile(envfile):
             for line in open(envfile):
                 line = line.strip()
-                if line.startswith('CLOUDFLARE_API_TOKEN=') and not line.lstrip('#').startswith('#'):
+                if line.startswith('CLOUDFLARE_API_TOKEN='):
                     token = line.split('=', 1)[1].strip().strip('"\'')
                 if line.startswith('CLOUDFLARE_ZONE_ID='):
                     zone = line.split('=', 1)[1].strip()
+    if not (token and zone):
+        # Fallback 2: ~/SolinCI/state/cf.env (mode 600, written by t_01895707
+        # worker so the launchd-spawned deploy still has credentials).
+        envfile2 = os.path.join(ST, 'cf.env')
+        if os.path.isfile(envfile2):
+            for line in open(envfile2):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line:
+                    k, v = line.split('=', 1)
+                    if k == 'CLOUDFLARE_API_TOKEN' and not token:
+                        token = v.strip()
+                    if k == 'CLOUDFLARE_ZONE_ID' and not zone:
+                        zone = v.strip()
     if not (token and zone):
         return False, 'no CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID — purge skipped'
     url = 'https://api.cloudflare.com/client/v4/zones/%s/purge_cache' % zone
