@@ -237,11 +237,10 @@ window.Pairing = (function () {
     ensureProducts().then(() => { renderRows(); wireCard(); }).catch(() => {});
 
     // collapsible
-    el.querySelector("[data-pg-toggle]").addEventListener("click", (e) => {
-      const body = el.querySelector("#pairing-body");
-      body.classList.toggle("open");
-      e.currentTarget.style.background = body.classList.contains("open") ? "#fff" : "#F5F5F5";
-    });
+    // NOTE: the collapsible toggle is handled by detail.js's generic
+    // .sec-head handler (render → box.querySelectorAll('.sec-head')).
+    // Adding our own listener here would DOUBLE-toggle (open→close→open = net
+    // no-op) — the classic "can't collapse the pairing panel" bug.
   }
 
   function rowHtml(row) {
