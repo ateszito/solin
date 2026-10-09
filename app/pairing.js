@@ -316,6 +316,14 @@ window.Pairing = (function () {
       '      <button class="btn sm" id="pg-save">💾 Párosítás mentése</button>' +
       '      <button class="btn sm ghost" id="pg-clear">Kiválasztott termékek törlése</button>' +
       '    </div>' +
+      // t_d6c25424: the result renders DIRECTLY below the action row (i.e.
+      // adjacent to the "Számolás →" button) instead of at the bottom of
+      // the panel below the ingredient rows — no scrolling needed after a
+      // calculate. Same #pg-result node (renderResult() is unchanged), so
+      // no duplicate result section can appear. The status line moved with
+      // it (it announces the result: "Kész — … az alábbiakban").
+      '    <div id="pg-status" class="scale-status hidden" role="status"></div>' +
+      '    <div id="pg-result"></div>' +
       '    <div class="pg-portions">' +
       '      <label for="pg-portions-in">Portionok</label>' +
       '      <div class="pg-portions-ctl">' +
@@ -327,8 +335,8 @@ window.Pairing = (function () {
       '      <span id="pg-portions-err" class="pg-err hidden" role="alert"></span>' +
       '    </div>' +
       '    <ul class="pg-rows" id="pg-rows"></ul>' +
-      '    <div id="pg-status" class="scale-status hidden" role="status"></div>' +
-      '    <div id="pg-result"></div>' +
+      // NOTE (t_d6c25424): #pg-status and #pg-result live just below the
+      // action row (next to the calculate button), not here.
       '  </div>' +
       '</div>';
     renderRows();
