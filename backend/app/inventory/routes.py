@@ -67,17 +67,26 @@ async def create_product(body: dict) -> dict:
 async def count_macros(body: dict) -> dict:
     """POST /inventory/macros/count — real-macro aggregation (contract §3.6, §4).
 
-    Body: ``{"items": [ingredient_reference, ...]}`` where each item follows
-    the §1.3 shape ``{product_id, quantity, unit, name_override?, note?}``.
+    Body: ``{"items": [ingredient_reference, ...], "portions": <int, default 1>}``
+    where each item follows the §1.3 shape ``{product_id, quantity, unit,
+    name_override?, note?}``. ``portions`` is the optional request-time view
+    parameter from ``design/PORTIONS.md`` (default 1, integral, 1..999).
 
-    Response: the canonical §4.4 ``MacroResult``::
+    Response: the canonical §4.4 ``MacroResult`` plus the two additive
+    portion-view keys (PORTIONS.md §3)::
 
         {
-          "totals": {7 macro keys},
+          "totals":         {7 macro keys},
+          "portions":       <effective int echo, default 1>,
+          "per_portion":    {7 macro keys, each r2(totals[f]/portions)},
           "per_ingredient": [...],
-          "total_cost": {"amount", "currency"} | null,
-          "warnings": [{"code", "product_id"}]
+          "total_cost":     {"amount", "currency"} | null,   # never divided
+          "warnings":       [{"code", "product_id"}]
         }
+
+    Invalid ``portions`` (0, negative, fractional, non-numeric, or > 999) →
+    400 ``PORTIONS_INVALID`` with ``fields=["portions"]``, raised before any
+    aggregation (PORTIONS.md §5 E3–E7).
 
     Unresolved ingredients are *reported*, not raised: 200 + a row with an
     all-zero macro block and ``PRODUCT_NOT_FOUND`` in ``warnings``.  The
@@ -85,6 +94,8 @@ async def count_macros(body: dict) -> dict:
     this route is the HTTP convenience named by contract §3.6.
     """
     from .validation import InventoryError as _IE
+    from .validation import validate_portions
+
     items = body.get("items")
     if not isinstance(items, list):
         raise _IE("VALIDATION_ERROR", 400, "items must be a list",
@@ -93,7 +104,10 @@ async def count_macros(body: dict) -> dict:
         raise _IE("VALIDATION_ERROR", 400,
                   "items must contain at least one ingredient reference",
                   fields=["items"])
-    return svc.macro_count(items)
+    # Portions is a request-only body field with default 1: omitting it /
+    # null → 1 (E1/E2); invalid → 400 PORTIONS_INVALID (validated inside).
+    portions = validate_portions(body.get("portions"))
+    return svc.macro_count(items, portions=portions)
 
 
 @router.get("")

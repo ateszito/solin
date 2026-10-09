@@ -15,7 +15,10 @@ Design principles (mirroring :mod:`app.services.recipe_scaling`):
   ``per_ingredient`` with a ``warnings`` flag and an all-zero macro block,
   and a top-level ``warnings`` list records the condition (contract §4.4).
 * **Canonical return shape** from contract §4.4:
-  ``{totals, per_ingredient, total_cost, warnings}``.
+  ``{totals, per_ingredient, total_cost, warnings}`` — plus the two
+  additive portion-view keys from ``design/PORTIONS.md §3``:
+  ``portions`` (effective int echo) and ``per_portion`` (MacroBlock,
+  ``r2(totals[f] / portions)`` per field).
 
 Conversion table (contract §4.5, family-based):
     mass    g/kg/mg        -> to g        (1 kg = 1000 g, 1 mg = 0.001 g)
@@ -34,7 +37,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # ---------------------------------------------------------------------------
 # C4 canonical macro keys (single source of truth shared with validation.py)
 # ---------------------------------------------------------------------------
-from .validation import MACRO_KEYS  # noqa: E402
+from .validation import MACRO_KEYS, _validate_portions  # noqa: E402
 
 #: Zero macro block (C4 order). Every unresolved ingredient carries this.
 ZERO_BLOCK: Dict[str, float] = {k: 0.0 for k in MACRO_KEYS}
@@ -226,6 +229,8 @@ def _resolve_products(products: Optional[Dict[str, dict]]) -> Dict[str, dict]:
 def aggregate_macro_result(
     ingredients: Sequence[dict],
     products: Optional[Dict[str, dict]] = None,
+    *,
+    portions: int = 1,
 ) -> Dict[str, Any]:
     """Aggregate real macros (and optional cost) for a prepared food.
 
@@ -233,6 +238,19 @@ def aggregate_macro_result(
     ``products`` mapping — no I/O, deterministic, exact Decimal math (C2
     ROUND_HALF_UP to 2 dp). ``products=None`` snapshots the default
     inventory store once (contract §3.6).
+
+    Portions (design/PORTIONS.md §4/§9): ``portions`` is a *view* parameter
+    — a pure divisor on the finished totals, validated **before** any
+    aggregation. The result gains two additive keys vs the legacy shape:
+
+    * ``portions``    — the effective int used for the split (echo; default 1).
+    * ``per_portion`` — a MacroBlock (7 fields, C4 order) where each field
+      = ``r2(totals[field] / portions)`` (C2 ROUND_HALF_UP, full precision
+      inside the division).
+
+    All four pre-existing keys (``totals``, ``per_ingredient``,
+    ``total_cost``, ``warnings``) are byte-for-byte unchanged;
+    ``total_cost`` is **never** divided (PORTIONS.md §7).
 
     Returns
     -------
@@ -247,6 +265,10 @@ def aggregate_macro_result(
             "warnings":     [{"code", "product_id"}],
         }
 
+    plus the two additive portion keys described above when
+    :func:`aggregate_macro_result` was called with (or defaulted to)
+    ``portions``.
+
     Unresolved ingredients are *reported*, not raised: they appear in
     ``per_ingredient`` with an all-zero macro block and a
     ``PRODUCT_NOT_FOUND`` warning, so the call is always a clean result
@@ -260,6 +282,42 @@ def aggregate_macro_result(
     products:
         Optional injectable mapping of product id → stored product doc.
         When ``None``, the default inventory store is read once.
+    portions:
+        Optional positive integer in ``[1, PORTIONS_MAX]`` (design
+        PORTIONS.md §5); defaults to ``1``. Fractional / out-of-range /
+        non-numeric values raise ``InventoryError("PORTIONS_INVALID", 400,
+        fields=["portions"])`` before any aggregation runs.
+    """
+    # Validate portions FIRST (cheap, no DB lookups — PORTIONS.md §5).
+    # May raise InventoryError("PORTIONS_INVALID", 400, fields=["portions"]).
+    n = _validate_portions(portions)
+
+    result = _aggregate(ingredients, products)  # today's logic, unchanged
+    totals: Dict[str, Any] = result["totals"]
+
+    # Additive-only: two new top-level keys, no existing key renamed or
+    # re-valued. per_portion = r2(totals[f] / N) per field, C4 order.
+    # Every macro key is always present in totals (unresolved ingredients
+    # carry an all-zero block), and values are finite numbers — _num()
+    # recovers the Decimal; the `or 0` is a type-level safety net only.
+    result["portions"] = n
+    result["per_portion"] = {
+        k: _out(r2((_num(totals[k]) or Decimal(0)) / n))
+        for k in MACRO_KEYS
+    }
+    return result
+
+
+def _aggregate(
+    ingredients: Sequence[dict],
+    products: Optional[Dict[str, dict]] = None,
+) -> Dict[str, Any]:
+    """Core aggregation (the pre-legacy body of :func:`aggregate_macro_result`).
+
+    Unchanged from the original engine: resolve + scale each ingredient,
+    sum per-batch into ``totals``, roll up cost. No portions awareness —
+    the caller splits the finished totals (PORTIONS.md §4 fixed order of
+    evaluation).
     """
     if not isinstance(ingredients, (list, tuple)):
         raise TypeError("ingredients must be a list of ingredient references")
@@ -416,16 +474,27 @@ def aggregate_macro_result(
     }
 
 
-def macro_count(ingredients: Sequence[dict]) -> Dict[str, Any]:
+def macro_count(
+    ingredients: Sequence[dict],
+    portions: int = 1,
+) -> Dict[str, Any]:
     """Contract §3.6 service function: ``macro_count(ingredients) -> MacroResult``.
 
     Resolves the ingredients against the default inventory store (a single
-    snapshot) and returns the canonical §4.4 result.  Every input ingredient
-    appears in ``per_ingredient[]`` in input order — including unresolved
-    ones (zero macros, ``PRODUCT_NOT_FOUND`` warning) — so callers never
-    see a 500 from the aggregation path (contract §6).
+    snapshot) and returns the canonical §4.4 result plus the two portion
+    view keys (``portions`` echo + ``per_portion`` MacroBlock) from
+    design/PORTIONS.md §3. Every input ingredient appears in
+    ``per_ingredient[]`` in input order — including unresolved ones (zero
+    macros, ``PRODUCT_NOT_FOUND`` warning) — so callers never see a 500
+    from the aggregation path (contract §6).
+
+    ``portions`` (default 1) is a request-time VIEW parameter only: it
+    divides the finished ``totals``; it never re-scales ingredient
+    quantities and never touches ``total_cost`` (PORTIONS.md §4/§7).
+    Invalid values raise ``InventoryError("PORTIONS_INVALID", 400,
+    fields=["portions"])`` before aggregation (PORTIONS.md §5 E3–E7).
     """
-    return aggregate_macro_result(ingredients, products=None)
+    return aggregate_macro_result(ingredients, products=None, portions=portions)
 
 
 #: Compatibility alias — the task body refers to the function as

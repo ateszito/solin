@@ -396,6 +396,7 @@ class InventoryService:
             self,
             ingredients: list,
             products: Optional[Dict[str, dict]] = None,
+            portions: int = 1,
     ) -> Dict[str, Any]:
         """Aggregate real macros + cost for a prepared food (contract §3.6/§4).
 
@@ -403,10 +404,15 @@ class InventoryService:
         ``products={...}`` → curated catalog (test / multi-store use). The
         pure engine lives in :mod:`app.inventory.macros`; this method is the
         service-facing name the contract names (``macro_count``).
+
+        ``portions`` (default 1) is forwarded straight to the engine as the
+        design/PORTIONS.md view parameter: it only divides the finished
+        ``totals`` (``per_portion`` output) and is validated as an int in
+        ``[1, 999]`` before aggregation (``PORTIONS_INVALID`` on failure).
         """
         if products is None:
             products = self.store.load()
-        return aggregate_macro_result(ingredients, products=products)
+        return aggregate_macro_result(ingredients, products=products, portions=portions)
 
 
     def seed(self) -> Dict[str, str]:

@@ -43,6 +43,11 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 #: The two image slots (product photo + label photo), in canonical order.
 IMAGE_SLOTS = ("product_photo", "label_photo")
 
+#: §7 / PORTIONS.md §5 — single source of the ``portions`` upper bound.
+#: A request-time sanity bound (not a hard data cap): it keeps per-portion
+#: values meaningful and defends against an accidental giant integer.
+PORTIONS_MAX = 999
+
 
 class InventoryError(Exception):
     """Service-layer error carrying the normative §6 error shape.
@@ -271,3 +276,68 @@ def validate_slot_name(slot: str) -> str:
             "VALIDATION_ERROR", 400,
             f"image slot must be one of {list(IMAGE_SLOTS)}", fields=["slot"])
     return slot
+
+
+def validate_portions(value: Any) -> int:
+    """Public entry point for the ``portions`` view-parameter validator.
+
+    Thin alias of :func:`_validate_portions` (the underscored form is the
+    isolated-testable core per design/PORTIONS.md §9; the public name is
+    what HTTP routes import). Semantics: ``None`` → default 1; must be a
+    JSON integral number in ``[1, PORTIONS_MAX]``; else 400
+    ``PORTIONS_INVALID`` with ``fields=["portions"]``.
+    """
+    return _validate_portions(value)
+
+
+def _validate_portions(value: Any) -> int:
+    """Validate the request-time ``portions`` view parameter (PORTIONS.md §5).
+
+    Normative rules (E1–E8 in §5):
+
+    * ``None`` (omitted / explicit ``null``) → default **1** (E1/E2).
+    * Must be a JSON *number* (int or integral float, e.g. ``100`` or
+      ``1e2`` → 100). Booleans, strings (``"4"``) and any other type are
+      rejected (E6). Fractional values (``2.5``, ``7.5``) are rejected
+      (E5/E7) — we **reject, never clamp or round**.
+    * Must satisfy ``1 <= portions <= PORTIONS_MAX`` (E3/E4/E7).
+
+    Returns the effective integer to use as the divisor. Raises
+    ``InventoryError("PORTIONS_INVALID", 400, ..., fields=["portions"])``
+    on any failure — the same top-level ``{code, message, fields}`` shape
+    every other request error in this module produces (PORTIONS.md §10).
+
+    Deliberately pure and store-free: unit-testable in isolation and safe
+    to call *before* any DB lookups / aggregation (PORTIONS.md §5:
+    validate portions first — it must fire even when the items are valid).
+    """
+    if value is None:
+        return 1  # omitted / null → default 1 (E1/E2)
+    if isinstance(value, bool):
+        raise InventoryError(
+            "PORTIONS_INVALID", 400,
+            f"portions must be an integer between 1 and {PORTIONS_MAX}",
+            fields=["portions"])
+    if isinstance(value, int):
+        raw = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not float(value).is_integer():
+            # NaN/inf are not valid JSON numbers here; 2.5/7.5 are
+            # fractional (E5) — both are rejects, not clamps.
+            raise InventoryError(
+                "PORTIONS_INVALID", 400,
+                f"portions must be an integer between 1 and {PORTIONS_MAX}",
+                fields=["portions"])
+        raw = int(value)  # integral float (e.g. 1e2) → int (E8)
+    else:
+        # strings, lists, dicts, … (E6: ``"4"`` is rejected, not coerced)
+        raise InventoryError(
+            "PORTIONS_INVALID", 400,
+            f"portions must be an integer between 1 and {PORTIONS_MAX}",
+            fields=["portions"])
+    if raw < 1 or raw > PORTIONS_MAX:
+        raise InventoryError(
+            "PORTIONS_INVALID", 400,
+            f"portions must be an integer between 1 and {PORTIONS_MAX}",
+            fields=["portions"])
+    return raw

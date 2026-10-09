@@ -452,3 +452,129 @@ def test_macros_count_name_override_in_response(client, seeded):
          "name_override": "Oyala breast"}]})
     assert r.status_code == 200
     assert r.json()["per_ingredient"][0]["name"] == "Oyala breast"
+
+
+# ---------------------------------------------------------------------------
+# POST /inventory/macros/count — ``portions`` extension (design/PORTIONS.md)
+# ---------------------------------------------------------------------------
+
+def test_portions_omitted_echoes_1_and_per_portion_equals_totals(client, seeded):
+    """E1 — backward-compat: no portions in body → default 1, per_portion
+    == totals field-for-field, all legacy keys unchanged."""
+    r = client.post("/api/v1/inventory/macros/count", json={
+        "items": [
+            {"product_id": "p1", "quantity": 200, "unit": "g"},
+            {"product_id": "p2", "quantity": 100, "unit": "g"},
+            {"product_id": "p3", "quantity": 10, "unit": "ml"},
+        ]})
+    assert r.status_code == 200
+    b = r.json()
+    assert b["portions"] == 1
+    for k in b["totals"]:
+        assert b["per_portion"][k] == b["totals"][k], (k, b)
+    # Legacy keys untouched
+    assert b["total_cost"] == {"amount": 2.05, "currency": "USD"}
+    assert len(b["per_ingredient"]) == 3
+    assert b["warnings"][0]["code"] == "CROSS_CURRENCY_EXCLUDED"
+
+
+def test_portions_null_behaves_like_omitted(client, seeded):
+    """E2 — explicit null → same as omitted → default 1."""
+    r = client.post("/api/v1/inventory/macros/count", json={
+        "items": [{"product_id": "p1", "quantity": 200, "unit": "g"}],
+        "portions": None})
+    assert r.status_code == 200
+    assert r.json()["portions"] == 1
+
+
+@pytest.mark.parametrize("bad", [0, -3, 2.5, "4", 7.5, 1000])
+def test_portions_invalid_returns_400_portions_invalid(client, seeded, bad):
+    """E3–E7 — every documented rejection maps to 400 PORTIONS_INVALID with
+    fields=["portions"], top-level error shape (no 'error' wrapper)."""
+    r = client.post("/api/v1/inventory/macros/count", json={
+        "items": [{"product_id": "p1", "quantity": 200, "unit": "g"}],
+        "portions": bad})
+    assert r.status_code == 400, r.text
+    b = r.json()
+    assert b["code"] == "PORTIONS_INVALID"
+    assert b["fields"] == ["portions"]
+    assert "message" in b
+    assert "error" not in b
+
+
+def test_portions_1e2_accepted_and_echoes_100(client, seeded):
+    """E8 — JSON integral number in scientific notation (1e2 == 100) is
+    valid; the echoed portions is int 100."""
+    r = client.post("/api/v1/inventory/macros/count", json={
+        "items": [
+            {"product_id": "p1", "quantity": 200, "unit": "g"},
+            {"product_id": "p2", "quantity": 100, "unit": "g"},
+            {"product_id": "p3", "quantity": 10, "unit": "ml"},
+        ],
+        "portions": 1e2,
+    })
+    assert r.status_code == 200
+    b = r.json()
+    assert isinstance(b["portions"], int)
+    assert b["portions"] == 100
+    # 767.40 / 100 -> 7.674 -> r2 half-up -> 7.67
+    assert b["per_portion"]["calories"] == 7.67
+
+
+def test_portions_4_matches_worked_example(client, seeded):
+    """Acceptance probe (PORTIONS.md §8): portions=4 per-portion EXACTLY
+    half-up 2 dp of the §5.3 canonical totals; total_cost unchanged."""
+    r = client.post("/api/v1/inventory/macros/count", json={
+        "items": [
+            {"product_id": "p1", "quantity": 200, "unit": "g"},
+            {"product_id": "p2", "quantity": 100, "unit": "g"},
+            {"product_id": "p3", "quantity": 10, "unit": "ml"},
+        ],
+        "portions": 4})
+    assert r.status_code == 200
+    b = r.json()
+    expected = {
+        "calories": 191.85, "protein": 17.48, "fat": 4.53,
+        "carbs": 19.7, "fiber": 0.53, "sugar": 0.03, "sodium": 37.5,
+    }
+    for k, v in expected.items():
+        assert b["per_portion"][k] == v, (k, b["per_portion"][k], v)
+    # total_cost invariant (PORTIONS.md §7)
+    assert b["total_cost"] == {"amount": 2.05, "currency": "USD"}
+    # totals unchanged
+    assert b["totals"]["calories"] == 767.4
+
+
+def test_portions_6_matches_worked_example(client, seeded):
+    r = client.post("/api/v1/inventory/macros/count", json={
+        "items": [
+            {"product_id": "p1", "quantity": 200, "unit": "g"},
+            {"product_id": "p2", "quantity": 100, "unit": "g"},
+            {"product_id": "p3", "quantity": 10, "unit": "ml"},
+        ],
+        "portions": 6})
+    assert r.status_code == 200
+    b = r.json()
+    expected = {
+        "calories": 127.9, "protein": 11.65, "fat": 3.02,
+        "carbs": 13.13, "fiber": 0.35, "sugar": 0.02, "sodium": 25.0,
+    }
+    for k, v in expected.items():
+        assert b["per_portion"][k] == v, (k, b["per_portion"][k], v)
+    assert b["total_cost"] == {"amount": 2.05, "currency": "USD"}
+
+
+def test_total_cost_invariant_across_portions_1_4_6(client, seeded):
+    """Regression guard: cost is never divided by portions."""
+    costs = set()
+    for P in (1, 4, 6):
+        r = client.post("/api/v1/inventory/macros/count", json={
+            "items": [
+                {"product_id": "p1", "quantity": 200, "unit": "g"},
+                {"product_id": "p2", "quantity": 100, "unit": "g"},
+                {"product_id": "p3", "quantity": 10, "unit": "ml"},
+            ],
+            "portions": P})
+        b = r.json()
+        costs.add((b["total_cost"]["amount"], b["total_cost"]["currency"]))
+    assert costs == {(2.05, "USD")}
