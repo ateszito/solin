@@ -5,6 +5,9 @@
 > - `t_152cdcdb` — implement Inventory CRUD + image upload (developer)
 > - `t_b321f68d` — implement `count_real_macros()` macro aggregation (developer)
 > - `t_06d48239` — QA end-to-end suite (tester)
+> - `t_3ba0beb1` — implement portion-aware macro split (backend)
+> - `t_2d849968` — add portion selector + per-portion display (UI)
+> - `t_76975145` — QA per-portion suite (tester)
 >
 > Every field name below is **canonical** and normative. Deviations require a
 > comment on the linking task before the developer proceeds.
@@ -34,7 +37,7 @@
   `/data/inventory/{product_id}/{slot}/{filename}`). The **media URL** is exposed
   through the existing static-media route. Never return a raw absolute
   filesystem path in an API response.
-- **C8 — Error shape.** HTTP `4xx/5xx` with body `{ "error": { "code": "<STR_ENUM>", "message": "<human>" } }`.
+- **C8 — Error shape.** HTTP `4xx/5xx` with a **top-level** JSON body `{ "code": "<STR_ENUM>", "message": "<human>" }` plus optional `"details"` / `"fields"` keys. No `error` wrapper — emit the body exactly as `InventoryError.to_body()` produces (`backend/app/inventory/validation.py`): `{"code", "message", "details"?, "fields"?}`. Field-level failures set `"fields": ["<dotted.key>", ...]`.
   Codes defined in **§6**. A 404 on an unknown product is `NOT_FOUND`; a 400 with
   a field list is `VALIDATION_ERROR`.
 
@@ -220,9 +223,9 @@ prices?, images? }`.
 ### 3.6 (Internal) `macro_count(recipe_ingredients: [ingredient_reference]) -> MacroResult`
 This is NOT an HTTP route in the MVP (it is a service function; the QA task
 exercises it via a thin wrapper or by importing it). Return contract in §5.
-The developer exposes a `POST /recipes/{id}/macros` convenience route that
-calls this service — the body is the `ingredient_reference[]` above, the
-response is the `MacroResult` below.
+The developer exposes a `POST /api/v1/inventory/macros/count` convenience
+route that calls this service — the body is `{"items":[ingredient_reference,...]}`,
+the response is the `MacroResult` below (`{totals, per_ingredient, total_cost, warnings}`).
 
 ### 3.7 `POST /inventory/{id}/images/{slot}` — upload an image
 - `slot` ∈ `product_photo | label_photo`.
@@ -436,6 +439,7 @@ Cost rationale:
 | 400 | `VALIDATION_ERROR` | field-level failure; `error.fields` lists the offending keys |
 | 400 | `MACRO_BLOCK_INCOMPLETE` | any of the C4 keys missing or non-numeric in a `MacroBlock` |
 | 400 | `UNITS_INCOMPATIBLE` | at aggregate time: `ing.unit` and product `base_unit` are in different conversion families (g-family vs pcs-family vs ml-family) |
+| 400 | `PORTIONS_INVALID` | `portions` not a positive integral integer in `[1, 999]` (e.g. `0`, `-3`, `2.5`, `"4"`, `1e2`=100 valid, `1000` invalid); body carries `fields=["portions"]` (see §7) |
 | 404 | `NOT_FOUND` | unknown product id |
 | 413 | `PAYLOAD_TOO_LARGE` | image > 10 MB |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | content-type not in §3.7 list |
@@ -444,7 +448,103 @@ Cost rationale:
 
 ---
 
-## 7. Seed data (developer `t_152cdcdb` writes; QA `t_06d48239` verifies)
+## 7. Portions view (the new `portions` view feature)
+
+> Binding: `design/PORTIONS.md`. This section is the **use case** and the
+> **normative surface**; all derivation rules live in the spec. Consumer
+> tasks: `t_3ba0beb1` (dev), `t_2d849968` (UI), `t_76975145` (QA).
+
+### 7.1 Intent
+
+The macro aggregation already returns the **whole-batch** total for one
+recipe as listed. The user sometimes prepares the same list as multiple
+served portions (e.g. "2 meals tonight" or "meal-prep 5"). We need a view
+that also shows **how much of the batch is in one served portion**, without
+changing the recipe, its quantities, or its stored product set. Portions are
+a *request-time view parameter* — nothing is persisted.
+
+### 7.2 Surface
+
+**Request** — `POST /api/v1/inventory/macros/count` body gains one optional field
+(alongside the existing `items[]` array):
+
+| field | type | required | default | constraints |
+|-------|------|----------|---------|-------------|
+| `portions` | integer | no | **1** | `1 ≤ portions ≤ 999`; must be integral; else `400 PORTIONS_INVALID` |
+
+**Response** — add two keys to the existing `{totals, per_ingredient,
+total_cost, warnings}` envelope (all four existing keys stay byte-for-byte
+identical when `portions` is omitted):
+
+| key | type | rule |
+|-----|------|------|
+| `portions` | integer | echoes the **effective** integer used (default `1`) |
+| `per_portion` | MacroBlock (7 keys, same order as `totals`) | `per_portion[f] = r2( totals[f] / portions )` (C2, HALF-UP) |
+
+`total_cost` is **not** divided — it stays the cost of the whole batch
+(`design/PORTIONS.md` §7). `total_macros` / `per_portion_macros` from the
+original request wording map to `totals` / `per_portion` here respectively.
+
+### 7.3 Interaction with ingredient quantities
+
+Portions are a **pure divisor on the finished `totals`**, not a re-scalar on
+ingredient quantities. The engine order is fixed:
+
+1. resolve & scale each ingredient by quantity/unit → §4.1 of this file
+2. sum per-ingredient r2 values → `totals` (§4.2)
+3. **only then**: `per_portion[f] = r2(totals[f]/portions)`
+
+So: "if you batch-cook the recipe N times" → set `portions=N` and pass
+`N×` the listed quantities; the engine sums and returns `totals` for N
+batches, and `per_portion` = `totals/N` = one batch. **`per_portion` is
+always `1/N` of the batch totals**, by construction.
+
+### 7.4 Edge cases (normative — `design/PORTIONS.md` §5)
+
+| case | treatment |
+|------|-----------|
+| `portions` omitted | default `1`; `per_portion == totals` field-for-field |
+| `portions: null` | treated as omitted → `1` |
+| `portions: 0`, `-3`, `2.5`, `"4"`, `1000` | **reject** with `400 PORTIONS_INVALID` (do NOT clamp or round) |
+| `portions: 100`, `6` | valid; `per_portion` is the `r2(totals/N)` split |
+| `portions: 1e2` (=100) | valid; echoed as integer `100` |
+| `portions: 7.5` | reject (must be integral) |
+
+**Upper bound: `PORTIONS_MAX = 999`** (single source:
+`backend/app/inventory/validation.py`). A user who prepares >999 portions
+should split across meals, not into one batch.
+
+### 7.5 Canonical worked reference (reuses §5.3 batch)
+
+Using the §5.3 canonical batch totals (`cal 767.40, prot 69.90, fat 18.10,
+carbs 78.80, fiber 2.10, sugar 0.10, sodium 150.00`) — **do not re-derive
+these, use them verbatim as inputs**:
+
+| `portions` | calories | protein | fat | carbs | fiber | sugar | sodium | total_cost |
+|-----------|----------|---------|-----|-------|-------|-------|--------|------------|
+| 1 | 767.40 | 69.90 | 18.10 | 78.80 | 2.10 | 0.10 | 150.00 | **2.05 USD** (unchanged) |
+| 4 | **191.85** | **17.48** | **4.53** | **19.70** | **0.53** | **0.03** | **37.50** | **2.05 USD** |
+| 6 | **127.90** | **11.65** | **3.02** | **13.13** | **0.35** | **0.02** | **25.00** | **2.05 USD** |
+
+The §5.3 numbers are the input; the `per_portion` row is the **exact**
+`design/PORTIONS.md` §8 table (verified against the live solin-dev engine,
+`r2(totals[N]/portions)` with `ROUND_HALF_UP`). `total_cost` is invariant
+across `portions` values — a regression guard QA asserts.
+
+### 7.6 Service signature (normative)
+
+The existing engine on `solin-dev` is
+`aggregate_macro_result(ingredients, products=None)` and a thin wrapper
+`macro_count(ingredients)`. Extend both with a trailing `portions: int = 1`
+keyword; validate **before** aggregation (E3–E7); on failure raise the
+existing 400 error path with `code=PORTIONS_INVALID`. Existing callers
+pass `portions=1` and see the same result **plus two additive keys**
+(`portions`, `per_portion`). No change to `per_ingredient`, `total_cost`, or
+`warnings` computation.
+
+---
+
+## 8. Seed data (developer `t_152cdcdb` writes; QA `t_06d48239` verifies)
 
 File: `seed/inventory_seed.sql`. Must create the **P1–P4** products from §5.1
 with the exact macro and price values so that the §5.3 worked example is
@@ -452,7 +552,7 @@ reproducible end-to-end. Two products must carry two image slots (product
 photo + label photo) — QA asserts `GET <image.url>` returns the declared
 `content-type` and non-empty body.
 
-## 8. Open decisions (already resolved by this contract)
+## 9. Open decisions (already resolved by this contract)
 
 - **Price replacement on PUT = full-list replacement** (§3.4).
 - **Cross-currency in cost = first-currency-wins, others excluded + warning** (§4.3).
@@ -464,11 +564,43 @@ photo + label photo) — QA asserts `GET <image.url>` returns the declared
 - **Rounding = half-up 2 dp** (C2), tolerance 0.1 g for QA comparison.
 - **`captured_at` for a new price entry is server-stamped when omitted** (§3.4).
 - **Concurrent PUTs = last-write-wins** (§3.4; QA concurrency test).
+- **Portions = view-only request parameter** (`portions`), not persisted. (§7)
+- **Effective range `[1, 999]`**, integer only; **default 1** (equivalent to
+  current behavior). Single source of the bound:
+  `backend/app/inventory/validation.py` `PORTIONS_MAX = 999`. (§7,
+  design/PORTIONS.md §2 E1)
+- **Response key names (canonical)** — `per_portion` (MacroBlock) and
+  `portions` (integer echo). The original task's loose naming
+  `per_portion_macros` / `portions_macros` maps to these names. Deviations
+  require a comment on the parent task. (§7.2)
+- **`per_portion` is a pure divisor of the already-computed `totals`** — no
+  secondary macro basis is consulted, `per_ingredient` rows are unchanged,
+  `total_cost` is not divided. (§7.3, design/PORTIONS.md §4–§7)
+- **Engine extension = trailing `portions: int = 1` kw on
+  `aggregate_macro_result(ingredients, products=None)` and on
+  `macro_count(ingredients)`** — not a new function, not a new endpoint.
+  Validate before aggregation; 400 `PORTIONS_INVALID` on failure. (§7.6,
+  design/PORTIONS.md §3)
+- **Invalid `portions` values are rejected, never clamped or rounded.**
+  (`0`, `-3`, `2.5`, `"4"`, `7.5`, `1000` are all `400 PORTIONS_INVALID`
+  with `fields=["portions"]`; `1e2`=100 is valid.) (§7.4)
 
-## 9. Explicit non-goals (MVP)
+## 10. Explicit non-goals (MVP)
 
 - Currency normalisation across `total_cost` (see §4.3).
 - A separate `ingredient` table — the reference lives on the recipe object.
 - Search / filter beyond `name` substring.
 - Authentication/authorization on these endpoints (none in the codebase today).
 - Batch multi-product create / delete (one `DELETE` per product id only).
+- **Portions persistence.** `portions` is a request-time view parameter only;
+  it is never stored on the product, recipe, or macro result. (§7)
+- **Portion re-derivation.** `per_portion` is always computed as
+  `r2(totals[portions])/portions`; no secondary macro basis is consulted for
+  per-portion values. (§7.3, design/PORTIONS.md §4)
+- **Cost re-derivation.** `total_cost` stays the whole-batch cost; the cost of
+  "one portion" is not broken out. (§7)
+- **Per-ingredient macro re-split** into per-portion values. (Portions act
+  only on the summed `totals`; `per_ingredient` rows are unchanged.) (§7.3)
+- **Clamping / rounding of a bad `portions` value.** Invalid input is always
+  a `400 PORTIONS_INVALID` (E3–E7); we never fall back to a "nearest valid
+  integer." (§7.4, design/PORTIONS.md §5)

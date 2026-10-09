@@ -102,11 +102,19 @@ window.FcApi = (function () {
      }
      Missing products are *reported* (200 + PRODUCT_NOT_FOUND row),
      unit-family mismatches are reported (UNITS_INCOMPATIBLE row). */
-  function countMacros(items) {
+  /* `portions` (design/PORTIONS.md §2): optional int 1..999. Omitted /
+     undefined → the key is NOT sent, so a pre-portions backend (and any
+     cache key built from the body) stays byte-for-byte identical to the
+     legacy request. Valid value → the backend echoes it + returns a
+     `per_portion` block (= totals / portions, HALF_UP 2 dp). */
+  function countMacros(items, portions) {
+    const payload = { items: items || [] };
+    const n = parseInt(portions, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 999) payload.portions = n;
     return api("/macros/count", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: items || [] }),
+      body: JSON.stringify(payload),
     });
   }
 

@@ -154,7 +154,37 @@
 - [ ] Filter: dairy-free → neither returned (has cream, parmesan)
 - [ ] Filter: vegetarian → neither returned (has chicken, sausage)
 
----
+### UC-07: Scale Recipe by Ingredient
+**Actor:** Recipe consumer (cooking at home)
+**Description:** User picks one ingredient of a recipe, enters the amount they actually have on hand, and the system recalculates every other ingredient proportionally so the dish keeps its ratios.
+**Preconditions:**
+- The recipe contains at least one ingredient with a **numeric amount + standardized unit** (the "scalable" subset — see UC-07 design spec §5).
+- User has opened the recipe in the detail view.
+
+**Flow:**
+1. In the **Hozzávalók** (Ingredients) section the user sees a "Scale recipe — adagméretezés" affordance (per-ingredient pencil / or a scale-bar at the section top).
+2. The user taps any scalable ingredient row (e.g. *csirkeemlő — 650 g*).
+3. An input appears inline, pre-filled with the base amount (650).
+4. The user types the available amount (e.g. 850) and taps **Recalculate** (or the value auto-recalculates on commit / debounce ~300 ms).
+5. The list updates in place — **no** page reload, **no** video scrub: every other scalable ingredient's amount+unit shows the new value, and changed cells are highlighted briefly (e.g. `261.5 g`).
+6. The scale factor is shown in a badge: **×1.31**.
+7. Non-scalable rows (e.g. "só — jódag (ízlés szerint)") are **not modified** and render with a neutral "kept" marker.
+8. A **Reset to original amounts** button returns the list to the stored base recipe and removes the badge.
+9. **Servings estimate** (e.g. "≈ 7 adag") is shown beside the badge as a soft hint (the factor is the source of truth).
+
+**Test scenarios:**
+- [ ] Selecting *csirkeemlő* and entering **850 g** recomputes red onion to **261.54 g**, sausage **65.38 g**, garlic **4 cloves**, cream **209.23 g**, tomato paste **3.9 tbsp**, parmesan **52.31 g** (canonical 2 dp; UI render 1 dp — see `RECIPE_SCALING.md` §3 note).
+- [ ] Entering **480 g** (downscale) produces red onion **147.69 g**, sausage **36.92 g**, garlic **2 cloves** (rounded half-up, min 1), cream **118.15 g**, parmesan **29.54 g** (see `RECIPE_SCALING.md` §5.2).
+- [ ] Entering **0** (or empty) shows a validation message "please enter the amount you have" and leaves the list unchanged.
+- [ ] Selecting a non-scalable row (e.g. *só — jódag*) shows it as "kept" and disables the input — no 400-class error.
+- [ ] The video player keeps its position during an update (no full re-render — regression check for `t_0baee0bb`).
+- [ ] Reset restores all base amounts and removes the ×factor badge in ≤ 300 ms.
+- [ ] Non-scalable rows are **not** scaled and are visually marked.
+- [ ] Mobile (320 px) usable: dropdown scrolls, input reachable, no horizontal overflow.
+- [ ] `curl POST /api/v1/recipes/<recipe-id>/scale` with `{"ingredient_id":2,"available_amount":850}` returns exactly the §5.1 table (see `RECIPE_SCALING.md` §8 API contract).
+- [ ] API 404 for unknown `ingredient`; 400 for invalid `available_amount` (≤ 0, non-numeric, or unit mismatch).
+
+**Depends on:** `RECIPE_SCALING.md` §4.0 (free-text fallback + stable per-ingredient `id`) and §8 (API contract `POST /scale`), UC-03 (shared ingredient-list rendering; must not break check-off).
 
 ## Acceptance Criteria Summary
 

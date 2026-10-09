@@ -15,6 +15,17 @@
         feature exists).
      4. Számolás → POST /api/v1/inventory/macros/count → real macro
         totals + per-row cost + ÖSSZES ÁR of the prepared food.
+        PORTIONS (design/PORTIONS.md §2/§3/§7): a portion-count selector
+        near the macro summary; per-portion values shown PROMINENTLY
+        (per_portion = r2(totals / portions), HALF_UP 2 dp), whole-batch
+        totals + total_cost (NOT divided) stay as a secondary block.
+        Invalid values → 400 PORTIONS_INVALID, clear error message.
+        The split is recomputed client-side from the fresh totals when
+        the user changes the count (pure function → zero latency, no
+        stale-data flashes); the request still carries `portions` so a
+        portions-aware backend can echo + serve its own `per_portion`.
+        The selected count persists across navigation WITHIN the recipe
+        view (in-memory, per contract §12 — NOT globally persisted).
      5. A pairing (product+amounts) can be SAVED per recipe
         (localStorage) and re-loaded later (Mentett párosítás).
 
@@ -40,6 +51,61 @@ window.Pairing = (function () {
   /* ---------- small shared bits ---------- */
   function fmt(v) { return Fc.fmt(v); }
   function unitFamilyOf(u) { return Fc.unitFamily(u) || null; }
+
+  /* ---------- portions (design/PORTIONS.md — normative parts) ---------- */
+  // §3: per_portion is a MacroBlock with EXACTLY these 7 keys in this order
+  // (same canonical order as `totals`).
+  const MACRO_KEYS = ["calories", "protein", "fat", "carbs", "fiber", "sugar", "sodium"];
+  // §5: PORTIONS_MAX lives in the backend validation.py; mirror it here so
+  // the UI can reject before it sends (defensive — the stepper min/max also
+  // guards the happy path).
+  const PORTIONS_MIN = 1;
+  const PORTIONS_MAX = 999;
+
+  /* HALF_UP 2 dp, exact (contract §6 / C2 ROUND_HALF_UP).
+     Implemented with integer string math — no binary-float artifacts:
+     69.90/4 = 17.475 must round UP to 17.48 (banker's would give 17.47).
+     All incoming totals are already 2 dp JSON numbers, so the string is
+     exact for the dividend and the quotient needs no digits beyond the
+     3rd decimal. */
+  function halfUp2(v) {
+    if (v == null) return 0;
+    if (!isFinite(v)) throw new Error("halfUp2: non-finite value " + v);
+    let s = String(v).replace(/^[+-]/, "");
+    const dot = s.indexOf(".");
+    let ip, fp = "";
+    if (dot === -1) { ip = s; } else { ip = s.slice(0, dot); fp = s.slice(dot + 1); }
+    ip = String(ip || "0").replace(/^0+(?=\d)/, "");
+    fp = (fp + "000").slice(0, 3);   // pad to exactly 3 fractional digits
+    const d3 = (ip + fp) * 1;        // value * 1000, exact integer (< 2^53 here)
+    const r = Math.floor(d3 / 10) + ((d3 % 10) >= 5 ? 1 : 0);  // HALF_UP 2dp
+    return r / 100;
+  }
+
+  /* Split a canonical MacroBlock (7 keys) into per-portion values:
+     per_portion[f] = halfUp2(totals[f] / n) for every f, same key order.
+     Pure + deterministic → the same (totals, n) always yields the block
+     the backend would return (fixture-verified in app/tests/portions.spec.js). */
+  function perPortionOf(totals, n) {
+    const out = {};
+    for (const k of MACRO_KEYS) out[k] = halfUp2((Number(totals[k]) || 0) / n);
+    return out;
+  }
+
+  /* Parse + validate the portions selector input (design §5 E1–E8):
+     integral integer in [1, 999]; rejects 0, negatives, fractions (2.5),
+     non-numeric and >999. Strict: the raw text itself must be an integer
+     (not just parseInt-truncatable — "2.5" must FAIL, E5), only an
+     optional leading +/- and surrounding whitespace is tolerated.
+     Returns null (invalid) or the int — callers show a clear error,
+     never silently clamp. */
+  function parsePortions(raw) {
+    const t = String(raw == null ? "" : raw).trim().replace(/^\+/, "");
+    if (!/^-?\d+$/.test(t)) return null;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < PORTIONS_MIN || n > PORTIONS_MAX) return null;
+    return n;
+  }
 
   const HU_UNIT_TO_FAMILY = {
     "g": "mass", "kg": "mass", "mg": "mass",
@@ -76,6 +142,25 @@ window.Pairing = (function () {
   let ROWS = null;         // currently mounted rows for the active recipe
   let ACTIVE_RECIPE = null;
   let PRODUCTS = [];       // cached product list for pickers
+  let PORTIONS = 1;        // selected portion count for the mounted view
+  let LAST_RES = null;     // last /macros/count response — cached so a
+                           // portions change re-splits locally (zero latency,
+                           // no stale fetch) instead of re-fetching
+  let COUNTED_P = null;    // the portion count LAST_RES was computed FOR
+                           // (server echo when present, selector value when
+                           // absent). Lets renderResult detect a STALE
+                           // server per_portion block (user changed the
+                           // selector after the fetch) and re-split locally.
+
+  /* In-recipe-view state (portions + last result), keyed by recipe id.
+     DESIGN LOCK (designer, 2026-10-08): the portion value persists ACROSS
+     NAVIGATION WITHIN THE RECIPE VIEW — detail.render() rebuilds the whole
+     #recipe-detail DOM on every show, so plain module globals would die
+     with it. A per-recipe in-memory map survives that (Browse → A → Browse
+     → A keeps the count + the result block), while contract §12's
+     "NOT persisted globally" / "not across sessions" is honored because
+     nothing here touches localStorage and a page reload clears it. */
+  const VIEW = {};         // { recipeId: { portions, res, ts } }
 
   function loadPairing(recipeId) {
     const v = S.load(K, {});
@@ -209,6 +294,12 @@ window.Pairing = (function () {
   /* =========================== RENDER ============================ */
   function renderCard(recipe) {
     initRows(recipe);
+    // Restore this recipe's in-view portions state (see VIEW docs above).
+    const vstate = VIEW[recipe.id] || null;
+    PORTIONS = (vstate && parsePortions(vstate.portions) != null)
+               ? parsePortions(vstate.portions) : 1;
+    LAST_RES = vstate ? (vstate.res || null) : null;
+    COUNTED_P = (vstate && vstate.counted != null) ? vstate.counted : null;
     const el = $("#pairing");
     const ingCount = (recipe.ingredients || []).length;
     el.innerHTML =
@@ -225,6 +316,16 @@ window.Pairing = (function () {
       '      <button class="btn sm" id="pg-save">💾 Párosítás mentése</button>' +
       '      <button class="btn sm ghost" id="pg-clear">Kiválasztott termékek törlése</button>' +
       '    </div>' +
+      '    <div class="pg-portions">' +
+      '      <label for="pg-portions-in">Portionok</label>' +
+      '      <div class="pg-portions-ctl">' +
+      '        <button type="button" class="btn sm ghost pgp-step" data-pg-step="-1" aria-label="eggyel kevesebb adag">−</button>' +
+      '        <input id="pg-portions-in" type="number" inputmode="numeric" min="1" max="999" step="1" value="' + (PORTIONS != null ? PORTIONS : 1) + '" aria-label="adagok száma (1–999)" />' +
+      '        <button type="button" class="btn sm ghost pgp-step" data-pg-step="1" aria-label="eggyel több adag">+</button>' +
+      '      </div>' +
+      '      <span class="hint sm" title="Ennyire oszlik a készült batch: minden makróérték el van osztva erre. Az ár a teljes batché és NEM oszlik.">a batch ennyi adag → az értékek portiónként</span>' +
+      '      <span id="pg-portions-err" class="pg-err hidden" role="alert"></span>' +
+      '    </div>' +
       '    <ul class="pg-rows" id="pg-rows"></ul>' +
       '    <div id="pg-status" class="scale-status hidden" role="status"></div>' +
       '    <div id="pg-result"></div>' +
@@ -233,8 +334,11 @@ window.Pairing = (function () {
     renderRows();
     wireCard();
     refreshBadge();
+    renderPortions();
     // ensure product cache so pickers are populated
     ensureProducts().then(() => { renderRows(); wireCard(); }).catch(() => {});
+    // restored result? re-render it with the stored portion split (no fetch)
+    if (LAST_RES) applyResult(LAST_RES);
 
     // collapsible
     // NOTE: the collapsible toggle is handled by detail.js's generic
@@ -283,6 +387,49 @@ window.Pairing = (function () {
     el.textContent = msg;
   }
 
+  /* ---------- portions selector (design/PORTIONS.md UI decisions) ---------- */
+  /* Sync the input's displayed value to the validated state.
+     Invalid → keep what the user typed (they need to see/fix it), red err. */
+  function renderPortions() {
+    const inp = $("#pg-portions-in");
+    const errEl = $("#pg-portions-err");
+    if (!inp || !errEl) return;
+    const raw = inp.value;
+    const n = parsePortions(raw);
+    if (n == null) {
+      PORTIONS = 1; // fall back to the valid default for any send; UI shows err
+      errEl.textContent = "Portionok: egész szám 1 és 999 között (pl. 1, 4, 6).";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    PORTIONS = n;
+    errEl.classList.add("hidden");
+    if (document.activeElement !== inp) inp.value = String(n);
+  }
+
+  function setPortionsError(msg) {
+    const errEl = $("#pg-portions-err");
+    if (!errEl) return;
+    if (msg) { errEl.textContent = msg; errEl.classList.remove("hidden"); }
+    else errEl.classList.add("hidden");
+  }
+
+  /* Persist portions + last result into the in-recipe-view map (docs on
+     VIEW above). Nothing is written to localStorage — contract §12. */
+  function stashView() {
+    if (ACTIVE_RECIPE == null) return;
+    VIEW[ACTIVE_RECIPE] = { portions: PORTIONS, res: LAST_RES,
+                            counted: COUNTED_P, ts: Date.now() };
+  }
+
+  /* Re-render the current result for the selected portion count.
+     Uses LAST_RES (already computed for the whole batch) and splits
+     client-side → immediate, no network, no stale-data flash. */
+  function applyResult(res) {
+    renderResult(res, PORTIONS);
+    stashView();
+  }
+
   /* ---------- interaction wiring (delegated on #pg-rows) ---------- */
   function wireCard() {
     const sec = $("#pairing-section");
@@ -306,10 +453,34 @@ window.Pairing = (function () {
     sec.querySelector("#pg-count").addEventListener("click", doCount);
     sec.querySelector("#pg-save").addEventListener("click", saveCurrent);
     sec.querySelector("#pg-clear").addEventListener("click", () => {
-      (ROWS || []).forEach((row) => { row.product_id = null; row.unit = null; });
+      (ROWS || []).forEach((r) => { r.product_id = null; r.unit = null; });
       renderRows(); refreshBadge();
       $("#pg-result").innerHTML = "";
+      // The cached result is stale now (its products/quantities are gone) —
+      // drop it so a portions edit can't re-render old numbers. The portion
+      // setting itself persists per recipe view (independent of products).
+      LAST_RES = null; COUNTED_P = null;
+      stashView();
       toast("Kiválasztott termékek törölve");
+    });
+
+    // portions selector: input change → validate + re-split locally;
+    // stepper buttons → ±1 from the current valid value. Rapid changes are
+    // safe: renderResult() is a pure re-render of cached data (no fetch in
+    // flight to race), so stale values can never flash over fresh ones.
+    const pin = sec.querySelector("#pg-portions-in");
+    pin.addEventListener("input", () => { renderPortions(); if (LAST_RES) applyResult(LAST_RES); });
+    pin.addEventListener("change", () => { renderPortions(); if (LAST_RES) applyResult(LAST_RES); });
+    sec.querySelectorAll(".pgp-step").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const delta = Number(btn.dataset.pgStep);
+        const base = parsePortions(pin.value) != null ? parsePortions(pin.value) : PORTIONS;
+        const next = Math.min(999, Math.max(1, base + delta));
+        pin.value = String(next);
+        renderPortions();
+        if (LAST_RES) applyResult(LAST_RES);
+        pin.focus();
+      });
     });
 
     // delegated row interactions: product change / amount+unit input
@@ -366,6 +537,13 @@ window.Pairing = (function () {
   }
 
   async function doCount() {
+    // Validate portions BEFORE any work (cheap, per design §5 — reject,
+    // never clamp). renderPortions() mirrors a bad input into the err tip.
+    renderPortions();
+    if (parsePortions($("#pg-portions-in").value) == null) {
+      setStatus("err", "Portionok: egész szám 1 és 999 között — javítsd, mielőtt számolsz.");
+      return;
+    }
     const out = $("#pg-result");
     const items = collectItems();
     if (!items.length) {
@@ -376,13 +554,27 @@ window.Pairing = (function () {
     out.innerHTML = "";
     let res;
     try {
-      res = await Fc.countMacros(items);
+      // Pass portions to the backend (contract §2). A pre-portions backend
+      // ignores the extra key and still returns the whole-batch `totals` —
+      // applyResult() then splits client-side, so both backend generations
+      // produce the same exact per-portion numbers.
+      res = await Fc.countMacros(items, PORTIONS);
     } catch (e) {
+      if (e && e.status === 400 && e.code === "PORTIONS_INVALID") {
+        setPortionsError((e.message || "portions must be an integer between 1 and 999") +
+          " (400 PORTIONS_INVALID)");
+      }
       setStatus("err", "Számolási hiba: " + e.message);
       return;
     }
+    LAST_RES = res;
+    // What count was this actually computed for? Trust the server echo;
+    // if a pre-portions backend ignored the field, use the value we sent.
+    COUNTED_P = (res.portions != null && Number.isInteger(res.portions)
+                 && res.portions >= 1 && res.portions <= 999)
+                ? res.portions : PORTIONS;
     setStatus("ok", "Kész — tényleges makrók + ár az alábbiakban.");
-    renderResult(res);
+    applyResult(res);
   }
 
   function warnLabel(code) {
@@ -393,10 +585,45 @@ window.Pairing = (function () {
     })[code] || code;
   }
 
-  function renderResult(res) {
+  /* One macro line for a MacroBlock (7 keys, canonical order).
+     `title` = the Hungarian label shown as the lead (design:
+     e.g. "Per portion (of 4): …"). */
+  function macroBlockLine(pp, lead) {
+    return '<div class="pg-macroline">' +
+      '  <span class="pg-macroline-lead">' + lead + '</span>' +
+      '  <span class="pg-macroline-vals">' +
+      '    <span><b>' + fmt(pp.calories) + '</b> kcal</span>' +
+      '    <span><b>' + fmt(pp.protein) + '</b> g P</span>' +
+      '    <span><b>' + fmt(pp.carbs) + '</b> g C</span>' +
+      '    <span><b>' + fmt(pp.fat) + '</b> g Z</span>' +
+      '    <span><b>' + fmt(pp.fiber) + '</b> g rost</span>' +
+      '    <span><b>' + fmt(pp.sugar) + '</b> g cukor</span>' +
+      '    <span><b>' + fmt(pp.sodium) + '</b> mg Na</span>' +
+      '  </span>' +
+      '</div>';
+  }
+
+  function renderResult(res, nPort) {
     const out = $("#pg-result");
     const pi = res.per_ingredient || [];
     const t = res.totals || {};
+    // Display count = the (validated) selector value the caller passes.
+    // The server's `portions` echo is deliberately NOT a display source —
+    // it is only "what THIS response was computed for" and is consumed
+    // into COUNTED_P at fetch time (doCount). Basing N on the echo would
+    // make a post-fetch selector change stick to the old count.
+    const N = (nPort != null && Number.isInteger(nPort)
+               && nPort >= 1 && nPort <= 999)
+              ? nPort : 1;
+    // per_portion: trust the server block ONLY when it was computed for
+    // THIS displayed count (COUNTED_P matches; null = fresh/test use →
+    // trust). If the user changed the selector after the fetch, the server
+    // block belongs to the OLD count → re-split the whole-batch totals
+    // client-side (r2 HALF_UP, fixture-verified) so values and the lead agree.
+    const pp = (res.per_portion && typeof res.per_portion === "object"
+                && (COUNTED_P == null || COUNTED_P === N))
+      ? res.per_portion
+      : perPortionOf(t, N);
     const rows = pi.map((r) => {
       const warns = (r.warnings || []).map((w) => {
         const code = (typeof w === "string") ? w : (w && w.code) || "?";
@@ -413,14 +640,23 @@ window.Pairing = (function () {
         "<td>" + warns + "</td>" +
         "</tr>";
     }).join("");
-    const cost = res.total_cost;
+    const cost = res.total_cost;   // WHOLE-BATCH cost — never divided (§7)
     const warnChips = (res.warnings || []).map((w) => {
       const code = (typeof w === "string") ? w : (w && w.code) || "";
       return '<span class="pg-warn">' + esc(warnLabel(code)) + "</span>";
     }).join("");
+    // Per-portion lead + whole-batch secondary (design UI decision:
+    // per-portion PROMINENT, totals kept as a comparison block).
+    const portionsLead = (N > 1)
+      ? ("Portiónként (a " + N + " adagból)")
+      : ("Teljes adag (1/1)");
     out.innerHTML =
       '<div class="card pg-result-card">' +
       '  <h4>Tényleges makrók (a használt termékeid alapján)</h4>' +
+      '  <div class="pg-macro">' +
+      '    <h4 class="pg-macro-lead">PORTIÓNKÉNT</h4>' +
+      '    ' + macroBlockLine(pp, portionsLead) +
+      '  </div>' +
       '  <table class="pg-table">' +
       '    <thead><tr>' +
       '      <th>Hozzávaló</th><th class="num">Menny.</th><th class="num">kcal</th>' +
@@ -430,18 +666,10 @@ window.Pairing = (function () {
       '    <tbody>' + rows + "</tbody>" +
       "  </table>" +
       '  <div class="pg-total">' +
-      '    <h4>ÖSSZESÍTÉS</h4>' +
-      '    <div class="pg-tt">' +
-      '      <span><b>' + fmt(t.calories) + "</b> kcal</span>" +
-      '      <span><b>' + fmt(t.protein) + "</b> g fehérje</span>" +
-      '      <span><b>' + fmt(t.carbs) + "</b> g szénhidrát</span>" +
-      '      <span><b>' + fmt(t.fat) + "</b> g zsír</span>" +
-      '      <span><b>' + fmt(t.fiber) + "</b> rost</span>" +
-      '      <span><b>' + fmt(t.sugar) + "</b> cukor</span>" +
-      '      <span><b>' + fmt(t.sodium) + "</b> nátrium</span>" +
-      "    </div>" +
+      '    <h4>ÖSSZESÍTÉS — teljes batch' + (N > 1 ? " (" + N + " adag)" : "") + '</h4>' +
+      '    ' + macroBlockLine(t, "Teljes batch összesen") +
       '    <div class="pg-totalprice">' +
-      '      <span class="lbl">AZ ÉTEL ÁRA</span>' +
+      '      <span class="lbl">AZ ÉTEL ÁRA (teljes batch)</span>' +
       '      <span class="val">' + (cost ? fmt(cost.amount) + " " + esc(cost.currency || "") : "— (nincs ár a termékeken)") + "</span>" +
       "    </div>" +
       (warnChips ? '<div class="pg-warns">' + warnChips + "</div>" : "") +
@@ -459,5 +687,16 @@ window.Pairing = (function () {
   }
 
   /* =========================== exports ============================ */
-  return { renderCard };
+  return {
+    renderCard,
+    // Test/QA surface (used by app/tests/portions.spec.js under Node):
+    // the parts of this module that don't need a full browser DOM.
+    __test: {
+      MACRO_KEYS,
+      halfUp2, perPortionOf, parsePortions, renderResult,
+      // Set/clear the "LAST_RES was computed for this count" context so a
+      // spec can exercise the stale-server-echo path (see renderResult).
+      setLastCountFor: (n) => { COUNTED_P = n; },
+    },
+  };
 })();

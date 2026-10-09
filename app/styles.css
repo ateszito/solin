@@ -571,6 +571,29 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .pg-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
 .pg-actions .btn { flex: 0 0 auto; }
 
+/* portion-count selector (design/PORTIONS.md UI decisions):
+   numeric input + stepper, default 1, min 1, max 999; error line below. */
+.pg-portions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px;
+  margin: 0 0 12px; background: #fff;
+}
+.pg-portions label { font-size: 12.5px; font-weight: 800; letter-spacing: .3px; color: var(--text-2); }
+.pg-portions-ctl { display: inline-flex; align-items: center; gap: 4px; }
+.pg-portions-ctl input {
+  width: 84px; padding: 8px 6px; font-size: 15px; font-weight: 800;
+  text-align: center; background: var(--secondary-bg);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.pg-portions-ctl input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+.pg-portions-ctl .pgp-step { padding: 6px 12px; font-size: 16px; line-height: 1; }
+.pg-portions .hint { font-size: 11.5px; }
+.pg-err {
+  font-size: 12px; font-weight: 700; color: #B3261E;
+  background: #FDECEA; border-radius: 999px; padding: 3px 10px;
+}
+.pg-err.hidden { display: none; }
+
 .pg-rows { list-style: none; margin: 0; padding: 0; }
 .pg-row {
   border: 1px solid var(--line); border-radius: 12px; background: #fff;
@@ -595,12 +618,24 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .pg-table th, .pg-table td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid var(--line); }
 .pg-table th { background: var(--secondary-bg); font-size: 11.5px; }
 .pg-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.pg-total { margin-top: 6px; }
+.pg-total { margin-top: 6px; opacity: .92; } /* secondary: whole-batch comparison block */
 .pg-tt { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 10px; }
 .pg-tt b { font-size: 15px; }
+/* per-portion block — the PROMINENT one (design: per-portion first, big) */
+.pg-macro {
+  border: 2px solid var(--primary); border-radius: 12px; padding: 12px;
+  margin: 0 0 12px; background: #FFF8F0;
+}
+.pg-macro-lead { font-size: 11.5px; letter-spacing: .8px; color: var(--primary-dark); margin: 0 0 6px; }
+.pg-macroline { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pg-macroline-lead { font-size: 12.5px; font-weight: 800; color: var(--text-2); white-space: nowrap; }
+.pg-macroline-vals { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13.5px; }
+.pg-macro .pg-macroline-vals { font-size: 15px; } /* bigger for the per-portion row */
+.pg-macro .pg-macroline-vals b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.pg-total .pg-macroline-vals b { font-size: 15px; }
 .pg-totalprice {
   display: flex; align-items: baseline; gap: 12px; padding: 12px;
-  background: var(--card-bg); border: 2px solid var(--primary); border-radius: 12px;
+  background: var(--card-bg); border: 1px solid var(--line); border-radius: 12px;
 }
 .pg-totalprice .lbl { font-size: 11.5px; font-weight: 800; letter-spacing: .5px; color: var(--text-2); }
 .pg-totalprice .val { font-size: 22px; font-weight: 800; color: var(--primary-dark); }

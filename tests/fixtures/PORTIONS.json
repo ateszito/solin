@@ -1,0 +1,131 @@
+{
+  "_meta": {
+    "fixture": "portions-canonical",
+    "provenance": "Reuses use_cases.md \u00a75.3 macro input; per-portion values verified against the live solin-dev `aggregate_macro_result(ingredients, products)` engine.",
+    "engine": "backend/app/inventory/macros.py::aggregate_macro_result(ingredients, products)",
+    "rounding": "C2 ROUND_HALF_UP 2 dp (see use_cases.md \u00a70.1, \u00a74)",
+    "contract": [
+      "use_cases.md \u00a77",
+      "design/PORTIONS.md \u00a78",
+      "t_76975145"
+    ]
+  },
+  "engine_inputs": {
+    "ingredients": [
+      {"product_id": "p1", "quantity": 200, "unit": "g"},
+      {"product_id": "p2", "quantity": 100, "unit": "g"},
+      {"product_id": "p3", "quantity": 10,  "unit": "ml"}
+    ],
+    "products": {
+      "p1": {
+        "base_unit": "g",
+        "macros_per_100": {
+          "calories": 165.0, "protein": 31.0, "fat": 3.6,
+          "carbs": 0.0, "fiber": 0.0, "sugar": 0.0, "sodium": 74.0
+        },
+        "prices": [
+          {"amount": 2.99, "currency": "USD", "pack_size": 400.0},
+          {"amount": 3.49, "currency": "EUR", "pack_size": 500.0}
+        ],
+        "name": "chicken breast"
+      },
+      "p2": {
+        "base_unit": "g",
+        "macros_per_100": {
+          "calories": 349.0, "protein": 7.9, "fat": 0.9,
+          "carbs": 78.8, "fiber": 2.1, "sugar": 0.1, "sodium": 2.0
+        },
+        "prices": [
+          {"amount": 5.49, "currency": "USD", "pack_size": 1000.0}
+        ],
+        "name": "basmati rice"
+      },
+      "p3": {
+        "base_unit": "ml",
+        "macros_per_100": {
+          "calories": 884.0, "protein": 0.0, "fat": 100.0,
+          "carbs": 0.0, "fiber": 0.0, "sugar": 0.0, "sodium": 0.0
+        },
+        "prices": [],
+        "name": "oil"
+      }
+    }
+  },
+  "expected_totals": {
+    "calories": 767.40,
+    "protein": 69.90,
+    "fat": 18.10,
+    "carbs": 78.80,
+    "fiber": 2.10,
+    "sugar": 0.10,
+    "sodium": 150.00
+  },
+  "expected_total_cost": {"amount": 2.05, "currency": "USD"},
+  "expected_warnings": [
+    {"code": "CROSS_CURRENCY_EXCLUDED", "product_id": "p1"}
+  ],
+  "portions_reference": [
+    {
+      "portions": 1,
+      "per_portion": {
+        "calories": 767.40, "protein": 69.90, "fat": 18.10, "carbs": 78.80,
+        "fiber": 2.10, "sugar": 0.10, "sodium": 150.00
+      },
+      "expected_total_cost": {"amount": 2.05, "currency": "USD"}
+    },
+    {
+      "portions": 3,
+      "per_portion": {
+        "calories": 255.80, "protein": 23.30, "fat": 6.03, "carbs": 26.27,
+        "fiber": 0.70, "sugar": 0.03, "sodium": 50.00
+      },
+      "expected_total_cost": {"amount": 2.05, "currency": "USD"}
+    },
+    {
+      "portions": 4,
+      "per_portion": {
+        "calories": 191.85, "protein": 17.48, "fat": 4.53, "carbs": 19.70,
+        "fiber": 0.53, "sugar": 0.03, "sodium": 37.50
+      },
+      "expected_total_cost": {"amount": 2.05, "currency": "USD"}
+    },
+    {
+      "portions": 6,
+      "per_portion": {
+        "calories": 127.90, "protein": 11.65, "fat": 3.02, "carbs": 13.13,
+        "fiber": 0.35, "sugar": 0.02, "sodium": 25.00
+      },
+      "expected_total_cost": {"amount": 2.05, "currency": "USD"}
+    },
+    {
+      "portions": 8,
+      "per_portion": {
+        "calories": 95.93, "protein": 8.74, "fat": 2.26, "carbs": 9.85,
+        "fiber": 0.26, "sugar": 0.01, "sodium": 18.75
+      },
+      "expected_total_cost": {"amount": 2.05, "currency": "USD"}
+    },
+    {
+      "portions": 100,
+      "per_portion": {
+        "calories": 7.67, "protein": 0.70, "fat": 0.18, "carbs": 0.79,
+        "fiber": 0.02, "sugar": 0.00, "sodium": 1.50
+      },
+      "expected_total_cost": {"amount": 2.05, "currency": "USD"}
+    }
+  ],
+  "portions_rejection_cases": [
+    {"portions": 0,    "status": 400, "code": "PORTIONS_INVALID", "fields": ["portions"]},
+    {"portions": -3,   "status": 400, "code": "PORTIONS_INVALID", "fields": ["portions"]},
+    {"portions": 2.5,  "status": 400, "code": "PORTIONS_INVALID", "fields": ["portions"]},
+    {"portions": "4",  "status": 400, "code": "PORTIONS_INVALID", "fields": ["portions"]},
+    {"portions": null, "status": 200, "note": "null is treated as omitted \u2192 default 1; per_portion == totals"},
+    {"portions": 1e2,  "status": 200, "note": "integer-valued float (100); valid"},
+    {"portions": 7.5,  "status": 400, "code": "PORTIONS_INVALID", "fields": ["portions"]},
+    {"portions": 1000, "status": 400, "code": "PORTIONS_INVALID", "fields": ["portions"]}
+  ],
+  "boundary": {
+    "min": 1,
+    "max": 999
+  }
+}
