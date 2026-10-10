@@ -326,9 +326,14 @@ window.Pairing = (function () {
       '      <span class="hint sm" title="Ennyire oszlik a készült batch: minden makróérték el van osztva erre. Az ár a teljes batché és NEM oszlik.">a batch ennyi adag → az értékek portiónként</span>' +
       '      <span id="pg-portions-err" class="pg-err hidden" role="alert"></span>' +
       '    </div>' +
-      '    <ul class="pg-rows" id="pg-rows"></ul>' +
       '    <div id="pg-status" class="scale-status hidden" role="status"></div>' +
+      // Result lives ABOVE the ingredient rows (t_d6c25424): after pressing
+      // Számolás it appears directly below the button row + portions
+      // selector — visible without scrolling past the paired ingredients.
+      // Single #pg-result container (no duplicate result section); renderResult()
+      // is the only writer and it replaces innerHTML wholesale.
       '    <div id="pg-result"></div>' +
+      '    <ul class="pg-rows" id="pg-rows"></ul>' +
       '  </div>' +
       '</div>';
     renderRows();
