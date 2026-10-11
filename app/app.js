@@ -13,6 +13,7 @@
     S.state.activeRecipe = start.split("/")[1]; S.tab("recipe");
   } else if (start === "inventory") S.tab("inventory");
   else if (start === "match") S.tab("match");
+  else if (start === "foodcounter") S.tab("foodcounter");
   else S.tab("browse");
 
   // inventory changes update match view when it is open

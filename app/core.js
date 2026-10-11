@@ -41,7 +41,7 @@ window.Solin = (function () {
 
   function tab(view) {
     state.tab = view === "edit" ? "recipe" : view;
-    ["browse", "recipe", "edit", "inventory", "match"].forEach((v) =>
+    ["browse", "recipe", "edit", "inventory", "match", "foodcounter"].forEach((v) =>
       $("#view-" + v).classList.add("hidden")
     );
     $("#view-" + view).classList.remove("hidden");
@@ -53,6 +53,7 @@ window.Solin = (function () {
     if (view === "edit")      Edit.render();
     if (view === "inventory") Inventory.render();
     if (view === "match")     Match.render();
+    if (view === "foodcounter" && window.FoodCounter) FoodCounter.render();
     S.setUI({ tab: state.tab === "recipe" ? "browse" : state.tab });
     window.scrollTo({ top: 0 });
   }
@@ -72,9 +73,7 @@ window.Solin = (function () {
     const h = location.hash.replace(/^#\/?/, "");
     if (/^recipe\/(.+)$/.test(h)) { state.activeRecipe = h.split("/")[1]; tab("recipe"); }
     else if (/^edit\/(.+)$/.test(h)) { state.activeRecipe = h.split("/")[1]; tab("edit"); }
-    else if (["browse", "inventory", "match"].includes(h) || h === "") tab("browse");
-    else if (h === "inventory") tab("inventory");
-    else if (h === "match") tab("match");
+    else if (["browse", "inventory", "match", "foodcounter"].includes(h) || h === "") tab(["inventory", "match", "foodcounter"].includes(h) ? h : "browse");
   }
 
   function initNav() {
