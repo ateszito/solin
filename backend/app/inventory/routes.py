@@ -81,6 +81,7 @@ async def count_macros(body: dict) -> dict:
           "per_portion":    {7 macro keys, each r2(totals[f]/portions)},
           "per_ingredient": [...],
           "total_cost":     {"amount", "currency"} | null,   # never divided
+          "per_portion_cost": {"amount", "currency"} | null, # = r2(total_cost/portions)
           "warnings":       [{"code", "product_id"}]
         }
 

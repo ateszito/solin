@@ -78,7 +78,7 @@ The current top-level object is:
 }
 ```
 
-**Extend** it — add two top-level keys, keep all four existing ones verbatim:
+**Extend** it — add three top-level keys, keep all four existing ones verbatim:
 
 ```json
 {
@@ -96,6 +96,7 @@ The current top-level object is:
 
   "per_ingredient": [ ...unchanged... ],
   "total_cost": { "amount": 2.05, "currency": "USD" },
+  "per_portion_cost": { "amount": 0.51, "currency": "USD" },
   "warnings": [ ...unchanged... ]
 }
 ```
@@ -112,7 +113,9 @@ The current top-level object is:
    Naming note: `totals` **IS** the task's `total_macros`. Do not rename it;
    `per_portion` is the new `per_portion_macros`.
 4. **`total_cost` is NOT divided.** It stays the cost of the whole batch
-   (see §7). There is no `per_portion_cost` in MVP.
+   (see §7). **`per_portion_cost`** is the SEPARATE per-portion view:
+   `r2(total_cost["amount"] / portions)` with the same currency, or `null`
+   when there is no `total_cost`. (Added 2026-10-10, t_55b88129 — see §7.)
 5. **Field presence:** `per_portion` is always present, including for a zero
    macro case (all seven keys `0.0`) and for a partially-unresolved recipe
    (unresolved ingredients contribute `0` to `totals`, so `per_portion` also
@@ -206,19 +209,29 @@ E8 it is `100`, never `100.0` or `1e2`.
 
 ---
 
-## 7. Cost stays whole-batch
+## 7. Cost stays whole-batch; `per_portion_cost` is a per-portion VIEW (rev. 2)
+
+> **Revision 2 (2026-10-10, t_55b88129):** the original §7 forbade any
+> per-portion cost figure ("cost per serving is a separate contract").
+> That contract is now written: the user asked to *see* the price of one
+> portion alongside the whole-batch price. `total_cost` keeps its original,
+> undivided meaning; `per_portion_cost` is additive.
 
 `total_cost` is the price of **everything** the user prepared in this batch.
 Portions are a way to *view* macros per serving; they do not de-price the
 purchase. Therefore:
 
 - `total_cost` is returned **unchanged** by `portions`.
-- There is **no** `per_portion_cost` field in MVP (do not add one — the QA
-  plan has no per-portion cost assertion).
-- Rationale: cost is anchored to `pack_size` prices in currency and is
-  additive across ingredients; dividing it by portions would mix units
-  (currency / serving) with no defined basis. If a future feature wants
-  "cost per serving", that is a separate contract, not one implied here.
+- `per_portion_cost` = `r2(total_cost["amount"] / portions)`, same
+  currency — a derived DISPLAY figure, not a new pricing basis. It is
+  `null` when `total_cost` is `null` (no paired price, or every price
+  excluded by the cross-currency rule — the exclusion semantics of §4.3/§8
+  carry through unchanged: only base-currency prices are ever summed or
+  divided).
+- Rationale for keeping it exact-then-round: the division consumes the
+  **rounded** `total_cost.amount` (2 dp) — the same figure the UI prints
+  next to it — so `2338.64 / 5 → 467.73` never contradicts the printed
+  total the way dividing a hidden exact sum could.
 
 ---
 

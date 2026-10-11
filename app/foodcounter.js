@@ -587,13 +587,18 @@ window.FoodCounter = (function () {
     const items = readRows();
     const out = $("#fc-result");
     if (!items.length) { toast("Addj hozzá legalább 1 sort termékekkel"); return; }
+    // portions view param (design/PORTIONS.md §2): default 1, invalid → 1.
+    const pn = (() => {
+      const v = parseInt($("#fc-portions-in") && $("#fc-portions-in").value, 10);
+      return Number.isInteger(v) && v >= 1 && v <= 999 ? v : 1;
+    })();
     out.innerHTML = '<p class="hint">Számolás…</p>';
     let res;
     try {
       res = await api("/macros/count", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify(pn > 1 ? { items, portions: pn } : { items }),
       });
     } catch (e) {
       out.innerHTML = `<p class="hint">Hiba: ${esc(e.message)}</p>`;
@@ -601,6 +606,7 @@ window.FoodCounter = (function () {
     }
     FC.lastResult = res;
     FC.lastItems = items;
+    FC.lastPortions = pn;
     renderResult(res);
     renderMeals();
   }
@@ -609,6 +615,27 @@ window.FoodCounter = (function () {
     if (!c && c !== 0) return "—";
     if (typeof c === "object") return `${fmt(c.amount)} ${esc(c.currency || "")}`;
     return fmt(c);
+  }
+  // per-portion price split (t_55b88129). Trust the server's
+  // per_portion_cost when present; else re-split the whole-batch total
+  // client-side with HALF_UP 2dp (integer string math, same C2 contract
+  // as pairing.js halfUp2) so the counter never shows float artifacts.
+  function ppcOf(res, n) {
+    const N = Number.isInteger(n) && n >= 1 ? n : 1;
+    if (res.per_portion_cost && typeof res.per_portion_cost === "object") {
+      return res.per_portion_cost;
+    }
+    const c = res.total_cost;
+    if (!c || c.amount == null) return null;
+    let s = String(c.amount).replace(/^[+-]/, "");
+    const dot = s.indexOf(".");
+    let ip, fp = "";
+    if (dot === -1) { ip = s; } else { ip = s.slice(0, dot); fp = s.slice(dot + 1); }
+    ip = String(ip || "0").replace(/^0+(?=\d)/, "");
+    fp = (fp + "000").slice(0, 3);
+    const d3 = (ip + fp) * 1;                       // amount * 1000, exact
+    const r = Math.floor(d3 / N / 10) + (((d3 / N) % 10) >= 5 ? 1 : 0);
+    return { amount: r / 100, currency: c.currency };
   }
   const warnLabel = (code) => ({
     CROSS_CURRENCY_EXCLUDED: "Ár kizárva (két valuta): " + code,
@@ -658,8 +685,9 @@ window.FoodCounter = (function () {
             <span><b>${fmt(t.sodium)}</b> nátrium</span>
           </div>
           <div class="fc-total-cost">
-            <span class="lbl">ÖSSZES ÁR</span>
+            <span class="lbl">ÖSSZES ÁR${(FC.lastPortions > 1) ? ` (${FC.lastPortions} adag)` : ""}</span>
             <span class="val">${costText(res.total_cost)}</span>
+            ${(FC.lastPortions > 1 && ppcOf(res, FC.lastPortions)) ? `<span class="lbl">ÁR / ADAG</span><span class="val">${costText(ppcOf(res, FC.lastPortions))}</span>` : ""}
           </div>
           ${warnChips ? `<div class="fc-warns">${warnChips}</div>` : ""}
           <div class="fc-actions">
@@ -692,6 +720,7 @@ window.FoodCounter = (function () {
       items: FC.lastItems,
       totals: FC.lastResult.totals,
       total_cost: FC.lastResult.total_cost,
+      portions: FC.lastPortions || 1,
       warnings: FC.lastResult.warnings || [],
       saved_at: new Date().toISOString(),
     });
@@ -734,7 +763,7 @@ window.FoodCounter = (function () {
         </div>
         <div class="fc-meal-t">
           <span>${fmt(m.totals && m.totals.calories)} kcal</span>
-          <span>${costText(m.total_cost)}</span>
+          <span>${costText(m.total_cost)}${(m.portions > 1 && ppcOf(m, m.portions)) ? ` <small>(${fmt(ppcOf(m, m.portions))}/adag)</small>` : ""}</span>
           ${(m.warnings||[]).length ? `<span class="fc-warn sm">${m.warnings.length} figyelmeztés</span>` : ""}
         </div>
         <div class="fc-meal-a">

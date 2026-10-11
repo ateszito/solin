@@ -146,6 +146,30 @@ class TestCorrectedPricing:
         assert res["totals"]["calories"] == pytest.approx(1187.8, abs=0.05)
         assert res["per_portion"]["calories"] == pytest.approx(237.56, abs=0.01)
 
+    def test_per_portion_cost_r1_at_5(self):
+        """t_55b88129 acceptance: r1 @5 portions splits the corrected total —
+        2338.64 / 5 = r2(467.728) = 467.73 HUF (HALF_UP), alongside the
+        undivided whole-batch 2338.64."""
+        res = aggregate_macro_result(R1_ITEMS, products=FIXED_PRODUCTS,
+                                     portions=5)
+        assert res["total_cost"] == {"amount": 2338.64, "currency": "HUF"}
+        assert res["per_portion_cost"] == {"amount": 467.73, "currency": "HUF"}
+
+    def test_per_portion_cost_absent_without_portions_split(self):
+        """portions=1 keeps per_portion_cost == total_cost (the split view
+        still exists, it just divides by 1); no-cost recipes get None."""
+        res1 = aggregate_macro_result(R1_ITEMS, products=FIXED_PRODUCTS)
+        assert res1["per_portion_cost"] == {"amount": 2338.64,
+                                            "currency": "HUF"}
+        no_price = [{k: v for k, v in it.items()} for it in
+                    copy.deepcopy(R1_ITEMS)]
+        for it in no_price:
+            it["product_id"] = "does-not-exist"
+        res0 = aggregate_macro_result(no_price, products=FIXED_PRODUCTS,
+                                      portions=5)
+        assert res0["total_cost"] is None
+        assert res0["per_portion_cost"] is None
+
 
 class TestOldInflatedBehaviourRejected:
     """The same fixtures with pack_size=1.0 reproduce the defect digit for
@@ -217,6 +241,8 @@ class TestEndpointRegression:
         assert r.status_code == 200, r.text
         b = r.json()
         assert b["total_cost"] == {"amount": 2338.64, "currency": "HUF"}
+        # t_55b88129 acceptance: per-portion view in the payload too
+        assert b["per_portion_cost"] == {"amount": 467.73, "currency": "HUF"}
         by_id = {row["product_id"]: row for row in b["per_ingredient"]}
         assert by_id[PARMESAN["id"]]["cost"] == pytest.approx(479.84, abs=0.005)
         assert by_id[KOLBASZ["id"]]["cost"] == pytest.approx(259.8, abs=0.005)

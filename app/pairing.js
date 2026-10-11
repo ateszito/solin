@@ -646,6 +646,17 @@ window.Pairing = (function () {
         "</tr>";
     }).join("");
     const cost = res.total_cost;   // WHOLE-BATCH cost — never divided (§7)
+    // Per-portion price VIEW (t_55b88129): trust the server's
+    // per_portion_cost ONLY when it was computed for THIS displayed count
+    // (same stale-echo rule as per_portion); otherwise re-split the whole-
+    // batch total client-side (r2 HALF_UP). null when there is no cost.
+    const ppcFresh = (res.per_portion_cost && typeof res.per_portion_cost === "object"
+                     && (COUNTED_P == null || COUNTED_P === N));
+    const ppc = ppcFresh
+      ? res.per_portion_cost
+      : (cost && N > 1
+         ? { amount: halfUp2(Number(cost.amount) / N), currency: cost.currency }
+         : (cost && N === 1 ? cost : null));
     const warnChips = (res.warnings || []).map((w) => {
       const code = (typeof w === "string") ? w : (w && w.code) || "";
       return '<span class="pg-warn">' + esc(warnLabel(code)) + "</span>";
@@ -676,6 +687,8 @@ window.Pairing = (function () {
       '    <div class="pg-totalprice">' +
       '      <span class="lbl">AZ ÉTEL ÁRA (teljes batch)</span>' +
       '      <span class="val">' + (cost ? fmt(cost.amount) + " " + esc(cost.currency || "") : "— (nincs ár a termékeken)") + "</span>" +
+      (ppc ? ('      <span class="lbl">ÁR / ADAG</span>' +
+              '      <span class="val">' + fmt(ppc.amount) + " " + esc(ppc.currency || "") + "</span>") : "") +
       "    </div>" +
       (warnChips ? '<div class="pg-warns">' + warnChips + "</div>" : "") +
       "  </div>" +

@@ -233,12 +233,21 @@ def test_total_cost_identical_across_portions_1_4_6():
     assert costs[0] == costs[1] == costs[2] == EXPECTED_COST
 
 
-def test_no_per_portion_cost_field():
-    # PORTIONS.md §7: explicitly NOT in the contract — do not add it.
+def test_per_portion_cost_splits_the_batch_cost():
+    # t_55b88129: per_portion_cost IS in the contract now — the per-portion
+    # VIEW of total_cost = r2(total_cost / portions) (PORTIONS.md §7 updated).
+    # None only when the batch has no cost.
+    from decimal import Decimal, ROUND_HALF_UP
     for P in (1, 4):
         res = aggregate_macro_result(CANONICAL_INGREDIENTS, products=PRODS,
                                      portions=P)
-        assert "per_portion_cost" not in res
+        ppc = res["per_portion_cost"]
+        tc = res["total_cost"]
+        assert ppc is not None and tc is not None
+        assert ppc["currency"] == tc["currency"]
+        want = (Decimal(str(tc["amount"])) / P).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP)
+        assert Decimal(str(ppc["amount"])) == want, (P, ppc, tc)
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +292,7 @@ def test_macro_count_with_portions_matches_engine():
     # compare the shape invariants (which hold regardless of store state).
     assert direct["portions"] == 4
     assert "per_portion" in direct
-    assert "per_portion_cost" not in direct
+    assert "per_portion_cost" in direct
 
 
 def test_count_real_macros_is_still_the_engine_function():

@@ -122,6 +122,11 @@
     <div class="card fc-counter-card">
       <h3>Keverék / étel makrók + ár</h3>
       <div id="fc-rows" class="fc-rows"></div>
+      <div class="fc-portions-row">
+        <label for="fc-portions-in">Adagok száma</label>
+        <input id="fc-portions-in" type="number" inputmode="numeric" min="1" max="999" step="1" value="1" aria-label="adagok száma (1–999)" />
+        <span class="hint">az egész adag macros/ár ebből oszlik el</span>
+      </div>
       <div class="fc-counter-actions">
         <button id="fc-addrow" class="btn sm ghost">+ sor</button>
         <button id="fc-count-btn" class="btn sm primary">Számolás</button>

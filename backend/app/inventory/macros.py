@@ -18,7 +18,9 @@ Design principles (mirroring :mod:`app.services.recipe_scaling`):
   ``{totals, per_ingredient, total_cost, warnings}`` — plus the two
   additive portion-view keys from ``design/PORTIONS.md §3``:
   ``portions`` (effective int echo) and ``per_portion`` (MacroBlock,
-  ``r2(totals[f] / portions)`` per field).
+  ``r2(totals[f] / portions)`` per field) and ``per_portion_cost``
+  (``{amount, currency}`` = ``r2(total_cost / portions)``, or ``None``
+  when the batch has no cost).
 
 Conversion table (contract §4.5, family-based):
     mass    g/kg/mg        -> to g        (1 kg = 1000 g, 1 mg = 0.001 g)
@@ -247,10 +249,18 @@ def aggregate_macro_result(
     * ``per_portion`` — a MacroBlock (7 fields, C4 order) where each field
       = ``r2(totals[field] / portions)`` (C2 ROUND_HALF_UP, full precision
       inside the division).
+    * ``per_portion_cost`` — ``{amount, currency}`` where
+      ``amount = r2(total_cost["amount"] / portions)``, or ``None`` when
+      there is no ``total_cost`` (no paired price, or every price excluded
+      by the cross-currency rule). Same currency-exclusion semantics as
+      ``total_cost``: it splits the EXACT sum of the retained (base-
+      currency) per-ingredient costs, never a mixed-currency figure.
+      (2026-10-10: added by t_55b88129 — PORTIONS.md §7 updated.)
 
     All four pre-existing keys (``totals``, ``per_ingredient``,
     ``total_cost``, ``warnings``) are byte-for-byte unchanged;
-    ``total_cost`` is **never** divided (PORTIONS.md §7).
+    ``total_cost`` itself is **never** divided (PORTIONS.md §7) — the new
+    ``per_portion_cost`` is a SEPARATE per-portion view of it.
 
     Returns
     -------
@@ -262,6 +272,7 @@ def aggregate_macro_result(
                 {product_id, name, quantity, unit, macros, cost, warnings}
             ],
             "total_cost":   {"amount", "currency"} | None,
+            "per_portion_cost": {"amount", "currency"} | None,
             "warnings":     [{"code", "product_id"}],
         }
 
@@ -305,6 +316,19 @@ def aggregate_macro_result(
         k: _out(r2((_num(totals[k]) or Decimal(0)) / n))
         for k in MACRO_KEYS
     }
+    # per_portion_cost (t_55b88129): the per-portion VIEW of the batch cost.
+    # = r2(total_cost["amount"] / n) — same C2 contract as per_portion
+    # (full-precision division, single final rounding) and the same
+    # currency-exclusion semantics: it splits the already-excluded,
+    # base-currency-only total. None when the batch has no usable price
+    # (no pairing, or every price excluded) — never a fabricated 0.
+    tc = result.get("total_cost")
+    tc_amt = _num(tc.get("amount")) if isinstance(tc, dict) else None
+    if tc_amt is not None:
+        result["per_portion_cost"] = {
+            "amount": _out(r2(tc_amt / n)), "currency": tc.get("currency")}
+    else:
+        result["per_portion_cost"] = None
     return result
 
 
