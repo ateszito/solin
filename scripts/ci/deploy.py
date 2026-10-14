@@ -29,12 +29,15 @@ Runtime layout (all outside ~/Documents — launchd TCC):
 import os, sys, time, json, shutil, subprocess, urllib.request, signal
 from contextlib import contextmanager
 
-CI  = os.path.expanduser('~/SolinCI')
-ST  = os.path.join(CI, 'state')
-REPO = os.path.join(CI, 'repo')
-VC  = os.path.join(CI, 'VideoContent')
+CI = os.environ.get('SOLIN_CI_DIR', '/opt/solin' if os.path.isdir('/opt/solin') else os.path.expanduser('~/SolinCI'))
+ST = os.path.join(CI, 'state')
+REPO = os.environ.get('SOLIN_REPO_DIR', os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+VC = os.path.join(CI, 'VideoContent')
+if not os.path.isdir(VC):
+    VC = os.path.join(REPO, 'VideoContent')
 COMPOSE = os.path.join(REPO, 'docker-compose.yml')
 COMPOSE_DIR = REPO          # compose resolves relative paths from CWD
+HOST_IP = os.environ.get('DOCKER_TARGET_HOST', '127.0.0.1')
 
 # Base semver, read from the repo's VERSION file (single number, like
 # "0.1.1"). Each released cut just bumps that file. Per-tier suffix is
@@ -324,7 +327,7 @@ def main():
          '--force-recreate', d['svc']], timeout=600)
     code = None
     for _ in range(60):
-        code, _ = http_get('http://127.0.0.1:%d/healthz' % d['port'], timeout=5)
+        code, _ = http_get('http://%s:%d/healthz' % (HOST_IP, d['port']), timeout=5)
         if code == 200:
             break
         time.sleep(1)
@@ -340,7 +343,7 @@ def main():
             # `/inventory` and rebuilds the Location WITHOUT our host port
             # (Location: http://127.0.0.1/...), so urllib follows it to port 80
             # and times out. Probe the exact no-slash path to avoid the redirect.
-            api_code, _ = http_get('http://127.0.0.1:%d/api/v1/inventory?limit=1' % d['port'], timeout=5)
+            api_code, _ = http_get('http://%s:%d/api/v1/inventory?limit=1' % (HOST_IP, d['port']), timeout=5)
             if api_code == 200:
                 break
             time.sleep(1)
@@ -365,8 +368,8 @@ def main():
             L('[6] FAIL %s: missing %r in body: %r' % (name, missing, body[:200]))
         else:
             L('[6] OK   %s: %s' % (name, body[:160].strip()))
-    check('%s /healthz' % d['svc'], 'http://127.0.0.1:%d/healthz' % d['port'], [d['tier']])
-    check('%s /api/healthz.json' % d['svc'], 'http://127.0.0.1:%d/api/healthz.json' % d['port'], [d['tier'], sha7])
+    check('%s /healthz' % d['svc'], 'http://%s:%d/healthz' % (HOST_IP, d['port']), [d['tier']])
+    check('%s /api/healthz.json' % d['svc'], 'http://%s:%d/api/healthz.json' % (HOST_IP, d['port']), [d['tier'], sha7])
     check('public https://%s/healthz' % d['sub'], 'https://%s/healthz' % d['sub'], [d['tier']])
     if env == 'dev':
         # Live API probes (D3 smoke extension): the FastAPI inventory module

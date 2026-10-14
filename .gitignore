@@ -54,3 +54,8 @@ Thumbs.db
 
 # CI/CD state (logs, last-seen markers, snapshots)
 /.cicd/
+
+# Local dev scratch & testing
+backend/media/
+backend/uvicorn_local.py
+tests/scratch/
