@@ -17,9 +17,11 @@ What it does:
 """
 import os, sys, time, subprocess, urllib.request
 
-CI = os.path.expanduser('~/SolinCI')
+CI = os.environ.get('SOLIN_CI_DIR', '/opt/solin' if os.path.isdir('/opt/solin') else os.path.expanduser('~/SolinCI'))
 ST = os.path.join(CI, 'state')
-COMPOSE = os.path.join(CI, 'repo/docker-compose.yml')
+REPO = os.environ.get('SOLIN_REPO_DIR', os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+COMPOSE = os.path.join(REPO, 'docker-compose.yml')
+HOST_IP = os.environ.get('DOCKER_TARGET_HOST', '127.0.0.1')
 
 ENVS = {
     'dev':     dict(image='solin:dev',     svc='solin-dev-web',     port=8082, sub='solin-dev.ateszito.com',     ver_var='DEV_APP_VERSION'),
@@ -91,13 +93,13 @@ def main():
          'up', '-d', '--force-recreate', d['svc']])
     code = None
     for _ in range(60):
-        code, _ = http_get('http://127.0.0.1:%d/healthz' % d['port'], timeout=5)
+        code, _ = http_get('http://%s:%d/healthz' % (HOST_IP, d['port']), timeout=5)
         if code == 200:
             break
         time.sleep(1)
     if code != 200:
         sys.exit('FAIL: %s not 200 after rollback' % d['svc'])
-    _, body = http_get('http://127.0.0.1:%d/healthz' % d['port'])
+    _, body = http_get('http://%s:%d/healthz' % (HOST_IP, d['port']))
     _, pbody = http_get('https://%s/healthz' % d['sub'])
     print('[rollback] local  /healthz -> %s' % body.strip())
     print('[rollback] public /healthz -> %s' % pbody.strip())

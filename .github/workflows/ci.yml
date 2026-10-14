@@ -1,61 +1,120 @@
-# Solin CI/CD — GitHub Actions pipeline (forward path, blueprint D8)
-#
-# STATUS (Sep 2026): the repo token has Contents rw but no Administration
-# scope, so a self-hosted runner cannot be REGISTERED with it yet. The
-# EQUIVALENT pipeline runs locally (macOS launchd, 60s poller):
-#   ~/SolinCI/ci-poll.sh -> ~/SolinCI/deploy.py   (see DEPLOY.md)
-#
-# Activating the Actions path (identical deploy steps):
-#   1. token with Administration scope (or `gh auth login`),
-#   2. register a runner labelled solin from
-#        github.com/ateszito/solin/settings/actions/runners — the Mac runs
-#        Docker already, jobs execute locally,
-#   3. this workflow activates on the next push; delete/stop the launchd
-#        poller to avoid double deploys.
-#
-# Deploy steps are shared: scripts/ci/deploy.py (<env> <sha>) does build →
-# web-container recreate → local + public smoke checks; rollback.py is the
-# one-command rollback. On failure the runner rolls the env back so a broken
-# deploy never leaves a tier down.
-
-name: ci
+name: Solin CI/CD Pipeline
 
 on:
   push:
-    branches: [dev, staging, main, "feature/**"]
+    branches:
+      - dev
+      - staging
+      - prod
+  pull_request:
+    branches:
+      - dev
+      - master
+      - staging
+      - prod
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+  statuses: write
 
 concurrency:
-  group: solin-deploy-${{ github.ref_name }}
+  group: solin-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  CI_HOME: /Users/agnesbudai/SolinCI
-
 jobs:
-  deploy:
-    name: build + deploy (${{ github.ref_name }})
-    runs-on: [self-hosted, solin]
+  validate-pr:
+    name: Validate PR & Promotion Path
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          path: ${{ env.CI_HOME }}/actions-${{ github.run_number }}
 
-      - name: Resolve target env
-        id: envmap
+      - name: Enforce Promotion Path
         run: |
-          case "${{ github.ref_name }}" in
-            dev)        echo env=dev     >> "$GITHUB_OUTPUT" ;;
-            staging)    echo env=staging >> "$GITHUB_OUTPUT" ;;
-            main)       echo env=prod    >> "$GITHUB_OUTPUT" ;;
-            feature/*)  echo env=dev     >> "$GITHUB_OUTPUT" ;;
-            *) echo "::error::no env mapping for ${{ github.ref_name }}" >&2; exit 1 ;;
-          esac
+          BASE="${{ github.base_ref }}"
+          HEAD="${{ github.head_ref }}"
+          echo "Checking PR Promotion Path: $HEAD -> $BASE"
+          if [ "$BASE" = "master" ] && [ "$HEAD" != "dev" ]; then
+            echo "::error::Invalid promotion! PRs targeting 'master' must originate from 'dev'. Got '$HEAD'."
+            exit 1
+          fi
+          if [ "$BASE" = "staging" ] && [ "$HEAD" != "master" ]; then
+            echo "::error::Invalid promotion! PRs targeting 'staging' must originate from 'master'. Got '$HEAD'."
+            exit 1
+          fi
+          if [ "$BASE" = "prod" ] && [ "$HEAD" != "staging" ]; then
+            echo "::error::Invalid promotion! PRs targeting 'prod' must originate from 'staging'. Got '$HEAD'."
+            exit 1
+          fi
+          echo "Promotion path ($HEAD -> $BASE) is valid."
 
-      - name: Build + deploy (+ local & public smoke checks)
-        run: python3 "${{ env.CI_HOME }}/deploy.py" "${{ steps.envmap.outputs.env }}" "${{ github.sha }}"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Auto-rollback on failure
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Test Suite
+        run: |
+          PYTHONPATH=backend pytest tests/
+
+  deploy-dev:
+    name: Deploy to Dev (Natasha)
+    if: github.event_name == 'push' && github.ref_name == 'dev'
+    runs-on: [self-hosted, solin, natasha]
+    environment:
+      name: development
+      url: https://solin-dev.ateszito.com
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build & Deploy to Dev
+        run: python3 scripts/ci/deploy.py dev "${{ github.sha }}"
+
+      - name: Rollback on Failure
         if: failure()
-        run: python3 "${{ env.CI_HOME }}/rollback.py" "${{ steps.envmap.outputs.env }}" || true
+        run: python3 scripts/ci/rollback.py dev
+
+  deploy-staging:
+    name: Deploy to Staging (Natasha)
+    if: github.event_name == 'push' && github.ref_name == 'staging'
+    runs-on: [self-hosted, solin, natasha]
+    environment:
+      name: staging
+      url: https://solin-staging.ateszito.com
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build & Deploy to Staging
+        run: python3 scripts/ci/deploy.py staging "${{ github.sha }}"
+
+      - name: Rollback on Failure
+        if: failure()
+        run: python3 scripts/ci/rollback.py staging
+
+  deploy-prod:
+    name: Deploy to Production (Natasha)
+    if: github.event_name == 'push' && github.ref_name == 'prod'
+    runs-on: [self-hosted, solin, natasha]
+    environment:
+      name: production
+      url: https://solin.ateszito.com
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build & Deploy to Production
+        run: python3 scripts/ci/deploy.py prod "${{ github.sha }}"
+
+      - name: Rollback on Failure
+        if: failure()
+        run: python3 scripts/ci/rollback.py prod
