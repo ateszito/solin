@@ -7,22 +7,26 @@ Usage:  deploy.py <dev|staging|prod> <commit-sha>
 Pipeline:
   1. build context at ~/SolinCI/build-ctx — app/ files + REAL video files
      (Docker COPY does not follow the repo's VideoContent symlink — D12)
+     + backend/ + requirements.txt + Dockerfile.api (dev API image, D2)
   2. pre-deploy pg_dumpall snapshot for staging/prod (data safety)
   3. docker build with per-tier build-args → solin:<env> + immutable tag
      (bakes /healthz, /api/healthz.json, _solin.env.js: tier + version)
+     + (dev only) docker build -f Dockerfile.api → solin:dev-api + immutable
   4. rollback pointer: previous image tagged rollback-<env> + state file
   5. compose up -d --force-recreate <web service> ONLY — DB + named volume
      untouched → no data loss, no manual container restart ever
+     (dev: web + api recreated together; api data volume survives)
   6. smoke checks: local :<port>/healthz + /api/healthz.json + public
      subdomain must all report the correct tier (and the baked commit),
      else the deploy FAILS and the poller retries next tick
+     (dev: + live API probes — /api/v1/inventory 200 + seed image 200)
 
 Runtime layout (all outside ~/Documents — launchd TCC):
   ~/SolinCI/repo        git clone of ateszito/solin (build source)
   ~/SolinCI/VideoContent symlink → ~/Documents/VideoContent (real mp4s)
   ~/SolinCI/state/      logs, last-seen markers, snapshots, env file
 """
-import os, sys, time, shutil, subprocess, urllib.request, signal
+import os, sys, time, json, shutil, subprocess, urllib.request, signal
 from contextlib import contextmanager
 
 CI  = os.path.expanduser('~/SolinCI')
@@ -92,6 +96,58 @@ def http_get(url, timeout=20):
     except Exception as e:
         return None, repr(e)
 
+def cf_purge_hostname(hostname):
+    """Best-effort Cloudflare purge by hostname (t_01895707). Returns (ok:bool, msg).
+    Never raises — a purge failure must NOT fail a deploy (the dev image already
+    sends Cache-Control: no-store, so browsers revalidate regardless). Reads
+    CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID from env (or falls back to the
+    repo .env.development). Logs a clear reason when it cannot purge (e.g.
+    token missing `zone.cache_purge` edit permission, currently 401)."""
+    token = os.environ.get('CLOUDFLARE_API_TOKEN')
+    zone  = os.environ.get('CLOUDFLARE_ZONE_ID')
+    if not (token and zone):
+        # Fallback 1: repo .env.development (any live, uncommented key).
+        envfile = os.path.join(REPO, '.env.development')
+        if os.path.isfile(envfile):
+            for line in open(envfile):
+                line = line.strip()
+                if line.startswith('CLOUDFLARE_API_TOKEN='):
+                    token = line.split('=', 1)[1].strip().strip('"\'')
+                if line.startswith('CLOUDFLARE_ZONE_ID='):
+                    zone = line.split('=', 1)[1].strip()
+    if not (token and zone):
+        # Fallback 2: ~/SolinCI/state/cf.env (mode 600, written by t_01895707
+        # worker so the launchd-spawned deploy still has credentials).
+        envfile2 = os.path.join(ST, 'cf.env')
+        if os.path.isfile(envfile2):
+            for line in open(envfile2):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line:
+                    k, v = line.split('=', 1)
+                    if k == 'CLOUDFLARE_API_TOKEN' and not token:
+                        token = v.strip()
+                    if k == 'CLOUDFLARE_ZONE_ID' and not zone:
+                        zone = v.strip()
+    if not (token and zone):
+        return False, 'no CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID — purge skipped'
+    url = 'https://api.cloudflare.com/client/v4/zones/%s/purge_cache' % zone
+    body = json.dumps({'purge_by_hostname': [hostname]}).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={'Authorization': 'Bearer ' + token,
+                 'Content-Type': 'application/json',
+                 'User-Agent': UA}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            resp = json.loads(r.read())
+            if resp.get('success'):
+                return True, 'purge requested for %s' % hostname
+            return False, 'purge api success=false: %s' % json.dumps(resp)[:160]
+    except Exception as e:
+        return False, repr(e)[:180]
+
 def main():
     if len(sys.argv) != 3:
         raise SystemExit('usage: deploy.py <dev|staging|prod> <commit-sha>')
@@ -144,6 +200,11 @@ def main():
                 shutil.copy2(src, os.path.join(vdst, f))
                 nvid += 1
     shutil.copy2(os.path.join(REPO, 'Dockerfile'), os.path.join(ctx, 'Dockerfile'))
+    # --- API image context (dev-only, D2): backend code + deps + API dockerfile ---
+    shutil.copytree(os.path.join(REPO, 'backend'), os.path.join(ctx, 'backend'),
+                    ignore=shutil.ignore_patterns('__pycache__', 'media', '*.pyc'))
+    shutil.copy2(os.path.join(REPO, 'requirements.txt'), os.path.join(ctx, 'requirements.txt'))
+    shutil.copy2(os.path.join(REPO, 'Dockerfile.api'), os.path.join(ctx, 'Dockerfile.api'))
     ctx_kb = run(['du', '-sk', ctx]).split()
     L('[1] build context ready (%s files, %d videos, %s KB)'
       % (n_copied, nvid, ctx_kb[0] if ctx_kb else '?'))
@@ -184,6 +245,35 @@ def main():
     new_id = sh(['docker', 'image', 'inspect', d['image'], '--format', '{{.Id}}']).stdout.strip()
     L('[3] built %s -> %s (immutable: %s)' % (d['image'], new_id[:19], immutable))
 
+    # ---- 3b. (dev only) build + start the FastAPI backend (D2) -------------
+    API_IMAGE = 'solin:dev-api'
+    if env == 'dev':
+        # Dev-only secret: baked into the image (blueprint D2 — dev box only,
+        # no promotion to staging/prod yet). Deterministic so re-deploys are
+        # identical; not a secret worth hiding on a personal laptop.
+        api_rollback_file = os.path.join(ST, 'last-rollback-dev-api')
+        old_api = sh(['docker', 'image', 'inspect', API_IMAGE, '--format', '{{.Id}}']).stdout.strip()
+        if old_api:
+            run(['docker', 'tag', old_api, 'rollback-dev-api'])
+            open(api_rollback_file, 'w').write(old_api + '\n')
+        api_ver = 'api-%s' % version
+        run(['docker', 'build',
+             '-f', os.path.join(ctx, 'Dockerfile.api'),
+             '--build-arg', 'SOLIN_ENV=development',
+             '--build-arg', 'APP_VERSION=%s' % version,
+             '--build-arg', 'API_BASE_URL=https://%s' % d['sub'],
+             '--build-arg', 'PUBLIC_BASE_URL=https://%s' % d['sub'],
+             '--build-arg', 'CORS_ORIGINS=https://%s' % d['sub'],
+             '--build-arg', 'JWT_SECRET_KEY=solin-dev-local-jwt-%s' % version,
+             '--build-arg', 'DATABASE_URL=postgresql://solin:***@solin-dev-db:5432/solin_dev',
+             '-t', API_IMAGE, '-t', 'solin-deploy-dev-api-%s' % sha7,
+             ctx])
+        api_id = sh(['docker', 'image', 'inspect', API_IMAGE, '--format', '{{.Id}}']).stdout.strip()
+        L('[3b] built %s -> %s (immutable: solin-dev-api-%s)' % (API_IMAGE, api_id[:19], sha7))
+    else:
+        # staging/prod: keep the existing images; do NOT start an api container.
+        L('[3b] %s: api container not part of this tier yet (dev-only, D2)' % env)
+
     # ---- 4. runtime env file for compose ---------------------------------------
     envfile = os.path.join(ST, 'deploy-%s.env' % env)
     with open(envfile, 'w') as fh:
@@ -191,8 +281,47 @@ def main():
         fh.write('DEV_DB_PASSWORD=solin\nSTAGING_DB_PASSWORD=solin\nPROD_DB_PASSWORD=solin\n')
     L('[4] compose env file: %s (%s=%s)' % (os.path.basename(envfile), d['ver_var'], version))
 
-    # ---- 5. recreate the WEB container only (data preserved) --------------------
-    run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d', '--force-recreate', d['svc']], timeout=600)
+    # ---- 5. recreate WEB container (dev: + api; data preserved) ----------------
+    # dev: web + api are recreated TOGETHER (blueprint D2); the api data/media
+    # live in the vol_solin_dev_data named volume which is NOT touched here, so
+    # seeded/created products survive a force-recreate exactly like the DBs do.
+    #
+    # ORDER MATTERS (observed 2026-09-27): if the api image does not exist
+    # locally, `docker compose up` will try to PULL solin:dev-api from the
+    # registry — that wait hung a 600 s step and failed the deploy in a poller
+    # loop. So the api container is started FIRST, as its own compose
+    # step (image was just built in [3b] → no pull), with an explicit
+    # readiness probe (GET /api/v1/inventory via the api's own port path on
+    # the container network) BEFORE web is recreated. Web's `depends_on` is
+    # service_started (default condition) — nginx only needs the container to
+    # EXIST to resolve the upstream at config load.
+    if env == 'dev':
+        run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d',
+             '--force-recreate', 'solin-dev-api'], timeout=600)
+        api_up = sh(['docker', 'inspect', '--format', '{{.State.Status}}', 'solin-dev-api']).stdout
+        L('[5] solin-dev-api container state: %s' % api_up)
+        # Readiness: the api binds 8000 INSIDE the container; probe it on the
+        # container network via docker exec of the web container? No — the web
+        # container is still the old image. Probe directly via the host: nginx
+        # isn't up yet, so use `docker network` + wget from the api container
+        # itself (it has python — use python urllib against 127.0.0.1:8000).
+        api_code = None
+        for _ in range(60):
+            r = sh(['docker', 'exec', 'solin-dev-api', 'python', '-c',
+                    'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('
+                    '\'http://127.0.0.1:8000/api/v1/inventory/?limit=0\', timeout=3).status==200 else 1)'],
+                   timeout=15)
+            if r.returncode == 0:
+                api_code = 200
+                break
+            time.sleep(1)
+        if api_code != 200:
+            logs = sh(['docker', 'logs', '--tail', '30', 'solin-dev-api']).stdout
+            L('[5] FAIL: solin-dev-api did not become ready after 60s\n%s' % logs)
+            raise SystemExit(1)
+        L('[5] solin-dev-api ready (200 on /api/v1/inventory inside container)')
+    run(['docker', 'compose', '-f', COMPOSE, '--env-file', envfile, 'up', '-d',
+         '--force-recreate', d['svc']], timeout=600)
     code = None
     for _ in range(60):
         code, _ = http_get('http://127.0.0.1:%d/healthz' % d['port'], timeout=5)
@@ -204,6 +333,22 @@ def main():
         L('[5] FAIL: %s did not serve 200 on :%d after 60s — %s' % (d['svc'], d['port'], ps))
         raise SystemExit(1)
     L('[5] %s serving 200 on :%d' % (d['svc'], d['port']))
+    if env == 'dev':
+        api_code = None
+        for _ in range(60):
+            # No trailing slash: FastAPI redirect_slashes 307s `/inventory/` ->
+            # `/inventory` and rebuilds the Location WITHOUT our host port
+            # (Location: http://127.0.0.1/...), so urllib follows it to port 80
+            # and times out. Probe the exact no-slash path to avoid the redirect.
+            api_code, _ = http_get('http://127.0.0.1:%d/api/v1/inventory?limit=1' % d['port'], timeout=5)
+            if api_code == 200:
+                break
+            time.sleep(1)
+        if api_code != 200:
+            ps = sh(['docker', 'ps', '-a', '--filter', 'name=solin', '--format', '{{.Names}} {{.Status}}']).stdout
+            L('[5] FAIL: solin-dev-api did not serve /api/v1/inventory 200 after 60s — %s' % ps)
+            raise SystemExit(1)
+        L('[5] solin-dev-api serving /api/v1/inventory 200 (through solin-dev-web)')
 
     # ---- 6. smoke checks --------------------------------------------------------
     failures = 0
@@ -223,6 +368,20 @@ def main():
     check('%s /healthz' % d['svc'], 'http://127.0.0.1:%d/healthz' % d['port'], [d['tier']])
     check('%s /api/healthz.json' % d['svc'], 'http://127.0.0.1:%d/api/healthz.json' % d['port'], [d['tier'], sha7])
     check('public https://%s/healthz' % d['sub'], 'https://%s/healthz' % d['sub'], [d['tier']])
+    if env == 'dev':
+        # Live API probes (D3 smoke extension): the FastAPI inventory module
+        # and its seed media must be reachable over the public subdomain —
+        # this is the acceptance that makes A1–A5 true end-to-end.
+        check('public https://%s/api/v1/inventory' % d['sub'],
+              'https://%s/api/v1/inventory' % d['sub'], ['p1', 'Chicken'])
+        # Seed image over https — a 200 with any body proves static media is
+        # served (the bytes are binary; http_get decodes leniently).
+        code_img, img_body = http_get('https://%s/api/v1/media/inventory/p1/product_photo/seed.jpg' % d['sub'])
+        if code_img != 200:
+            failures += 1
+            L('[6] FAIL seed image HTTP %s over https: %s' % (code_img, img_body[:120]))
+        else:
+            L('[6] OK   seed image returned 200 over https (%d chars of binary decoded)' % len(img_body))
 
     if failures:
         L('===== deploy %s FAILED — roll forward on next push, or roll back: '
@@ -232,6 +391,19 @@ def main():
     with open(os.path.join(ST, 'last-successful-%s' % env), 'w') as fh:
         fh.write('sha=%s version=%s snapshot=%s at=%s\n'
                  % (sha, version, snap, time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())))
+    # ---- 6b. best-effort Cloudflare edge purge (t_01895707) -----------
+    # Belt & suspenders for the stale-4h app/*.js bug: the dev image now bakes
+    # `Cache-Control: no-store` into the vhost so every browser revalidates with
+    # the origin, but we ALSO kick a purge of the zone edge for this hostname
+    # to clear any copies cached under the old max-age. Non-fatal on purpose:
+    # the current token lacks `zone.cache_purge` edit permission (401), so log
+    # the reason and keep going — the no-store header already guarantees
+    # freshness for new visitors.
+    ok, msg = cf_purge_hostname(d['sub'])
+    if ok:
+        L('[7] CF purge: %s' % msg)
+    else:
+        L('[7] CF purge skipped (non-fatal): %s' % msg)
     L('===== deploy %s OK in %.0fs — https://%s now serves %s ====='
       % (env, time.time() - T0, d['sub'], version))
     L('     rollback if needed: python3 ~/SolinCI/rollback.py %s' % env)

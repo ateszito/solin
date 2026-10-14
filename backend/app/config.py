@@ -6,7 +6,8 @@ Reads the TIER B variables from the three-env contract
     SOLIN_ENV, APP_VERSION, API_BASE_URL, PUBLIC_BASE_URL, CORS_ORIGINS,
     FEATURE_ALLOW_EDIT, FEATURE_INVISIBILITY, DEBUG,
     DATABASE_URL, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD,
-    LOG_LEVEL, RATE_LIMIT_PER_MIN, JWT_SECRET_KEY
+    LOG_LEVEL, RATE_LIMIT_PER_MIN, JWT_SECRET_KEY,
+    SOLIN_DATA_DIR, SOLIN_MEDIA_ROOT
 
 Rules (blueprint section 3.3 contract):
   * Every env-differentiating var MUST come from the process environment —
@@ -88,6 +89,15 @@ class Settings:
     rate_limit_per_min: int = 0  # 0 = disabled (dev convenience)
     jwt_secret_key: str = ""
 
+    # ---- Tier B — on-disk roots (inventory module, contract C7) ----
+    # Where the inventory flat-store (products.json) lives. Default is the
+    # repo's `media/` dir so a bare `uvicorn app.main:app` works; deploy
+    # points this at a volume (SOLIN_DATA_DIR).
+    data_dir: str = ""
+    # Where uploaded product images are persisted:
+    #   <media_root>/inventory/<product_id>/<slot>/<filename> (contract §2)
+    media_root: str = ""
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Build Settings from os.environ, validating what the contract requires."""
@@ -114,6 +124,8 @@ class Settings:
             log_level=_env("LOG_LEVEL", "info").lower(),
             rate_limit_per_min=_env_int("RATE_LIMIT_PER_MIN"),
             jwt_secret_key=_env("JWT_SECRET_KEY"),
+            data_dir=_env("SOLIN_DATA_DIR"),
+            media_root=_env("SOLIN_MEDIA_ROOT"),
         )
 
         # Fail fast only when we know it's a DEPLOYMENT (SOLIN_ENV set to a
@@ -148,6 +160,8 @@ class Settings:
             "rate_limit_per_min": self.rate_limit_per_min,
             "postgres_db": self.postgres_db,
             "postgres_user": self.postgres_user,
+            "data_dir": self.data_dir,
+            "media_root": self.media_root,
         }
         if secret:
             # Full view for local operators (never served over the wire).
