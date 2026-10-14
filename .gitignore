@@ -1,9 +1,12 @@
 Solin — Recipe Platform
 
-# Environment files
+# Environment files — per-tier files (.env.development / .env.staging /
+# .env.production) ARE committed and are the single source of truth for
+# each env's configuration (blueprint sec 3.2, 3.3). Only the local
+# secrets file and ad-hoc overrides stay out of git.
 .env
 .env.local
-.env.production
+.env.*.local
 
 # Python
 __pycache__
@@ -13,7 +16,9 @@ __pycache__
 .mypy_cache
 /.venv/
 /venv/
-requirements.txt
+# NOTE: requirements.txt is intentionally NOT ignored — it is baked into the
+# Docker build context (Dockerfile.api) and copied by scripts/ci/deploy.py
+# from the CI clone. Keeping it tracked is load-bearing for the pipeline.
 
 # Node
 node_modules/
@@ -34,13 +39,18 @@ npm-debug.log*
 *.mov
 *.avi
 
+# Runtime / test artifacts
+/media/
+/.test_tmp/
+
 # Sensitive
 secrets/
-*.env
 
 # OS
 Thumbs.db
-.DS_Store
 
 # DB dumps
 *.sql.gz
+
+# CI/CD state (logs, last-seen markers, snapshots)
+/.cicd/

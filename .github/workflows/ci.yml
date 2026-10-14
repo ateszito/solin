@@ -1,0 +1,61 @@
+# Solin CI/CD — GitHub Actions pipeline (forward path, blueprint D8)
+#
+# STATUS (Sep 2026): the repo token has Contents rw but no Administration
+# scope, so a self-hosted runner cannot be REGISTERED with it yet. The
+# EQUIVALENT pipeline runs locally (macOS launchd, 60s poller):
+#   ~/SolinCI/ci-poll.sh -> ~/SolinCI/deploy.py   (see DEPLOY.md)
+#
+# Activating the Actions path (identical deploy steps):
+#   1. token with Administration scope (or `gh auth login`),
+#   2. register a runner labelled solin from
+#        github.com/ateszito/solin/settings/actions/runners — the Mac runs
+#        Docker already, jobs execute locally,
+#   3. this workflow activates on the next push; delete/stop the launchd
+#        poller to avoid double deploys.
+#
+# Deploy steps are shared: scripts/ci/deploy.py (<env> <sha>) does build →
+# web-container recreate → local + public smoke checks; rollback.py is the
+# one-command rollback. On failure the runner rolls the env back so a broken
+# deploy never leaves a tier down.
+
+name: ci
+
+on:
+  push:
+    branches: [dev, staging, main, "feature/**"]
+
+concurrency:
+  group: solin-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CI_HOME: /Users/agnesbudai/SolinCI
+
+jobs:
+  deploy:
+    name: build + deploy (${{ github.ref_name }})
+    runs-on: [self-hosted, solin]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: ${{ env.CI_HOME }}/actions-${{ github.run_number }}
+
+      - name: Resolve target env
+        id: envmap
+        run: |
+          case "${{ github.ref_name }}" in
+            dev)        echo env=dev     >> "$GITHUB_OUTPUT" ;;
+            staging)    echo env=staging >> "$GITHUB_OUTPUT" ;;
+            main)       echo env=prod    >> "$GITHUB_OUTPUT" ;;
+            feature/*)  echo env=dev     >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::no env mapping for ${{ github.ref_name }}" >&2; exit 1 ;;
+          esac
+
+      - name: Build + deploy (+ local & public smoke checks)
+        run: python3 "${{ env.CI_HOME }}/deploy.py" "${{ steps.envmap.outputs.env }}" "${{ github.sha }}"
+
+      - name: Auto-rollback on failure
+        if: failure()
+        run: python3 "${{ env.CI_HOME }}/rollback.py" "${{ steps.envmap.outputs.env }}" || true
