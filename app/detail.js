@@ -172,8 +172,11 @@ window.Detail = (function () {
       ${esc(r.description)}
       ${macroCards(r)}
       ${ingredientSection(r, null)}
-      <div id="pairing"></div>
       ${stepsSection(r)}
+      <!-- t_a411a23e (spec §11.5): pairing card (incl. #pg-result + portion
+           selector) is the LAST block; instructions sit above it.
+           Inner card order unchanged (t_d6c25424): actions→portions→result→rows. -->
+      <div id="pairing"></div>
     `;
 
     // Pairing panel (recept ↔ termék): render the card now that the DOM is in place
