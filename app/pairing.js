@@ -205,6 +205,26 @@ window.Pairing = (function () {
     S.save(K2, v);
   }
 
+  /* AUTO-PERSIST (t_bb942564, spec §11.6 A5): the pairing working set
+     (paired rows + custom rows) is written to solin.pairings.v2 the
+     moment ANY row interaction changes it, so a reload (and Browse→A
+     navigation) re-renders exactly what the user had typed. This is the
+     data fix behind "custom rows persist across reload (double check)":
+     the spec E2E chain never presses "💾 Párosítás mentése" between
+     edits, and A5 still demands the rows survive a reload. The explicit
+     save button stays untouched (same storage, same toast). Name-less
+     custom rows stay drafts (never stored), mirroring saveCurrent. An
+     unchanged EMPTY working set (e.g. Auto-pár with no match, no custom
+     rows) never overwrites a saved file — the empty guard skips the
+     write instead of blanking storage. */
+  function persist() {
+    if (ACTIVE_RECIPE == null || !ROWS) return;
+    const paired = ROWS.some((r) => r.product_id);
+    const custom = (CUSTOM || []).some((c) => String(c.name || "").trim() !== "");
+    if (!paired && !custom) return;
+    savePairing(ACTIVE_RECIPE, ROWS, CUSTOM);
+  }
+
   /* ---------- products cache (shared picker source) ---------- */
   async function ensureProducts() {
     if (PRODUCTS.length) return PRODUCTS;
@@ -598,6 +618,7 @@ window.Pairing = (function () {
           if (g) { row.product_id = g.id; row.unit = row.unit || g.base_unit; n++; }
         });
         renderRows(); refreshBadge();
+        persist(); // auto-matches are working-set changes too (t_bb942564)
         toast(n ? n + " hozzávaló auto-párosítva" : "Nincs egyértelmű egyezés a raktári termékekben");
       });
     });
@@ -607,6 +628,8 @@ window.Pairing = (function () {
     sec.querySelector("#pg-clear").addEventListener("click", () => {
       (ROWS || []).forEach((r) => { r.product_id = null; r.unit = null; });
       renderRows(); refreshBadge();
+      persist(); // mirror the cleared working set (customs survive; an
+                 // all-empty set keeps the empty guard → no blanking)
       $("#pg-result").innerHTML = "";
       // The cached result is stale now (its products/quantities are gone) —
       // drop it so a portions edit can't re-render old numbers. The portion
@@ -657,6 +680,7 @@ window.Pairing = (function () {
           row.unit = null;
         }
         renderRows(); refreshBadge();
+        persist();
       }
     });
     rowsEl.addEventListener("input", (e) => {
@@ -666,6 +690,7 @@ window.Pairing = (function () {
       const v = e.target.value.trim();
       row.amount = v === "" ? null : Number(v);
       refreshBadge();
+      persist();
     });
 
     /* ---- custom "egyéb hozzávaló" wiring (spec §11.2 R1, t_a411a23e) ---- */
@@ -697,6 +722,7 @@ window.Pairing = (function () {
         c[role] = e.target.value;
       }
       if (c.bad) c.bad = false;
+      persist();
     });
 
     // per-row "×" delete — only ever removes custom rows, and product
@@ -707,6 +733,8 @@ window.Pairing = (function () {
       const i = CUSTOM.findIndex((r) => r.key === btn.dataset.custDel);
       if (i >= 0) CUSTOM.splice(i, 1);
       renderRows(); refreshBadge();
+      persist(); // the deletion is the new working set — persist it too,
+                 // or a reload would resurrect the deleted row (t_bb942564)
     });
   }
 
