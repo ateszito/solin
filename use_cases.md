@@ -604,3 +604,158 @@ photo + label photo) — QA asserts `GET <image.url>` returns the declared
 - **Clamping / rounding of a bad `portions` value.** Invalid input is always
   a `400 PORTIONS_INVALID` (E3–E7); we never fall back to a "nearest valid
   integer." (§7.4, design/PORTIONS.md §5)
+
+---
+
+## 11. Custom "extra" ingredient items + pairing block at the bottom (t_e2572497, ask t_138c1717)
+
+Normative contract for t_5721a2dd (calc/data layer), t_a411a23e (UI + layout)
+and t_0b3310dc (QA). It supersedes the inner-card placement note of
+t_d6c25424 where they conflict: the card's INNER arrangement (result block
+directly under the Számolás row) does NOT change — the whole card MOVES.
+
+### 11.1 Current behavior (code-verified, dev@33a4709)
+
+- Recipe detail renders, in order (app/detail.js `render()`): video → title +
+  actions → description → default macro cards (`macrosPerServing`) →
+  ingredients checklist (`#ing-list`) → pairing card (`#pairing`,
+  app/pairing.js) → "Elkészítés (videó-szinkron)" steps (`#step-list`).
+- Pairing rows exist ONLY for recipe-declared ingredients, and every row can
+  only pair to an inventory product (picker or Auto-párosítás).
+- `collectItems()` sends only rows that have `product_id` + amount; the
+  engine resolves macros + price per product (§4). Anything not in the
+  ingredient list cannot be added, priced, or counted at all.
+
+### 11.2 Desired behavior — custom extra items ("Egyéb hozzávaló")
+
+R1 (entry control). One "＋ Egyéb hozzávaló" chip in the pairing card's
+  `.pg-actions` row adds an UNLIMITED number of custom rows (independent of
+  the recipe's ingredient list and of inventory). Each custom row has its own
+  "×" delete. "Kiválasztott termékek törlése" stays product-pairing-only:
+  it must NOT clear custom rows.
+
+R2 (custom item fields — required shape). A custom row captures:
+
+| field   | type                         | required            | bounds / notes |
+|---------|------------------------------|---------------------|----------------|
+| name    | text                         | yes                 | 1–80 chars after trim |
+| quantity| number                       | display-only, optional | > 0 |
+| unit    | free text (datalist g, kg, ml, dl, db, szelet, szem, evőkanál, teáskanál) | display-only, optional | ≤ 10 chars; NOT unit-family-gated (rule 2 keeps display-only values out of scope) |
+| price   | number + currency (default HUF; may be edited, `^[A-Z]{3}$`) | optional | > 0; amount = TOTAL price of the used quantity (not per unit / not per 100) |
+| macros  | the 7 MacroBlock fields (kcal, P, C, Z, rost, cukor, Na) | optional | each 0–9999, ≤2 dp; values are TOTALS for the used quantity (not per 100) |
+
+Rationale (decision, do not re-decide): a custom item models "that one thing
+I threw into the pan" — for groceries the user usually does not know
+per-100 g data, so requiring a basis + unit reconciliation would recreate the
+UNITS_INCOMPATIBLE/NO_MACRO_BASIS class of friction this feature exists to
+avoid. Absolute totals + display-only quantity/unit keep the row
+server-verifiable without inventing a second unit family.
+
+R3 (invalid input is never silently repaired — §9 no-clamp spirit). Client:
+an invalid value (negative price, `abc`, empty name with values present)
+marks the row red, toasts once, and EXCLUDES the row from the next count;
+nothing is clamped to 0 and nothing is dropped silently. Server (API
+producers other than this client): same violations → 400 `CUSTOM_ITEM_INVALID`
+(§11.4). An empty-name row with values is excluded client-side, never sent.
+
+R4 (compatibility). Existing flow unchanged: unpaired ingredient rows are
+counted exactly as before; custom rows are strictly additive and never
+replace a paired row.
+
+### 11.3 Effect on totals (normative math)
+
+- Custom row enters the same `per_ingredient[]` array as paired rows, in
+  USER-ENTRY order AFTER all paired rows (display: under a "Egyéb hozzávalók"
+  sub-label inside `#pg-rows`).
+- Its `macros` block is the verbatim typed totals (already ≤2 dp → no
+  re-rounding); its `cost` is `r2(price)` when a valid price was entered,
+  else `null`. Row carries `"source": "custom"` (additive key; UI may tag it
+  `egyéb`).
+- §4.2 totals rule unchanged: `totals[k] = r2(Σ already-rounded rows)`.
+  §4.3/§7 cost rules UNCHANGED and apply to custom rows too: a custom `cost`
+  joins `total_cost` only when its currency equals the §4.3 `base_currency`
+  (first priced item, usually USD from a paired product); a custom price in a
+  foreign currency is excluded and emits the per-row `CROSS_CURRENCY_EXCLUDED`
+  warning, never a silent sum. A custom-only batch (no paired rows) sets
+  base_currency = the custom row's currency. Custom never participates in
+  `per_portion` math differently — portions still divides the recomputed
+  `totals` (and `total_cost`), per §7.3.
+- Count guard: if only invalid custom rows remain, count is REFUSED
+  (client "add or fix at least one item", then §3.6 `VALIDATION_ERROR`).
+
+### 11.4 API / data contract changes (additive only)
+
+Request `POST /api/v1/inventory/macros/count` — `items[]` gains a variant
+item (discriminator `type`, mirrors §1.3 ingredient_reference):
+
+```
+paired (unchanged): { "product_id": "p1", "quantity": 200, "unit": "g", "name_override"? }
+custom (new):       { "type": "custom", "name": "Chilipehely", "quantity": 5,
+                      "unit": "g",                      // optional, display-only
+                      "price": 1.2, "currency": "HUF",  // both optional
+                      "macros": {7 MacroBlock keys, totals-for-the-quantity} }
+```
+
+Response (same §4.4 shape + additive keys): custom rows appear in
+`per_ingredient[]` with `"source":"custom"`, verbatim macros, `cost:r2(price)`
+or null; empty `unit` renders `—`; totals `total_cost`, `per_portion`,
+`per_portion_cost` recompute over the new totals per §7/§11.3.
+
+Server validation → 400 `CUSTOM_ITEM_INVALID` `fields=[<bad field>]`, raised
+BEFORE aggregation (same ordering as PORTIONS_INVALID): name empty/>80, any
+macro key ∉ [0,9999] or >2 dp, price ≤ 0, currency `^[A-Z]{3}$`, quantity ≤ 0.
+A count whose item list is non-empty but has ZERO computable rows (all
+custom+invalid) → 400 `VALIDATION_ERROR`, no 200-with-zeros.
+
+Local persistence (localStorage `solin.pairings.v1` → **v2**, version-key bump
+so v1 readers never see foreign rows): `{name, product_id|null, amount, unit,
+note, source:"custom"|undefined, price, currency, macros}`; a v2 file with
+`"source":"custom"` rows saves/loads/round-trips; legacy v1 files remain
+readable (missing `source` ⇒ paired row).
+
+### 11.5 Layout change (recipe detail vertical order)
+
+New bottom-to-top on mobile (≤768 px, single column): … → ingredient
+checklist → instructions (steps) → **pairing card incl. #pg-result + portion
+selector**. The recipe detail is ONE flat `article#recipe-detail` (no column layout —
+`.detail-wrap`/`.recipe-grid` don't apply here), so the change is literally
+the template order in `detail.js render()` + the `Pairing.renderCard` call
+site. Mobile and desktop share that order; QA spot-checks both (390 px,
+1280 px) for scroll height and no horizontal overflow. The pairing card's
+internal order (actions → portions → result → rows) is UNCHANGED — this move
+supersedes t_d6c25424's "section second-from-bottom" placement, not its
+inner-card rule. `#pg-result` keeps growing in place (t_d6c25424 "Scroll"
+criterion now applies to the new bottom section).
+
+### 11.6 Acceptance criteria (QA t_0b3310dc)
+
+A1 Add ≥2 custom rows to r1 with known price+macros → they count, totals =
+   §4.2 sum including them, per-portion split divides the new totals,
+   per-portion price = r2(new total_cost/portions).
+A2 Worked fixture (fixture-2): §5.2-positive pairings (p1 200 g, p2 100 g,
+   p3 10 ml) + ONE custom row entered verbatim — name "Chilipehely",
+   quantity 5, unit "g", price 0.35 USD, macros block (totals for the
+   5 g, NOT per-100) {calories:15.90, protein:0.67, fat:0.87, carbs:2.83,
+   fiber:1.36, sugar:2.10, sodium:1.50} →
+   per_ingredient[3].cost = 0.35 USD, source "custom";
+   totals = {calories:783.30, protein:70.57, fat:18.97, carbs:81.63,
+             fiber:3.46, sugar:2.20, sodium:151.50}  (sum-of-rounded §4.2);
+   total_cost = 2.40 USD (1.50+0.55+0.35 — custom cost joins because
+   currency == base_currency); with portions=4 → per_portion
+   {195.83, 17.64, 4.74, 20.41, 0.87, 0.55, 37.88} (HALF_UP 2dp) and
+   per_portion_cost = 0.60 USD. Currency-split repeat: same row with price
+   1.20 HUF → custom cost EXCLUDED from total_cost (2.05 USD) + per-row
+   cross-currency warning (custom rules §11.3; base currency rule §4.3).
+A3 r1 without custom rows byte-identical to pre-change response (regression).
+A4 Instructions section sits above the pairing card at 390 px and 1280 px
+   widths; pairing card is the last block; no horizontal scroll.
+A5 Custom row deletion, reload persistence (v2), Auto-pár / clear-products
+   do not touch custom rows; invalid entries surface red+toast (client) or
+   400 `CUSTOM_ITEM_INVALID` (server); zero-valid-items count refused.
+
+## 12. Non-goals added (MVP)
+
+- No auto-pair, substitute-lookup, or unit-conversion for custom rows.
+- No editing inventory products from the pairing card (custom ≠ product).
+- No per-100 macro basis for custom rows (totals-only, R2).
+- No cross-currency aggregation (custom price obeys §4.3).

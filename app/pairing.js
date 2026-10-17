@@ -938,6 +938,23 @@ window.Pairing = (function () {
       // Set/clear the "LAST_RES was computed for this count" context so a
       // spec can exercise the stale-server-echo path (see renderResult).
       setLastCountFor: (n) => { COUNTED_P = n; },
+      // Data-layer surface for app/tests/custom_items.spec.js (spec §11.4
+      // A5): drive the collect→items assembly + the v2 storage round-trip
+      // without a browser. collect mirrors doCount's request assembly;
+      // setState mounts recipe state directly (ROWS/CUSTOM/PRODUCTS).
+      collect: () => collectItems(),
+      // Full count chain (guard + toast + fetch + render) for the Node
+      // spec: set state, stub window.FcApi.countMacros, then await this.
+      count: () => doCount(),
+      // The rejected-batch mirror lives in renderResult's sibling: bad
+      // rows keep .bad=true so renderRows re-renders them flagged.
+      getRows: () => ROWS,
+      setState: (rows, custom, products) => {
+        ROWS = rows || [];
+        CUSTOM = custom || [];
+        PRODUCTS = products || [];
+      },
+      savePairing, loadPairing, initRows,
     },
   };
 })();
