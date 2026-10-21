@@ -44,11 +44,21 @@ window.FoodCounter = (function () {
       err.code = body && body.code;
       throw err;
     }
-    return res.status === 204 ? null : body;
+    if (res.status === 204) return null;
+    if (!body) {
+      throw new Error(`API ${url} returned non-JSON response (${res.status})`);
+    }
+    return body;
   }
   async function listProducts(search) {
     const q = search ? "?limit=50&search=" + encodeURIComponent(search) : "?limit=50";
-    return (await api(q)).items;
+    try {
+      const res = await api(q);
+      return (res && Array.isArray(res.items)) ? res.items : [];
+    } catch (e) {
+      console.warn("[FoodCounter] listProducts failed:", e);
+      return [];
+    }
   }
 
   /* ============================================================
