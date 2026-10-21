@@ -37,7 +37,22 @@ if not os.path.isdir(VC):
     VC = os.path.join(REPO, 'VideoContent')
 COMPOSE = os.path.join(REPO, 'docker-compose.yml')
 COMPOSE_DIR = REPO          # compose resolves relative paths from CWD
-HOST_IP = os.environ.get('DOCKER_TARGET_HOST', '127.0.0.1')
+def _detect_docker_host():
+    if os.environ.get('DOCKER_TARGET_HOST'):
+        return os.environ['DOCKER_TARGET_HOST']
+    try:
+        r = subprocess.run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'],
+                           capture_output=True, text=True, timeout=5)
+        ep = (r.stdout or '').strip()
+        if ep.startswith('ssh://'):
+            host = ep.split('ssh://', 1)[1].split('@')[-1].split('/')[0].split(':')[0]
+            if host:
+                return host
+    except Exception:
+        pass
+    return '127.0.0.1'
+
+HOST_IP = _detect_docker_host()
 
 # Base semver, read from the repo's VERSION file (single number, like
 # "0.1.1"). Each released cut just bumps that file. Per-tier suffix is
