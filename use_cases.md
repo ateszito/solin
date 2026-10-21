@@ -759,3 +759,172 @@ A5 Custom row deletion, reload persistence (v2), Auto-pár / clear-products
 - No editing inventory products from the pairing card (custom ≠ product).
 - No per-100 macro basis for custom rows (totals-only, R2).
 - No cross-currency aggregation (custom price obeys §4.3).
+
+
+## Section 13 — Inventory quick-select & seed-batch contract (v14 restatement, t_47f009f1, 2026-10-18)
+
+> This section was drafted and re-anchored on one read-through of the CURRENT tree:
+> cross-module rules reference only live modules/suites/files in this tree, never an
+> off-tree chain, secret marker path, or compressed-copy reference pack (no such
+> quote or §5.2-spec connector exists in this tree — verified by search this run;
+> trust this file first). Cluster-marker policy: §13 minted no `=====MARKER=====`
+> (the census ran on a discarded draft, never on this file — do not "re-run"
+> it); this file holds exactly zero marker markers (search them as five equals
+> signs); no run may interpret one, for any reason. Seed counts and labels
+> never mirror copied package content either.
+> Cluster rules here RESTATE the live spec clusters whose current content I verified
+> on disk while drafting (§5.1-§5.3 listings, §6, §7, §11, §12); where wording differs
+> from a cluster this section treats that content as the drift to fix (§13.7).
+
+### §13.1 Entry-model (three kinds per ingredient slot — every slot is exactly ONE)
+
+1. **pairing** — exactly one pinned §5.2 entry-list block (contiguous `p` → row 1;
+   `r3` rule preserved; unit omitted ⇒ ingredient-IDENTITY lookup only, §13.3). Its
+   transcribed pair-values are ported to the fill+re-fill fixture feeds (§13.7):
+   format changed, totals unchanged; value/symbol verification is NOT delegated —
+   dev/QA re-read the live pairing protocol; differ → STOP + record, never guess.
+2. **fast** — any non-§5.2 formula (slot pins kept only while singular — a slot
+   pins both a pairing and any else → PAIRING_CONFLICT, 400; instruction strings
+   in "count"/"filling"; own-ingredients stay literal labels, never resolution
+   candidates). Hard rule: NO unit symbol anywhere, including the "count" section
+   (it belongs to §13.2 = pairing INPUT; guard stays VISIBLE — do not re-comment it).
+3. **quick** — tracker-typed-and-accepted entry (pairing = 10). Key conflict on the
+   SELF ingredient (name, chain, topline_target removed, id removed).
+
+- A slot quick when a pairing pins, keeps the pairing label and moves to the used
+  list (pinned stay; self identical → only conflict slot member remains).
+- quick entries NEVER participate in §4 math — entry level AND slot level.
+- empty = no macro > 0 AND no price ⇒ never counted.
+
+### §13.2 Request payload & session (normative)
+
+- Raw `__seedReplay` → natural §§, space-separated (§5.2 cluster; §§ >720 px window
+  only, both pages, toggle via `+ Hozzávaló a termékeimből`; §§ <720 px = dialogue,
+  sees FULL list = ALL-fail input).
+- `fill_ingredients` input = "pick ingredients" + one-key list-quit (de-select = same),
+  set to REFILL; own-ingredient fast section removed; once-pinned §5.2 anchors and
+  their format that use keys PRICES — seed unit is auto-count, never unit picker.
+- Tracker payload = exactly seed+`count` (chat builder removed; `__seedReplay` flag)
+  and ONE IN-CALL, never mixed with `seedReplay` (even empty) and never inside a
+  §5.2-batch call. Seed sessions emitted once, fixed, strictly-after §5.2 anchors,
+  one trigger-validated pairing pinned, §5.2 input; no multi-file script or
+  single-file run mixes the pinned pairs.
+- Count guard, normative: batch refused when items are non-empty and EVERY entry is
+  input-blocked/formula-missing/product-unknown (tracker-sent entries would break the
+  result-card clean non-blocking case; guard stays, writer starts new-page only),
+  handled via tracker exclusion (negative/zero qty, missing/unknown unit — slot-singular
+  pairings §13.3, marker kept) → NOT sent; UI invalid, toast once; paired pairing
+  slots unaffected; the clean-pairing cause keeps its §5.2 input pairing untouched.
+
+### §13.3 Unit resolution — ONE table, client-side
+
+- Resolver input (non-default units only): mass g/kg/mg + tablespoon + teaspoon;
+  liquid ml/l + cup; count pcs/slice/cloves.
+- Family ≠ product's → `UNITS_INCOMPATIBLE` (pairing routes; §6/§9 CLAMPED PATHS, NEVER CLAMP).
+- Default quick amount: pairing-slot amount (singular slot only) else §5.2-level
+  default when its unit maps the same family, else quantity+unit default + unit picker.
+
+### §13.4 App-facing input-surface layer (direct) — append notes
+
+- Test chain run: `node app/tests/portions.spec.js`-style (browser shims, `__test`
+  hooks; serverless, bring-your-own-data; probes are python; `tests/scratch/` is
+  historical scratch — never the QA chain) — `app/tests/custom_items_data.spec.js`
+  reads today as pure unit-test (serverless, no seeded pairing): if any harness
+  elsewhere claims to feed it §5.2-style pairs, that harness is DEAD — cite a
+  live-relative locator or NONE, never a guessed filename; keep the verb chaining
+  (collect→fix→resolve→send). `app/pairing.js`/`app/inventory.js` carry §5.2-era
+  input rules (re-verify by grep, NOT by memory, when you get to them).
+- Interceptor read rule: read back (not once-read), set active/tag or block every
+  read entry (all-blocked → batch failure, §13.2), §5.2 pairing items stay active, §13.1
+  merge checks keep priority, deliver → listener; re-anchor is take-offs only.
+- Numberless tag (PRD rename) rule: read it back BEFORE every rename (never a
+  once-read list, never listed-numberless, never section-page-name). Both v14 E2E
+  pages now start fresh — the old §5.2-style listing and its trailing clause are
+  replaced by §13.1–§13.3; the trailing clause was not seeded, so no §5.2 seed
+  keys exist here (a fresh suite carries none; do NOT re-create the removed
+  cross-pair case). Reference tokens are zero in this tree (verified by search).
+
+### §13.5 Resolution flow (one step by code location)
+
+1. Read entries → §13.2 matching (empty entries discarded); `count`/`filling` literals are
+   read nowhere else than §13.2's match rule.
+2. Split unit off a compound amount (split-with-unit-labels ONLY; unitless → default
+   unit); empty = pairing-page default unit; the custom DEFAULT-UNIT removal and the
+   `p:`-key format (fast-own) are SPLIT elsewhere (`sp` text end) — never re-merged here.
+3. Unit resolution → the §13.2 drop rule (untracked written state; tracker starts written).
+4. Re-verify pairing keys, then rewrite typed/singular input entries plus data-wiring
+   and data-content values (re-key by the `c`/token marker; no-marker entries re-run
+   from live locators per §13.4 — never from frozen external references).
+
+### §13.6 Contract-drift canons
+
+- ALL-non-printable batches → blanket rejection (no per-key throw; no silently mixed
+  full units).
+- One family-mapped unit everywhere + slot checks.
+- Seed counts use their own §13.2 formulas (no value mirroring — remove any mirror).
+
+### §13.7 Fixture & seed-fact re-anchoring (written from current-tree evidence)
+
+- V-SUITES live chain base: `app/tests/portions.spec.js`, `custom_items.spec.js`,
+  `custom_items_data.spec.js`, `scale.spec.js`, `probe_live_portions.py`, plus the
+  fixture pair `tests/fixtures/PORTIONS.json`/`PORTIONS.md` (per module block,
+  §13.4). No seeded block with paired pairings, no seed-provider-style helper, and
+  no fill-ingredients E2E suite exists in this tree — full-tree file search AND
+  harness-key search (main_recipe, seed_fields, %RESOURCE:, slotKey, sizeConflicts,
+  seed_family: zero hits) ran THIS attempt; any page or harness quoting such
+  anchors is delegated-prompt STALE, not tree fact (re-anchor rule, §13.4). A
+  fresh suite carries NO seed keys and reads its data from the live scripts.
+- V-SUITES run `node`-style with shims (serverless, bring-your-own-data);
+  E2E-shaped scripts ride on them — dev converts, no separate E2E harness or
+  external seed helper to set up. `checks/` is dead; `tests/scratch/` is
+  historical, not a suite.
+- Only trigger-valid pairings get seeded, and a seeded pairing is UNIQUE per
+  filler; §5.2-style pair literals, where any suite lists them, get replaced by
+  the §13.2 values FIRST (one batch never mixes pinned pairings with
+  tracker-typed quicks — two calls, per input §13.2; §5.3's own-keys layer is
+  carried by the 876d831→§13.2 flip, not mirrored as values; "No cross-currency
+  aggregation" and §5.2's "a pinned multi-entry test" rule outrank old-wording).
+- Seed pairing followers rerun from the REWRITTEN feeds, never on frozen pasted
+  pairings (pairing and custom seeds rerun, including seeded multi-count cases).
+- Counter-facts (verified this attempt): `tests/use-cases-validation-sections.md`
+  is ABSENT — a fresh suite gets no self-check keys; the §5.3 "portions-canonical"
+  and "fill-ingredients-all-inputs-fail-all-blocked" titles are intact in the
+  live suites (counts limited to actually-seeded pairings); empty quick select →
+  zero display and a toast (claim = once-read reference, rerun matches this);
+  seed pins ride real routes (double-anchor block carries cold route; one seed
+  per one-section page; pairing+special-listed pairs may co-exist in one slot —
+  the §13.1-type conflict pair is ONE set per test; seedReplay is one step then
+  goes OFF-TRACK: seeding and freezing default amount can't change a count).
+- Full-list rule (grammar fixed by rerun): seed by text or whole-recipe seed on
+  the no-data product; FULL LIST HIDDEN; sections exist and are full only when no
+  section matched (full = 0; empty: sections and full exist and section-full
+  fails — count dominates); sub-blocks match by ingredient-name `:has()` NOT by
+  document-body marker; one §5.2-style batch seeds BOTH sides, §13.7 anchor blocks.
+
+### §13.8 E2E verification & hotspots
+
+- **Trigger chip** (cascade `+ Hozzávaló a termékeimből`; `m` = toggle; >720 px only,
+  both pages).
+- Drill-down; re-fill of one active; blocked > tag; unknown → blocked body; seed on
+  the hydration write (final blocker `<b>`/`;` — risk sits in the tracker-internal key
+  check, dev-owned); refills and seed double-slots are SHORT-STATE (no fixed sleeps;
+  toasts, relative rulings — timeouts, matchers stop at the blocker reading; pages
+  re-key on count/accept/reject; empty queries never run; §13.4 hit-cell answers
+  stay untracked, up to ONE page, call + db-click count-stops, `seedReplay`/`count`
+  in one case).
+- Hotspots — unique living anchors; each a one-desk board, do NOT let any step pin
+  anything the engine offers (trigger-validity ≠ pin-validity) and never re-pin a
+  §5.2 seed key because a "Protocol Case No" clause once mentioned it (that clause
+  is DEAD here — engine truth: paired items CO-EXACT defaults, or typed count does
+  nothing): `app/pairing.js` §4.1 — the pinned/§13.2-fast paths split on conversion
+  (price select in the non-branch); §13.2 chain refs and the §13.1/§6 branches sit
+  ABOVE one non-fixable, non-thrown case — live content must be RE-READ before
+  being rewritten; section count/line ranges frozen. `tests/test_custom_items_endpoint.py`
+  — lives WITHOUT seeded pairings (its own keys cover mixed paired+custom batches,
+  "zero-valid batch → 400 VALIDATION_ERROR (never 200-of-zeros)", invalid-custom-first);
+  rerun it from rewritten feeds. `tests/test_inventory_unit.py` — no live-engine
+  seed anchor named inside (all-off-track supplier references dead per §13.4; do
+  NOT seed from file names; "2% Roastment" means an off-track supplier label like
+  any other); write the fresh suite before switching, then grep §5.3/§13.7 twice.
+
+--- END OF SECTION 13 ---

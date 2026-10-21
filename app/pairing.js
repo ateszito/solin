@@ -154,6 +154,17 @@ window.Pairing = (function () {
      module-serial key (splices never shift indices under a re-render). */
   let CUSTOM = [];         // [{key, name, qty, unit, price, currency, macros{7}}]
   let CKEY = 0;            // key generator for CUSTOM rows
+  /* QUICK (t_c05b328b, terv V §13.3/§13.5): quick-select working set, ONE
+     per-recipe view state like ROWS/CUSTOM (initRows remounts; NOT persisted
+     to the pairing file — deletion semantics stay "eltüntet", spec §13.6).
+     Each entry is a RESOLVED QuickSelect.resolveEntry result; blocked/skipped
+     input never reaches this set (§13.2). collectItems appends them AFTER
+     paired + custom rows, in fill order (§13.5 additive). */
+  let QUICK = [];          // [{key, product_id (catalog key), name, quantity, unit, item}]
+  let QUICK_SEL = null;    // selected search hit (resolve FIRST, then amount — §13.3)
+  let QUICK_HITS = [];     // last search result rows (index = data-quick-hit)
+  let QUICK_SEQ = 0;       // stale guard for the async search chain (last wins)
+  let PV_SEQ = 0;          // stale guard for the delegated preview count
   let ACTIVE_RECIPE = null;
   let PRODUCTS = [];       // cached product list for pickers
   let PORTIONS = 1;        // selected portion count for the mounted view
@@ -435,6 +446,10 @@ window.Pairing = (function () {
       // R1 (spec §11.2): ONE entry chip for custom extras, independent of
       // the ingredient list + inventory. Unlimited rows, each with its own ×.
       '      <button class="btn sm ghost" id="pg-add-custom" type="button">＋ Egyéb hozzávaló</button>' +
+      // t_c05b328b (terv V §13.1): trigger chip + SEARCH/quick-add panel, ALUL,
+      // trope-re indulva (NONE). Hit item AND quick block look and behave like
+      // an ingredient row; quick input never becomes one.
+      '      <button class="btn sm ghost" id="pg-quick-toggle" type="button">＋ Hozzávaló a termékeimből</button>' +
       '    </div>' +
       '    <div class="pg-portions">' +
       '      <label for="pg-portions-in">Portionok</label>' +
@@ -453,6 +468,23 @@ window.Pairing = (function () {
       // Single #pg-result container (no duplicate result section); renderResult()
       // is the only writer and it replaces innerHTML wholesale.
       '    <div id="pg-result"></div>' +
+      // Live PREVIEW block — the display twin of what "Számolás" WILL do
+      // (QuickSelect.perIngredientMirror over the current working set).
+      // Re-renders on quick push/delete + custom add/save/delete (totals
+      // refresh rule, task body). Non-authoritative; Számolás stays the boss.
+      '    <div class="pg-preview" id="pg-preview" hidden></div>' +
+      // t_c05b328b (terv V §13.1/§13.3): SEARCH + SELECTED(amount) run as ONE
+      // input row, chained: hit select reveals the amount field (§13.3 order).
+      // Hits + quick block look/behave like ingredient rows (§13.6/§13.8).
+      '    <div class="pg-quick" hidden>' +
+      '      <input id="pg-quick-q" class="pg-quick-q" type="text" autocomplete="off" spellcheck="false" aria-label="keresés a raktárban" placeholder="Keresés a termékeid közül…" />' +
+      '      <div id="pg-quick-status" class="scale-status hidden" role="status"></div>' +
+      '      <ul id="pg-quick-list" class="pg-quick-hits"></ul>' +
+      '      <div id="pg-quick-add" class="pg-quick-add" hidden>' +
+      '        <button type="button" class="pg-quick-x" aria-label="kiválasztott elvetése">×</button>' +
+      '        <span id="pg-quick-selname" class="pg-quick-selname"></span>' +
+      '        <input id="pg-quick-amt" type="text" autocomplete="off" spellcheck="false" aria-label="mennyiség és egység" placeholder="mennyiség + egység (pl. 200 g)" /></div>' +
+      '    </div>' +
       // unit-family datalist shared by all custom rows (spec §11.2 R2)
       '    <datalist id="pg-units" hidden>' +
       CUSTOM_UNITS.map((u) => '<option value="' + esc(u) + '"></option>').join("") +
@@ -515,6 +547,10 @@ window.Pairing = (function () {
       '<div class="pg-rowtop">' +
         '<input class="pg-cust-name" data-crole="name" type="text" maxlength="80" ' +
           'placeholder="név (kötelező) – pl. Chilipehely" value="' + esc(c.name) + '" aria-label="megnevezés" />' +
+        // t_c05b328b (task 2): per-row + per-key SAVE chain. Same row-top
+        // spot as delete; only VALID rows ever POST (validateCustom refuses
+        // invalid ones inside InvSync.saveToInventory — §13.2/§13.9).
+        '<button type="button" class="pg-cust-save btn sm ghost" data-cust-save="' + key + '" title="Mentés a termékek közé">Mentés a termékek közé</button>' +
         '<button type="button" class="pg-cust-del" data-cust-del="' + key + '" aria-label="sor törlése">×</button>' +
       "</div>" +
       '<div class="pg-cust-grid">' +
@@ -636,6 +672,19 @@ window.Pairing = (function () {
       // setting itself persists per recipe view (independent of products).
       LAST_RES = null; COUNTED_P = null;
       stashView();
+      // t_c05b328b (§13.11 → resetQuick on #pg-clear): the QUICK working set
+      // clears WITH the paired rows. It is a per-view working set and NEVER
+      // persisted — a remount starts it empty again (TERV V §13.6).
+      QUICK = []; QUICK_SEL = null; QUICK_HITS = [];
+      const qp = sec.querySelector(".pg-quick");
+      if (qp) {
+        const l = qp.querySelector("#pg-quick-list"); if (l) l.innerHTML = "";
+        const a = qp.querySelector("#pg-quick-add"); if (a) a.hidden = true;
+        const st = qp.querySelector("#pg-quick-status");
+        if (st) { st.textContent = ""; st.classList.add("hidden"); }
+      }
+      const pv = sec.querySelector("#pg-preview");
+      if (pv) { pv.hidden = true; pv.textContent = ""; }
       toast("Kiválasztott termékek törölve");
     });
 
@@ -736,6 +785,164 @@ window.Pairing = (function () {
       persist(); // the deletion is the new working set — persist it too,
                  // or a reload would resurrect the deleted row (t_bb942564)
     });
+
+    /* ---- delegated [data-cust-save] chain (t_c05b328b, TERV V §13.9) ----
+       per KEY + per ROW, valid rows ONLY (the InvSync chain itself
+       refuses invalid/empty ones — "empty/invalid → SOHA nem POST"):
+       #pg-rows click → InvSync.saveToInventory. A successful add then
+       re-reads a FRESH product listing (never the cached one) and
+       refreshes badge + preview → the new product is pairable too, so
+       the PRODUCT chain continues (Task 2). */
+    rowsEl.addEventListener("click", (e) => {
+      const sb = e.target.closest && e.target.closest("[data-cust-save]");
+      if (!sb) return;
+      const c = CUSTOM.find((r) => r.key === sb.dataset.custSave);
+      if (!c || !window.InvSync) return;
+      sb.disabled = true;                    // one press per row while in flight
+      window.InvSync.saveToInventory([c], { products: PRODUCTS }).then((res) => {
+        sb.disabled = false;
+        if (res && res.ok && res.sent) {
+          toast("Mentve a termékek közé: " + c.name);
+          window.FcApi.listProducts().then((list) => {
+            PRODUCTS = list || PRODUCTS;     // FRESH listing (never the cached snapshot)
+            refreshBadge();
+            refreshPreview();                // totals refresh AFTER a save (Task 2)
+          }, () => {});
+        } else {
+          // blocked chain → toast + red error row (§13.2); NO blanket-key prefix
+          if (res && (res.stage === "validate" || res.stage === "blocked")) {
+            c.bad = true;
+            renderRows();
+          }
+          toast("Nem menthető: " + (c.name || "sor") + " — " +
+                ((res && res.message) || "ismeretlen hiba"));
+        }
+      }, () => { sb.disabled = false; });   // rejects stay rare (invsync resolves); pairing untouched
+    });
+
+    /* ---- quick-select chain (t_c05b328b, TERV V §13.1–§13.6) ----
+       search → select → amount, ONE chain, ALWAYS LIVE: every committed
+       keystroke re-reads /inventory (searchProducts default transport —
+       uncached; QUICK_SEQ last-wins drops stale answers, so the page
+       NEVER mixes TWO listing snapshots). Select NEVER auto-counts: the
+       hit click only reveals the amount field (§13.3 order). Blocked
+       amount toasts and never enters the working set (§13.2). */
+    const QS = window.QuickSelect;
+    if (QS) {
+      const quickPanel = sec.querySelector(".pg-quick");
+      const qIn = sec.querySelector("#pg-quick-q");
+      const qSt = sec.querySelector("#pg-quick-status");
+      const qList = sec.querySelector("#pg-quick-list");
+      const qAdd = sec.querySelector("#pg-quick-add");
+      const qSel = sec.querySelector("#pg-quick-selname");
+      const qAmt = sec.querySelector("#pg-quick-amt");
+      let qTimer = null;
+
+      const setQuickStatus = (msg) => {
+        if (!qSt) return;
+        qSt.textContent = msg || "";
+        qSt.classList.toggle("hidden", !msg);
+      };
+
+      /* trigger chip (§13.9): opens/closes the panel — DEFAULT CLOSED
+         (mobile-only trigger; the `hidden` attr starts the panel off). */
+      const qTog = sec.querySelector("#pg-quick-toggle");
+      if (qTog) qTog.addEventListener("click", () => {
+        if (!quickPanel) return;
+        quickPanel.hidden = !quickPanel.hidden;
+        if (quickPanel.hidden) setQuickStatus("");
+        else if (qIn) qIn.focus();
+      });
+
+      /* SEARCH (debounced 250 ms, §13.2/§13.4): a new query invalidates
+         any in-flight chain (QUICK_SEQ last-wins). EMPTY and ERROR stay
+         TWO SEPARATE chains — neither counts, neither enters the set. */
+      if (qIn && qList) qIn.addEventListener("input", (e) => {
+        const query = String(e.target.value || "").trim();
+        if (qTimer) clearTimeout(qTimer);
+        if (!query) { QUICK_HITS = []; qList.innerHTML = ""; setQuickStatus(""); return; }
+        const seq = ++QUICK_SEQ;            // stale guard: last keystroke wins
+        qTimer = setTimeout(() => {
+          if (seq !== QUICK_SEQ) return;
+          setQuickStatus("Keresés…");
+          QS.searchProducts(query).then((r) => {   // default transport = LIVE (FcApi.listProducts)
+            if (seq !== QUICK_SEQ) return;        // stale answer → dropped
+            if (r && r.ok && !r.empty) {
+              QUICK_HITS = r.items || [];
+              qList.innerHTML = QUICK_HITS.map((p, i) =>
+                '<li class="pg-quick-hit" data-quick-hit="' + i + '" role="button" tabindex="0">' +
+                esc(p.name || p.id) + (p.brand ? ' <span class="hint sm">' + esc(p.brand) + "</span>" : "") +
+                "</li>").join("");
+              setQuickStatus("");
+            } else {
+              QUICK_HITS = [];
+              qList.innerHTML = "";
+              setQuickStatus(r && r.ok
+                ? "Nincs találat: " + query
+                : "Raktári hiba: " + ((r && r.message) || "ismeretlen hiba"));
+            }
+          });
+        }, 250);
+      });
+
+      /* SELECT (§13.3 order): hit click ONLY reveals the amount field. */
+      if (qList) qList.addEventListener("click", (e) => {
+        const li = e.target.closest && e.target.closest("[data-quick-hit]");
+        if (!li) return;
+        const p = QUICK_HITS[Number(li.dataset.quickHit)];
+        if (!p) return;
+        QUICK_SEL = p;
+        QUICK_SEQ = 0;                        // listing snapshot consumed (§13.2)
+        if (qSel) qSel.textContent = p.name || String(p.id);
+        if (qAdd) qAdd.hidden = false;
+        if (qAmt) { qAmt.value = ""; qAmt.focus(); }
+      });
+
+      /* AMOUNT (§13.3 step-3): Enter / valid text → ONE resolve, THEN
+         count. QuickSelect.resolveEntry builds item/row from
+         product.product_id — the LIVE listing rows key by `id`
+         (server-minted pr{n}) → normalize it here so the delegated
+         count can still resolve the product. blocked → toast, NO
+         chain (§13.2); `skipped` (empty input) toasts NOTHING (§13.7). */
+      const quickAddAmount = () => {
+        if (!QS || !QUICK_SEL) return;
+        const text = String(qAmt.value || "").trim();
+        const r = QS.resolveEntry(Object.assign({}, QUICK_SEL,
+          { product_id: QUICK_SEL.product_id || QUICK_SEL.id }), text);
+        if (r.skipped) return;
+        if (r.blocked) {
+          toast("Nem számolható: " + text + " — " + r.code + " (a termék nem változik)");
+          return;
+        }
+        QUICK.push({ key: "q" + (++CKEY),
+                     product_id: QUICK_SEL.product_id || QUICK_SEL.id,
+                     name: QUICK_SEL.name, quantity: r.item.quantity,
+                     unit: r.item.unit, item: r.item });
+        QUICK_SEL = null;
+        if (qAdd) qAdd.hidden = true;
+        if (qAmt) qAmt.value = "";
+        if (qList) qList.innerHTML = "";      // listing snapshot replaced (fresh query refreshes)
+        refreshBadge();                        // totals + badge refresh on push (§13.5)
+        refreshPreview();
+      };
+      if (qAmt) {
+        qAmt.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); quickAddAmount(); }
+        });
+        qAmt.addEventListener("change", quickAddAmount);
+      }
+
+      /* quick "×" (§13.3): drops the CURRENT selection → back to SEARCH
+         (delete applies to the selection, never to a row). */
+      if (qAdd) qAdd.addEventListener("click", (e) => {
+        if (!(e.target.closest && e.target.closest(".pg-quick-x"))) return;
+        QUICK_SEL = null;
+        qAdd.hidden = true;
+        if (qIn) { qIn.value = ""; qIn.focus(); }
+        QUICK_HITS = [];
+        if (qList) qList.innerHTML = "";
+      });
+    }
   }
 
   /* ---------- count (POST /api/v1/inventory/macros/count) ---------- */
@@ -749,6 +956,10 @@ window.Pairing = (function () {
   function collectItems() {
     const items = [];
     const bad = [];
+    /* QUICK chain (t_c05b328b): search→select→addit — searching is LIVE
+       (uncached) listing, so the same page never reads TWO snapshots.
+       Entries come back on remount (mount() → collectItems), NEVER from
+       persist(): the v2 writer is untouched, deletion stays "eltüntet". */
     (ROWS || []).forEach((row) => {
       if (!row.product_id) return;
       const p = productOf(row.product_id);
@@ -769,7 +980,41 @@ window.Pairing = (function () {
       c.bad = false;
       items.push(built.item);
     });
+    // t_c05b328b (§13.5 additive): quick entries join AFTER the paired +
+    // custom rows, in fill order. Keys are SET-side (listing `id` + the
+    // resolved basis unit), so the count chain always reads FRESH data —
+    // never a second, stale listing snapshot on the same page (§13.2/§13.4).
+    (QUICK || []).forEach((q) => { if (q && q.item) items.push(q.item); });
     return { items: items, bad: bad };
+  }
+
+  /* ---- live PREVIEW (t_c05b328b, TERV V §13.4/§13.5): every working-set
+     change DELEGATES the count — the chain is EXACTLY what "Számolás" runs
+     (Fc.countMacros over the full collectItems set, PORTIONS-aware). No
+     client-side macro re-derivation, NO perIngredientMirror against live
+     listing data (live rows key by `id` — that would "Nem számolható"
+     every row). PV_SEQ = last-wins guard (a stale preview is dropped,
+     same rule as QUICK_SEQ). Display twin only; Számolás stays the boss. */
+  function refreshPreview() {
+    const out = $("#pg-preview");
+    if (!out) return;
+    const built = collectItems();
+    if (!built.items.length) { out.hidden = true; out.textContent = ""; return; }
+    const seq = ++PV_SEQ;
+    Promise.resolve().then(() => Fc.countMacros(built.items, PORTIONS))
+      .then((res) => {
+        if (seq !== PV_SEQ) return;              // stale preview → drop (last wins)
+        const PU = window.PairingUI;
+        const text = PU ? PU.previewText((res && res.per_ingredient) || []) : "";
+        if (text) { out.hidden = false; out.textContent = text; }
+        else { out.hidden = true; out.textContent = ""; }
+      })
+      .catch(() => {
+        if (seq !== PV_SEQ) return;
+        out.hidden = false;
+        out.textContent = "Nem számolható (preview): a számolási látás nem "
+          + "elérhető — a Számolás gomb újra próbálkozik.";
+      });
   }
 
   async function doCount() {
