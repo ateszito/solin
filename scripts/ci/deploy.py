@@ -272,7 +272,7 @@ def main():
              '-t', api_image, '-t', 'solin-deploy-%s-api-%s' % (env, sha7),
              ctx])
         api_id = sh(['docker', 'image', 'inspect', api_image, '--format', '{{.Id}}']).stdout.strip()
-        L('[3b] built %s -> %s (immutable: solin-%s-api-%s)' % (api_image, api_id[:19], sha7))
+        L('[3b] built %s -> %s (immutable: solin-%s-api-%s)' % (api_image, api_id[:19], env, sha7))
 
     # ---- 4. runtime env file for compose ---------------------------------------
     envfile = os.path.join(ST, 'deploy-%s.env' % env)
