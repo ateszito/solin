@@ -117,8 +117,10 @@ t("valid row → doc: base_unit + per-100 macros + unit price", () => {
               fiber: 2, sugar: 2, sodium: 1 } }), []);
   assert.ok(v.ok, JSON.stringify(v));
   assert.strictEqual(v.doc.base_unit, "g");
+  assert.strictEqual(v.doc.serving_size, 5);
   assert.strictEqual(v.doc.macros_per_100.protein, 200); // 10 per 5 g → /100g
-  assert.strictEqual(v.doc.prices[0].amount, 0.4);       // 2 HUF per g
+  assert.strictEqual(v.doc.prices[0].amount, 2);         // total pack price
+  assert.strictEqual(v.doc.prices[0].pack_size, 5);      // basis quantity
   assert.strictEqual(v.doc.prices[0].currency, "HUF");
 });
 t("double listing → blocked (custom-name clash, casefold+trim)", () => {

@@ -189,21 +189,34 @@
     var amount = q.amount;
     if (amount == null) amount = parseFlat(s(row.qty));
 
-    var doc = {
-      name: s(row.name),
-      serving_size: s(row.qty),
-      serving_label: s(row.qty),
-      base_unit: null,
-      macros_per_100: null,
-      prices: [],
-    };
-
-    if (basis && amount != null && amount > 0) {
-      doc.base_unit = basis.base;
-      // pack_size: total quantity on its basis (2–3 decimals are fine —
-      // they are parsed, NOT clamped: "1/2 db" and "2×3 db" resolve here)
-      doc.pack_size = Math.round(amount * basis.factor * 1000) / 1000;
+    /* §3.1 ALIGNED (t_b0515cc4): the live backend create() accepts ONLY
+       docs shaped like the seed docs —
+         serving_size: NUMBER > 0 or ABSENT (display strings → 400);
+         macros_per_100: complete 7-key block or ABSENT (null/{} → 400);
+         prices[].amount: TOTAL pack price PAIRED with pack_size
+         (unit_price = amount ÷ pack_size, mirrors seed p1 2.99/400g);
+       no unknown keys (top-level pack_size / is_primary are stripped).
+     A row that cannot form a legal doc BLOCKS the whole batch before
+     any POST (blanket rejection kept; dev never sees a bad doc). */
+    var macroFilled = MACRO_KEYS.some(function (k) {
+      var raw = s((row.macros || {})[k]);
+      return raw !== "" && Number(raw) !== 0;
+    });
+    var noBasis = !basis || amount == null || !(Number(amount) > 0);
+    if (noBasis && (macroFilled || s(row.price) !== "")) {
+      return { blocked: true, errors: ["basis"],
+               name: s(row.name) || "(név nélkül)",
+               message: "no convertible basis — fix unit or macrós amount" };
     }
+
+    var doc = { name: s(row.name) };
+    if (noBasis) return { ok: true, doc: doc };
+    // quantity with NO convertible basis (or illiterate compound count)
+    // that also carries price/macró → blocked above (first chain form).
+    var size = Math.round(amount * basis.factor * 100) / 100;
+    doc.base_unit = basis.base;
+    doc.serving_size = size;          // NUMERIC, never the display string
+    doc.serving_label = s(row.qty);   // display verbatim (never re-resolved)
 
     var m = {};
     var anyM = false;
@@ -212,30 +225,30 @@
       if (raw === "" || Number(raw) === 0) { m[k] = 0; return; } // 0 = "done"
       anyM = true;
     });
-    if (anyM && basis && amount != null && amount > 0) {
+    if (anyM) {
       // entered macros are TOTALS for the used quantity (mirrors the
       // count grammar) → convert to per-100 of the basis unit
       var scale = 100 / (amount * basis.factor);
       MACRO_KEYS.forEach(function (k) {
         var raw = s((row.macros || {})[k]);
         if (raw !== "" && Number(raw) !== 0)
-          m[k] = Math.round(Number(raw) * scale * 100) / 100;
+          m[k] = Math.ceil(Number(raw) * scale * 100) / 100;
       });
-      doc.macros_per_100 = m;   // formulas sit in macros_per_100
-    } else if (anyM || s(row.price) !== "") {
-      return { blocked: true, errors: ["basis"],
-               name: s(row.name) || "(név nélkül)",
-               message: "no convertible basis — fix unit or macrós amount" };
     }
+    // dev-shipped create() REJECTS null/absent macros_per_100 ("a
+    // product without macros is unaggregable") → empty rows still emit
+    // the default zeros block (shape B: macrós slot empty → 201 shape).
+    doc.macros_per_100 = m;
 
-    if (s(row.price) !== "" && basis && amount != null && amount > 0) {
-      // TOTAL price → unit price per display unit (never fabricated)
+    if (s(row.price) !== "") {
+      // §3.1 pairing: TOTAL pack price + PAIRED pack_size (engine
+      // computes unit_price = amount ÷ pack_size; a bare unit price →
+      // 400 VALIDATION_ERROR). Mirrors seed p1 {2.99, pack_size:400}.
       doc.prices = [{
-        amount: Math.round((Number(row.price) /
-                            amount) * 10000) / 10000,
+        amount: Math.round(Number(row.price) * 100) / 100,
         currency: s(row.currency).toUpperCase() || "HUF",
-        is_primary: true,
-        source: "custom",
+        pack_size: size,               // the basis quantity, same unit
+        source: "custom",              // is_primary: dev strips it → not emitted
       }];
     }
     return { ok: true, doc: doc };
