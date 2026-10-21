@@ -928,3 +928,95 @@ A5 Custom row deletion, reload persistence (v2), Auto-pár / clear-products
   any other); write the fresh suite before switching, then grep §5.3/§13.7 twice.
 
 --- END OF SECTION 13 ---
+
+## Section 14 — Wide-screen layout & navigation contract (t_2454d4d0, 2026-10-21)
+
+Normative contract for wide-screen (desktop) layout and navigation, derived from repro report
+t_7d998dc2 (DEFECT-1/2 REPRODUCED, DEFECT-3 latent defect confirmed) on branch
+`feature/responsive-layout` @4e914d0. Every line anchor below was verified fresh against this
+tree — re-anchor on use (live-branch-only rule). "MUST" = acceptance-blocking.
+
+### 14.1 Breakpoints and layout constraints
+- **BP-M (<700px, mobile):** `.bottom-nav` renders as fixed full-width bottom bar
+  (styles.css base block ~L117: `position:fixed; bottom:0; left:0; right:0`). Unchanged by
+  this contract — it is the QA control viewport.
+- **BP-T (700–1079px, tablet-wide):** two-column `.detail-wrap` grid `minmax(0,640px) 320px`
+  with sticky media (`top:76px`, video `max-height:70vh`) — styles.css ≥700 block ~L334–343.
+  Nav keeps the fixed bar. NOTE: this range also contains the dead rules named in C5.
+- **BP-D (≥1080px, desktop):** `.app-main` is a centered column, `max-width:1280px;
+  margin:0 auto` (styles.css ~L110). At 1920/2560 widths, gutters outside the content
+  column and letterboxing of the portrait seed videos inside the media block are EXPECTED
+  rendering, not defects. Nav renders as a centered pill — see C1/C2 for its contract.
+- No breakpoint may remove or displace a navigation affordance. "Desktop pill" styling is
+  permitted; being unclickable is not.
+
+### 14.2 Component contracts
+**C1 — bottom-nav anchoring (fixes DEFECT-1).** The ≥1080 block (styles.css ~L349–361)
+converts the working fixed bar into `position:sticky; bottom:auto; left:50%;
+transform:translateX(-50%)`. Without a `bottom`/`top` anchor, sticky does not pin; and a
+`translateX(-50%)` applied to a viewport-wide box displaces it by −½·innerWidth (measured
+x = −640/−720/−960/−1280 at 1280/1440/1920/2560 → entire nav offscreen).
+- MUST: at every accepted viewport (§14.3) the nav and ALL FOUR buttons
+  (Browse, Inventory, What I have, Food Counter — index.html ~L146–150, sibling after
+  `</main>`) are fully inside the viewport and pointer-reachable.
+- MUST NOT: pair a viewport-wide box with a half-viewport transform (no `left:50%` +
+  `translateX(-50%)` on the bar).
+- MUST NOT: use `position:sticky` unless it has an effective pin anchor; otherwise keep
+  `position:fixed` with an explicit `bottom`/`top` anchor.
+
+**C2 — page-switch affordance (fixes DEFECT-2, consequence of C1).** Switch LOGIC is
+sound (control evidence: clicks flip `location.hash`, `#view-inventory` renders). The only
+wide-screen fault is that the bottom strip is a dead click zone (elementFromPoint →
+HTML/BODY). After C1: real-pointer clicks at each of the four buttons at EVERY §14.3
+viewport MUST change hash and render the target view. Verify by hit-test + click, not by
+`.click()` bypass (bypass hides the layout fault, per t_7d998dc2).
+
+**C3 — recipe detail on wide screens (fixes DEFECT-3 latent).** The ≥700 two-column CSS
+is DEAD: `.detail-wrap` occurs only in styles.css (~L338); detail.js `render()` emits
+`.detail-media`, `.detail-head` and flat content flow with NO wrapper. A tall portrait
+video therefore scrolls as one block with the content — matches the user report.
+- MUST: at ≥700px the detail view renders an actual two-column composition (either build
+  the `.detail-wrap` wrapper in detail.js render() to match the existing CSS, or rewrite
+  the CSS to the real DOM — one, not both left dead).
+- MUST: on wide viewports the video PINS in its own column (sticky `top:76px`, cap
+  `max-height:70vh`) while the content column scrolls; page (document) scroll remains
+  the ONLY vertical scroller — no nested inner scroller that captures wheel events.
+- MUST: after scrolling to `scrollY` max, the bottom pairing card is fully visible
+  (not occluded by nav or dead zone) and `documentElement.scrollWidth === innerWidth`
+  (no horizontal overflow).
+
+**C4 — seed media defaults (context, test-input).** Default recipe media are the portrait
+9:16 (1080×1920) seed clips: seed/common_seed.sql ~L31–32 and ~L108–109 (video1/video2 +
+transcript pairs), mapped as `video:` sources in app/data.js ~L34 and ~L80. Use
+`#recipe-detail` of a seeded recipe with video as the C3 test fixture; do not treat
+letterbox gutters here as defects (see BP-D).
+
+**C5 — edit affordance on wide screens.** `.detail-actions{display:none}` (styles.css
+~L342) hides the only Edit button (rendered inside `.detail-actions`, detail.js ~L165);
+the comment "edit btn is already inline on head" has no implementation.
+- MUST: at ≥700px the ✎ Szerkesztés affordance is reachable — either remove the
+  wide-screen `display:none` (simplest) or actually implement the head-inline fallback.
+  §11.6-A4 (instructions-above-pairing layout stays usable) requires this.
+
+### 14.3 QA acceptance viewport matrix
+Fixed window sizes to PIN (no harness sets a viewport default today):
+- **Primary:** 1920×1080, 2560×1440, 1440×900, 1280×800.
+- **Short-window class (catches floating-nav / bottom-occlusion):** 1440×700.
+- **Controls:** 390×844 portrait and 844×390 landscape (mobile non-regression; the
+  390×844 control passed pre-fix — any regression here fails the whole matrix).
+Harness note: `app/tests/` holds seven Node assert `.spec.js` files +
+`probe_live_portions.py`; NO `playwright.config.*` exists and no spec pins a window size.
+Any new browser-E2E spec MUST pin each run to one §14.3 entry; no "default viewport"
+value may be trusted as correct or broken (t_7d998dc2 ran at a stray 1280×577 default).
+
+### 14.4 Per-viewport acceptance checklist (all §14.3 entries)
+1. Nav bar/pill fully inside viewport; all four buttons hit-test to themselves via
+   elementFromPoint (mid-strip hit-tests MUST NOT fall through to HTML/BODY).
+2. Real-pointer click on each button → hash change + target view renders (Inventory and
+   Back cascade included).
+3. Recipe detail (`#recipe-detail`, seeded video recipe): document scroll reaches
+   scrollY-max; video pinned in its column; bottom pairing card fully visible.
+4. No horizontal overflow (`scrollWidth === innerWidth`).
+5. Edit button visible and clickable at ≥700px (C5).
+
+--- END OF SECTION 14 ---
