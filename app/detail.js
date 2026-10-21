@@ -154,10 +154,21 @@ window.Detail = (function () {
     const box = $("#recipe-detail");
     if (!r) { box.innerHTML = `<p class="empty">Nincs ilyen recept.</p>`; return; }
     const hasEdits = S.hasEdits(r.id);
+    // t_1fbc1ef4 (contract §14.2-C3): the ≥700px two-column CSS (.detail-wrap
+    // grid + sticky .detail-media) was DEAD — render() emitted .detail-media,
+    // .detail-head and flat content flow with NO wrapper, so the portrait
+    // video scrolled as one block with the content (DEFECT-3 latent symptom).
+    // Build the real wrapper now: media column (pins via sticky top:76px) +
+    // main content column. Document scroll stays the ONLY vertical scroller —
+    // no inner scroller, no overflow wrappers. Below 700px .detail-wrap is
+    // plain block flow, so the mobile stack (media → head → content) is
+    // byte-identical in behaviour to the old flat layout.
     box.innerHTML = `
+      <div class="detail-wrap">
       <div class="detail-media">
         <video id="det-video" src="${esc(r.video)}" controls playsinline loop playsinline></video>
       </div>
+      <div class="detail-main">
       <div class="detail-head">
         <h2 class="detail-title">${esc(r.title)}</h2>
         <p class="detail-sub">👤 ${esc(r.creator)} · ${esc(r.cuisine)} · ⏱ ${esc(r.totalMin)} perc · 🍽 ${esc(r.servings)} adag${hasEdits ? ' <span class="pill" style="background:#E6F7E6;color:#1E7D33">✎ szerkesztve</span>' : ""}</p>
@@ -177,6 +188,8 @@ window.Detail = (function () {
            selector) is the LAST block; instructions sit above it.
            Inner card order unchanged (t_d6c25424): actions→portions→result→rows. -->
       <div id="pairing"></div>
+      </div><!-- /.detail-main -->
+      </div><!-- /.detail-wrap -->
     `;
 
     // Pairing panel (recept ↔ termék): render the card now that the DOM is in place

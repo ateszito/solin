@@ -39,7 +39,14 @@ window.FcApi = (function () {
       err.code = body && body.code;
       throw err;
     }
-    return res.status === 204 ? null : body;
+    if (res.status === 204) return null;
+    if (body === null) {
+      const err = new Error("Invalid API response format (expected JSON)");
+      err.status = res.status;
+      err.code = "NON_JSON_RESPONSE";
+      throw err;
+    }
+    return body;
   }
 
   /* ---- list products (GET /api/v1/inventory?limit=50) ----
@@ -48,8 +55,13 @@ window.FcApi = (function () {
   async function listProducts(search) {
     const q = search ? "?limit=50&search=" + encodeURIComponent(search)
                      : "?limit=50";
-    const doc = await api(q);
-    return doc.items || [];
+    try {
+      const doc = await api(q);
+      return (doc && Array.isArray(doc.items)) ? doc.items : [];
+    } catch (err) {
+      console.warn("FcApi.listProducts error:", err);
+      return [];
+    }
   }
 
   /* ---- fetch one product (GET /api/v1/inventory/{id}) ---- */

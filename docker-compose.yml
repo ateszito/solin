@@ -22,9 +22,10 @@ volumes:
   vol_solin_dev_pg:
   vol_solin_staging_pg:
   vol_solin_prod_pg:
-  # Dev-API flat-file store + uploaded media (D2/D7): survives force-recreate
-  # exactly like the pg volumes do. NOT used by staging/prod yet.
+  # Per-environment API flat-file store + uploaded media (survives force-recreate)
   vol_solin_dev_data:
+  vol_solin_staging_data:
+  vol_solin_prod_data:
 
 x-web: &web-base
   networks: [solin_net]
@@ -32,9 +33,23 @@ x-web: &web-base
 
 services:
   # ---- PRODUCTION  (main branch → solin.ateszito.com :8080) ----
+  solin-prod-api:
+    image: solin:prod-api
+    container_name: solin-prod-api
+    networks: [solin_net]
+    volumes:
+      - vol_solin_prod_data:/srv/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/inventory/?limit=0', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
   solin-prod-web:
     <<: *web-base
     image: solin:prod
+    depends_on:
+      - solin-prod-api
     container_name: solin-prod-web
     ports: ["8080:80"]
     environment:
@@ -64,9 +79,23 @@ services:
     restart: unless-stopped
 
   # ---- STAGING  (staging branch → solin-staging.ateszito.com :8081) ----
+  solin-staging-api:
+    image: solin:staging-api
+    container_name: solin-staging-api
+    networks: [solin_net]
+    volumes:
+      - vol_solin_staging_data:/srv/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/inventory/?limit=0', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
   solin-staging-web:
     <<: *web-base
     image: solin:staging
+    depends_on:
+      - solin-staging-api
     container_name: solin-staging-web
     ports: ["8081:80"]
     environment:
