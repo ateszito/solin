@@ -17,6 +17,7 @@ Error mapping (contract §6):
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---- canonical constants (normative, contract §0 / §1 / §3) -------------
@@ -341,3 +342,96 @@ def _validate_portions(value: Any) -> int:
             f"portions must be an integer between 1 and {PORTIONS_MAX}",
             fields=["portions"])
     return raw
+
+
+# ---- custom "extra" ingredient items (spec use_cases.md §11.2/§11.4) ----
+
+#: Max chars of the free-text unit on a custom row (display-only field).
+CUSTOM_UNIT_MAX = 10
+
+#: Max chars of a custom item name (after trim), same discipline as §3.1 names.
+CUSTOM_NAME_MAX = 80
+
+
+def _is_num(v: Any) -> bool:
+    if isinstance(v, bool) or v is None:
+        return False
+    return isinstance(v, (int, float)) and math.isfinite(v)
+
+
+def _custom_item_violations(item: dict) -> List[str]:
+    """Field-level violations of ONE ``type:"custom"`` item (§11.2 R2/R3).
+
+    Returns the bad field names (empty list = valid). Never repairs or
+    clamps anything — invalid values are REJECTED (R3: nothing is silently
+    clamped to 0). A macro value is valid when it parses as a finite
+    number inside [0, 9999] with at most 2 decimal places (the client
+    guarantees ≤2 dp; a foreign producer that sends more is rejected, and
+    "abc" under any macro key is rejected too — §11.4).
+    """
+    bad: List[str] = []
+
+    name = item.get("name")
+    if not isinstance(name, str) or not (1 <= len(name.strip()) <= CUSTOM_NAME_MAX):
+        bad.append("name")
+
+    qty = item.get("quantity")
+    if qty is not None and (not _is_num(qty) or qty <= 0):
+        bad.append("quantity")
+
+    unit = item.get("unit")
+    if unit is not None and (not isinstance(unit, str) or len(unit.strip()) > CUSTOM_UNIT_MAX):
+        bad.append("unit")
+
+    price = item.get("price")
+    if price is not None and (not _is_num(price) or price <= 0):
+        bad.append("price")
+
+    ccy = item.get("currency")
+    if ccy is not None and (not isinstance(ccy, str) or len(ccy) != 3
+                            or not ccy.isascii() or not ccy.isupper()):
+        # same grammar as §4.3: ``^[A-Z]{3}$``
+        bad.append("currency")
+
+    macros = item.get("macros")
+    if macros is not None:
+        if not isinstance(macros, dict):
+            bad.append("macros")
+        else:
+            for k in MACRO_KEYS:
+                if k not in macros or macros[k] is None:
+                    continue  # key omitted/null → treated as 0 at aggregation
+                v = macros[k]
+                if not _is_num(v) or v < 0 or v > 9999:
+                    bad.append(k)
+                    continue
+                # ≤2 dp checked exactly on the JSON token, not the binary float
+                exp = Decimal(str(v)).as_tuple().exponent
+                if isinstance(exp, int) and exp < -2:
+                    bad.append(k)
+            # unknown macro keys are ignored at aggregation (never summed);
+            # only the 7 canonical keys are ever aggregated.
+    return bad
+
+
+def validate_custom_items(items: List[dict]) -> None:
+    """Validate every custom-row item BEFORE aggregation (§11.4).
+
+    Any violation → 400 ``CUSTOM_ITEM_INVALID`` with ``fields=[<bad field>]``
+    (fields collected across all offending rows, deduplicated, in encounter
+    order). Precedence note (locked by t_5721a2dd): this fires BEFORE the
+    zero-valid-items guard, so an all-invalid custom batch answers with the
+    PRECISE field errors, never a generic VALIDATION_ERROR.
+    """
+    bad: List[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        for f in _custom_item_violations(it):
+            if f not in bad:
+                bad.append(f)
+    if bad:
+        raise InventoryError(
+            "CUSTOM_ITEM_INVALID", 400,
+            "custom item carries invalid values — fix or remove the row",
+            fields=bad)
