@@ -4,6 +4,21 @@
 > Versions are baked at build time — the APP_VERSION of a deployed image must
 > match one of these entries (see DEPLOY.md).
 
+## [Unreleased] — t_6588e1d6 (add-recipe ingestion UI)
+
+### Added
+- app/ingest.js: chain protocol layer (classify, submitBody, poller 5s/404/429,
+  trustOf; V-7 seed exemption; default-OFF flags never queue a fetch).
+- app/add.js: ONE flow slot + non-blocking PENDING progress, draft HTML seeds
+  editor rows DIRECT (qty/unit separate columns), local-first Save writes the
+  doc into solin.custom.recipes.v1 (seed list untouched, §16.9), error branch
+  routes to attach (B) / manual (C) — never auto-parse, no slot-wait.
+- app/tests/add_recipe_flow.spec.js: 7 kernel pins, all green (node <spec>).
+
+### Changed
+- #view-add section + header Add-recipe link (index.html); tab()/hash/boot
+  know "add" (core.js/app.js); getRecipes() merges custom store (state.js).
+
 ## [v0.1.3] — 2026-09-22
 
 ### Added
