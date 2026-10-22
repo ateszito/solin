@@ -129,6 +129,17 @@ Two tiers. **Tier A** = what the current static SPA consumes (env label, version
 | `RATE_LIMIT_PER_MIN` | `0` | `120` | `60` |
 | `JWT_SECRET_KEY` | dev secret | staging secret | **production** secret (unique) |
 
+**Image pipeline keys (t_fd20d685, contract §15 — identical defaults in all three envs).** All six are non-secret; only `SOLIN_ENV`-independent overrides are expected. Bad values (non-numeric, empty ladder) fail fast at import, never silently default (config.py rule).
+
+| Variable | default | meaning |
+|----------|---------|---------|
+| `SOLIN_IMG_COMPRESS` | `true` | kill switch: `false` = exact pre-§15 §3.7 behavior (P7) |
+| `SOLIN_IMG_MAX_UPLOAD_BYTES` | `26214400` (25 MiB) | P1 413 gate + HTTP stream read cap base |
+| `SOLIN_IMG_TARGET_BYTES` | `307200` (300 KiB) | P2 compress-if-bigger + ladder stop |
+| `SOLIN_IMG_MAX_STORED_BYTES` | `2097152` (2 MiB) | P6 stored guard → 422 `IMAGE_COMPRESS_FAILED` |
+| `SOLIN_IMG_QUALITY_LADDER` | `82,72,62,52` | P4 WebP quality ladder (CSV of ints) |
+| `SOLIN_IMG_MAX_DIMENSION` | `2048` | P4 long-edge clamp (LANCZOS) |
+
 ### 3.3 Contract rules
 
 - An env-differentiating var **must** appear here with the exact key in all three columns.

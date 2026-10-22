@@ -32,6 +32,11 @@ COPY requirements.txt .
 # requirements.txt keeps pytest/httpx for the test suite — harmless at runtime.
 RUN pip install --no-cache-dir -r requirements.txt
 
+# §15.7 PROOF GATE — do not assume manylinux Pillow wheels bundle libwebp:
+# fail the BUILD if the deploy image cannot decode/encode WebP (imgpipe_v1
+# stores every compressed upload as WebP).
+RUN python -c "from PIL import features; assert features.check('webp'), 'Pillow build lacks WebP support'"; echo "Pillow-in-Docker OK: WebP verified"
+
 COPY backend/ ./backend/
 
 # ---- build-time env (baked so config.py's fail-fast passes at import) ----
