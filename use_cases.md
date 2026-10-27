@@ -228,15 +228,20 @@ route that calls this service — the body is `{"items":[ingredient_reference,..
 the response is the `MacroResult` below (`{totals, per_ingredient, total_cost, warnings}`).
 
 ### 3.7 `POST /inventory/{id}/images/{slot}` — upload an image
+> Superseded for the pipeline rules by **§15** (kept here only as the route stub).
+
 - `slot` ∈ `product_photo | label_photo`.
 - Multipart `file` = the image; optional `filename` (original name).
-- Accepted content-types: `image/jpeg`, `image/png`, `image/webp`.
-- Max size: **10 MB** (QA's oversized-file test expects a `413 PAYLOAD_TOO_LARGE`).
-- Response: `200` with the `ImageSlot` object (per §1.1 shape).
+- Accepted input formats, sniffed from magic bytes (§15.2 step 2): `image/jpeg`,
+  `image/png`, `image/webp`. Anything else → `415 UNSUPPORTED_MEDIA_TYPE`.
+- Max accepted size: `SOLIN_IMG_MAX_UPLOAD_BYTES` (default **25 MiB**, §15 P1);
+  above it → `413 PAYLOAD_TOO_LARGE`.
+- A file bigger than `SOLIN_IMG_TARGET_BYTES` (default 300 KiB) is compressed per
+  §15 P4/P5 and stored as WebP; smaller uploads are stored byte-identical (P5).
+- Response: `200` with the `ImageSlot` object (§1.1 shape **plus** §15.4's
+  `original_size` and `pipeline` keys; `byte_size`/`mime_type` describe the STORED file).
 - Repeating an upload to the same slot **replaces** the previous file and
-  overwrites the slot metadata (last-write-wins).
-- Non-image file: `415 UNSUPPORTED_MEDIA_TYPE`.
-- Over 10 MB: `413 PAYLOAD_TOO_LARGE`.
+  overwrites the slot metadata (last-write-wins). Unchanged.
 
 ---
 
@@ -441,9 +446,10 @@ Cost rationale:
 | 400 | `UNITS_INCOMPATIBLE` | at aggregate time: `ing.unit` and product `base_unit` are in different conversion families (g-family vs pcs-family vs ml-family) |
 | 400 | `PORTIONS_INVALID` | `portions` not a positive integral integer in `[1, 999]` (e.g. `0`, `-3`, `2.5`, `"4"`, `1e2`=100 valid, `1000` invalid); body carries `fields=["portions"]` (see §7) |
 | 404 | `NOT_FOUND` | unknown product id |
-| 413 | `PAYLOAD_TOO_LARGE` | image > 10 MB |
-| 415 | `UNSUPPORTED_MEDIA_TYPE` | content-type not in §3.7 list |
+| 413 | `PAYLOAD_TOO_LARGE` | image bytes > `SOLIN_IMG_MAX_UPLOAD_BYTES` (default 25 MiB, §15 P1) |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | sniffed magic bytes not JPEG/PNG/WebP, or a valid-header file that fails to decode (§15.2) |
 | 422 | `UNPROCESSABLE` | type-shape mismatch (e.g. string where number required) |
+| 422 | `IMAGE_COMPRESS_FAILED` | decodable image the pipeline cannot bring under `SOLIN_IMG_MAX_STORED_BYTES` (§15 P6) |
 | 500 | `INTERNAL` | server bug; include a trace hint in `message` |
 
 ---
@@ -1020,3 +1026,175 @@ value may be trusted as correct or broken (t_7d998dc2 ran at a stray 1280×577 d
 5. Edit button visible and clickable at ≥700px (C5).
 
 --- END OF SECTION 14 ---
+
+---
+
+## Section 15 — Product image upload & compression contract (t_cd9daeb6, 2026-10-22)
+
+Normative contract for the `POST /inventory/{id}/images/{slot}` pipeline (supersedes the §3.7
+bullets it replaces, and the §6 rows it amends). Derived from feature request t_94223f07
+("uploaded pictures may be too large — compress them"). Consumer tasks: `t_fd20d685`
+(implement, developer) and the §15 acceptance suite (tester, created alongside this section).
+Every tree anchor below was verified fresh against `staging` @9ad44e2 — re-anchor on use
+(live-branch-only rule). "MUST" = acceptance-blocking.
+
+### 15.1 Policy summary (the seven pinned decisions)
+
+| # | knob | value (default) |
+|---|---|---|
+| P1 | Max accepted upload bytes (413 gate) | `SOLIN_IMG_MAX_UPLOAD_BYTES` = 26 214 400 (25 MiB) — raised from the old flat 10 MiB so modern phone exports (~8–20 MB JPEG) upload instead of bouncing |
+| P2 | Target stored bytes per compressed file | `SOLIN_IMG_TARGET_BYTES` = 307 200 (300 KiB) |
+| P3 | Stored file format after compression | always WebP (lossy, quality ladder P4); passthrough (P5) keeps the original container |
+| P4 | Quality strategy | dimension clamp to `SOLIN_IMG_MAX_DIMENSION` = 2048 (long edge, LANCZOS) → WebP quality ladder `82,72,62,52` (override `SOLIN_IMG_QUALITY_LADDER`), each rung tried at scale 1.0, then the whole ladder re-run after ×0.75 downscale (max 2 downscales) — first encode ≤ P2 wins |
+| P5 | Non-regression rule | uploads already ≤ P2 are stored byte-identical (no re-encode). For > P2 inputs, if no ladder rung reaches P2, store the SMALLEST ladder result; if nothing shrank the input at all, revert to the original bytes (`mode=reverted`) — the pipeline never stores a LARGER file than the upload |
+| P6 | Hard stored guard | if the stored result is still > `SOLIN_IMG_MAX_STORED_BYTES` = 2 097 152 (2 MiB), reject with `422 IMAGE_COMPRESS_FAILED` (means: input the pipeline genuinely cannot shrink; re-shoot) |
+| P7 | Kill switch | `SOLIN_IMG_COMPRESS=false` restores the exact pre-§15 §3.7 behavior (no sniff/decode/re-encode; 413 gate still reads `SOLIN_IMG_MAX_UPLOAD_BYTES`) |
+
+Accepted INPUT formats (unchanged enum, now enforced on sniffed magic bytes, not the
+client-declared content-type): `image/jpeg`, `image/png`, `image/webp`. Everything else →
+415 (see 15.3). HEIC/HEIF stay an explicit MVP non-goal (no Pillow decoder guarantee on
+the deploy base image); camera JPEG export is the supported path for phone users.
+
+### 15.2 Pipeline (normative order, first match short-circuits)
+
+One upload = one synchronous request through, in this exact order:
+
+1. **size gate** — `len(bytes) > SOLIN_IMG_MAX_UPLOAD_BYTES` → `413 PAYLOAD_TOO_LARGE`.
+   (The HTTP layer read cap `MAX_UPLOAD_READ` becomes settings-driven: max bytes + 1 MiB,
+   so a streamed oversized body still 413s at the service boundary.)
+2. **type sniff** — magic bytes must match the declared/assumed format: JPEG `FF D8 FF`,
+   PNG `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF????WEBPVP8`/`VP8L`/`VP8 `. A file whose
+   sniffed type is outside the enum, or whose sniff and declared content-type disagree,
+   → `415 UNSUPPORTED_MEDIA_TYPE`. (This closes the current hole where a text file
+   shipped with `content_type: image/jpeg` passes validation.py.)
+3. **passthrough shortcut** — if `len(bytes) ≤ SOLIN_IMG_TARGET_BYTES` (and sniff passed),
+   store the bytes as-is, container and mime unchanged, `mode=passthrough`.
+4. **decode** — Pillow decode; undecodable-but-sniff-valid → `415 UNSUPPORTED_MEDIA_TYPE`
+   (corrupt image is a bad file, not a server failure).
+5. **compress** — clamp long edge to `SOLIN_IMG_MAX_DIMENSION`; flatten alpha onto white
+   (`convert("RGB")` — label photos are white-background, and lossy WebP has no alpha);
+   run ladder P4; apply P5; then guard P6.
+6. **store** — write under the unchanged §2 layout
+   (`<media_root>/inventory/<product_id>/<slot>/<slugified-leaf>.<stored-ext>`), replace
+   the previous slot file (last-write-wins, §3.7 unchanged), build the slot object per 15.4.
+
+Seed/default media ingestion (seed scripts) does NOT route through this pipeline — §7
+fixture chains stay byte-identical unless a card says otherwise.
+
+### 15.3 Failure behavior & user-facing error messages (canonical strings)
+
+The SPA renders the server `message` verbatim in its upload toast (single source of truth —
+no client-side string table, no code→message mapping in JS). The four strings below are
+canonical; `{max_mb}` interpolates the effective `SOLIN_IMG_MAX_UPLOAD_BYTES / 1 048 576`,
+rounded to one decimal. Shape stays the C8 body `{code, message, details?, fields?}`.
+
+| trigger | HTTP | code | canonical `message` |
+|---|---|---|---|
+| bytes > P1 | 413 | `PAYLOAD_TOO_LARGE` | `The picture is too large (max {max_mb} MB). Take a new photo or pick a smaller file.` |
+| sniff miss / sniff≠declared / corrupt payload (P4 decode fail) | 415 | `UNSUPPORTED_MEDIA_TYPE` | `This file is not a readable JPEG, PNG or WebP picture.` |
+| pipeline ran but stored result still > P6 | 422 | `IMAGE_COMPRESS_FAILED` (NEW §6 row) | `This picture could not be compressed. Take a new photo of the product, or pick a smaller file.` |
+| Pillow/storage fault mid-pipeline (unexpected raise, unwritable media root) | 500 | `INTERNAL` | existing convention: message carries a trace hint |
+
+Never surface stack traces, absolute file paths, or secrets in `message` (C8 + config.py
+secrets rule). `IMAGE_COMPRESS_FAILED` replaces nothing — the old "no compression, store
+raw" path simply had no such failure.
+
+### 15.4 Upload API contract (delta on §3.7 / §1.1)
+
+`POST /api/v1/inventory/{id}/images/{slot}` — route, multipart shape (`file` required,
+optional `filename` form field), slot enum and last-write-wins are UNCHANGED. Delta:
+
+- Success stays **200** with the `ImageSlot` object. Its fields are now computed from the
+  STORED artifact, not the upload: `mime_type` = stored type (WebP for every compressed
+  upload; original container for passthrough), `byte_size` = stored bytes, plus TWO new
+  keys: `original_size` (received bytes, int) and `pipeline` (literal `"imgpipe_v1"`).
+  `filename` leaf keeps the §2 slug + the STORED extension (`…__slug.webp` after
+  compression). GET on the returned `url` streams the stored file (unchanged §2 anchor:
+  `MEDIA_URL_PREFIX = /api/v1/media` is canonical and must not move).
+- `validate_image_body` (PUT-body images, §3.4) must accept the two new keys and keep
+  validating `mime_type` against the same enum (add `image/webp` degenerate cases aside,
+  do NOT add new enum members).
+- QA harness caveat: any fixture built at the old 10 MiB gate, or any §7-style assertion
+  expecting byte-identical uploads, must be re-anchored to P1/P5 before reuse — re-anchor,
+  never silently "fix" by skipping the check.
+
+### 15.5 Configuration keys (all Tier B — docs/THREE_ENV_ARCHITECTURE.md §3.2 updated
+FIRST in the same PR, per the config.py header rule; all six land in `Settings` +
+`from_env` + `describe()`, none are secrets)
+
+```text
+SOLIN_IMG_COMPRESS          bool  default true    # false ⇒ exact pre-§15 §3.7 behavior (P7)
+SOLIN_IMG_MAX_UPLOAD_BYTES  int   default 26214400  # P1, 413 gate + stream cap base
+SOLIN_IMG_TARGET_BYTES      int   default 307200    # P2, compress-if-bigger + ladder stop
+SOLIN_IMG_MAX_STORED_BYTES  int   default 2097152   # P6, 422 IMAGE_COMPRESS_FAILED guard
+SOLIN_IMG_QUALITY_LADDER    csv   default "82,72,62,52"  # P4 ladder (parse like _env_float)
+SOLIN_IMG_MAX_DIMENSION     int   default 2048      # P4 long-edge clamp
+```
+
+Bad values (non-numeric, ladder list empty) MUST fail fast at import like the existing
+`_env_int` RuntimeErrors — never silently default.
+
+### 15.6 Logging & metrics (requirement of t_fd20d685)
+
+One structured log line per upload ATTEMPT (success or failure), logger name
+`solin.media`, greppable marker `upload `. Key=value fields, stable order:
+`product_id slot original_bytes stored_bytes mode={passthrough|compress|reverted}
+q=<used quality|-> outcome={stored|too_large|bad_type|undecodable|compress_failed|internal}
+dur_ms sha1_8=<first 8 hex of sha1(original bytes)>`. `sha1_8` is correlation-only (never
+a secret); no secrets, no full paths, no EXIF payloads in logs. Ratio is derivable from
+original/stored bytes — do not add a second metric store for MVP.
+
+### 15.7 Tree anchors (verified fresh @9ad44e2 — re-anchor before implementing)
+
+- `backend/app/inventory/validation.py` — `MAX_IMAGE_BYTES` (10 MiB) + `ALLOWED_IMAGE_TYPES`
+  stay as import-time fallbacks, but the effective caps come from `settings` (P1/P2/P6).
+  New code lives OUTSIDE this module's "pure validators" remit if it needs Pillow.
+- `backend/app/inventory/routes.py` — `MAX_UPLOAD_READ` (11 MiB, ~L30) becomes
+  `settings.max_upload_bytes + 1 MiB`; the `upload_image` route (~L140) keeps its thin-adapter
+  shape and forwards to the service; the two centralized exception handlers already emit
+  the 15.3 body shape for the new 422 code — no new handler needed.
+- `backend/app/inventory/service.py` — `InventoryService.upload_image` (~L331–399): replace
+  the flat `> MAX_IMAGE_BYTES` + direct `_media_write` chain with the 15.2 pipeline; the
+  slot-replace (delete previous file) block is preserved verbatim.
+- NEW `backend/app/inventory/image_pipeline.py` — pure `compress_image(data, cfg)` (+ a
+  sniff helper), Pillow isolated here so validators/unit tests stay Pillow-free where
+  possible; mirror validation.py's "pure, unit-testable in isolation" house style.
+- `backend/app/config.py` — six keys into `Settings`, `from_env`, `describe()`.
+- `requirements.txt` + `Dockerfile.api` — `Pillow>=10.3`. WebP decode/encode MUST be proven
+  on the deploy image (`features.check("webp")` True; manylinux Pillow wheels bundle
+  libwebp — verify, do not assume).
+- UI chain (evidence, verify fresh): `app/fcapi.js` `uploadImage` (~L92–97) posts the
+  multipart and surfaces the parsed error body; `app/edit.js` toasts the server `message`.
+  Acceptance = messages reach the user verbatim; no new client strings.
+- Media anchors kept byte-for-byte by this contract: `MEDIA_URL_PREFIX`, `slot_dir`,
+  `slot_url`, `slugify`, `now_stamp*` (media.py) — §2/§3.7 invariants survive §15.
+
+### 15.8 Acceptance checklist (QA-executable; every "MUST" is blocking)
+
+Fixture F-* = reusable fixtures committed with the suite; harness re-anchor per 15.4 caveat
+MANDATORY before running (old 10 MiB-gate fixtures are stale inputs, not contracts).
+
+1. **F-413:** 26 MiB JPEG → 413 `PAYLOAD_TOO_LARGE`, canonical 15.3 message, no file written.
+2. **F-sniff:** text bytes sent with declared `content_type: image/jpeg` → 415 (sniff beats
+   header). Real GIF → 415.
+3. **F-passthrough:** valid 180 KiB JPEG → 200; stored bytes IDENTICAL to upload; slot
+   `mime_type` stays `image/jpeg`; GET url 200 byte-identical.
+4. **F-big:** largest valid fixture one step under the gate (24.9 MiB synthetic photo-like
+   source) → 200 (gate is P1=25 MiB), stored ≤ 307 200 B, decodable,
+   `mime_type: image/webp`; `original_size/byte_size` ratio ≥ 20:1 on a camera-like source.
+5. **F-phone:** realistic phone export (~4032×3024 JPEG, ~8–15 MB) → 200 (was 413-era
+   behavior), stored ≤ P2, visual check: label text still legible at 2× zoom on a
+   360-px-wide render (quality floor is a PRODUCT choice — pin the ladder if a ticket
+   ever disputes legibility).
+6. **F-fail:** with `SOLIN_IMG_MAX_STORED_BYTES=1024` (or monkeypatched ladder) →
+   `422 IMAGE_COMPRESS_FAILED` with the canonical message; unit-prove `reverted` mode too
+   (pipeline can only store ≤ original, never larger).
+7. **F-kill:** `SOLIN_IMG_COMPRESS=false` → byte-exact storage of any valid sniff-passing
+   upload ≤ P1 (pre-§15 behavior pinned as a regression control).
+8. **F-log:** every attempt emits exactly one `solin.media upload ` line carrying
+   `original_bytes`, `stored_bytes`, `outcome`, `sha1_8`; no secrets/paths in it.
+9. **F-slot:** re-upload replaces the stored file (old file gone from disk + slot JSON);
+   DELETE product still cascades BOTH slot dirs (unchanged §3.5) — proves §15 did not eat
+   the storage invariants.
+
+--- END OF SECTION 15 ---

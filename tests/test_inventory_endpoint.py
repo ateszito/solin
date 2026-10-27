@@ -17,6 +17,10 @@ Covers:
 import io
 import os
 
+# §15.4 harness re-anchor (t_fd20d685): fixtures built at the old flat 10 MiB
+# gate are STALE INPUTS — sizes were re-anchored to P1/P2/P5, never
+# 'fixed' by skipping a check.
+
 import pytest
 
 from fastapi.testclient import TestClient
@@ -301,11 +305,40 @@ def test_upload_415_bad_type(client, svc):
 
 
 def test_upload_413_too_large(client, svc):
-    from app.inventory.validation import MAX_IMAGE_BYTES
+    # §15.4 harness re-anchor (MANDATORY per blueprint): the pre-§15 fixture
+    # (10 MiB raw zeros, sent as image/jpeg) is a STALE INPUT — under
+    # imgpipe_v1 its magic bytes fail the sniff gate (415) BEFORE the size
+    # gate, and P1 now reads SOLIN_IMG_MAX_UPLOAD_BYTES (25 MiB), not the
+    # flat 10 MiB constant. F-413 fixture shape: a JPEG-shaped body one step
+    # over the gate, still checking 413 + canonical §15.3 message.
     pid = _mk(client, svc)
-    big = b"\x00" * (MAX_IMAGE_BYTES + 1)
+    big = b"\xff\xd8\xff" + b"\x00" * (26 * 1024 * 1024)
     r = _upload(client, svc, pid, "product_photo", "big.jpg", big, "image/jpeg")
     assert r.status_code == 413 and r.json()["code"] == "PAYLOAD_TOO_LARGE"
+    assert "too large" in r.json()["message"]
+    assert "25.0 MB" in r.json()["message"]
+
+
+def test_slot_reupload_replaces_and_delete_cascades(client, svc):
+    """§15.8 #9 re-anchor (F-slot): re-upload replaces the stored file in
+    disk AND slot JSON; DELETE still sweeps BOTH slot dirs — the §15
+    pipeline must not eat the §3.5/§3.7 storage invariants."""
+    pid = _mk(client, svc)
+    r1 = _upload(client, svc, pid, "product_photo", "a.jpg", JPG, "image/jpeg")
+    r2 = _upload(client, svc, pid, "product_photo", "b.jpg", JPG + b"\x01", "image/jpeg")
+    assert r2.status_code == 200
+    slot = client.get(f"/api/v1/inventory/{pid}").json()["images"]["product_photo"]
+    assert slot["filename"] == r2.json()["filename"]
+    stored_dir = os.path.join(os.environ.get("SOLIN_MEDIA_ROOT", ""),
+                              "inventory", pid, "product_photo")
+    leaves = os.listdir(stored_dir)
+    assert r2.json()["filename"] in leaves
+    assert r1.json()["filename"] not in leaves  # last-write-wins
+    # fill the label slot too, then DELETE => both slot dirs gone
+    assert _upload(client, svc, pid, "label_photo", "l.png", PNG, "image/png").status_code == 200
+    assert client.delete(f"/api/v1/inventory/{pid}").status_code == 204
+    assert not os.path.isdir(os.path.join(os.environ.get("SOLIN_MEDIA_ROOT", ""),
+                                            "inventory", pid))
 
 
 def test_upload_404_unknown_product(client, svc):
