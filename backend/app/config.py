@@ -138,6 +138,31 @@ class Settings:
     # P4 — long-edge clamp before the ladder (px).
     img_max_dimension: int = 2048
 
+    # ---- Tier B — recipe ingestion (contract §16, t_20f1e116) ----
+    # All keys default-OFF/neutral; documented in
+    # docs/THREE_ENV_ARCHITECTURE.md §3.2 BEFORE this code shipped.
+    ingest_enabled: bool = False          # SOLIN_INGEST_ENABLED
+    worker_threads: int = 2               # SOLIN_WORKER_THREADS (max 4)
+    worker_poll_s: int = 5                # SOLIN_WORKER_POLL_S
+    worker_block_timeout_s: int = 180     # SOLIN_WORKER_BLOCK_TIMEOUT_S
+    ingest_asr_cmd: str = ""              # SOLIN_INGEST_ASR_CMD
+    ingest_data_root: str = ""            # SOLIN_INGEST_DATA_ROOT
+    ingest_seed_cluster: str = ""         # SOLIN_SEED_CLUSTER
+    ingest_attempts: int = 1              # SOLIN_INGEST_ATTEMPTS
+    ingest_transcript_persist: bool = True  # SOLIN_INGEST_TRANSCRIPT
+    ingest_transcript_max_chars: int = 200_000  # SOLIN_INGEST_MAX_CHARS
+    ingest_trust_threshold: float = 0.55  # SOLIN_INGEST_TRUST_THRESHOLD
+    ingest_identity_per_min: int = 20     # SOLIN_INGEST_THROTTLE_PER_MIN
+    ingest_identity_window_s: int = 60    # SOLIN_INGEST_THROTTLE_WINDOW_S
+    ingest_queue_inflight: int = 12       # SOLIN_INGEST_QUEUE_INFLIGHT
+    ingest_max_records: int = 200         # SOLIN_INGEST_MAX_RECORDS
+    ingest_expiry_h: int = 24             # SOLIN_INGEST_EXPIRY_H
+    ingestion_run_chain: bool = False      # SOLIN_INGEST_RUN_CHAIN (chain gate)
+    # URL auto-fetch chain — default OFF (A1: no server-side scraping in
+    # v1; research §§1–2 ToS ban). Flip is a later gate, not v1 scope.
+    url_fetch: bool = False               # SOLIN_URL_FETCH
+    url_fetch_hosts: str = "tiktok.com,vt.tiktok.com,instagram.com,www.instagram.com,instagr.am"  # SOLIN_URL_FETCH_HOSTS
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Build Settings from os.environ, validating what the contract requires."""
@@ -175,6 +200,28 @@ class Settings:
                                           2_097_152),
             img_quality_ladder=_env_ladder("SOLIN_IMG_QUALITY_LADDER"),
             img_max_dimension=_env_int("SOLIN_IMG_MAX_DIMENSION", 2048),
+            # ---- ingestion (§16) — every key documented in §3.2 first ----
+            ingest_enabled=_env_bool("SOLIN_INGEST_ENABLED"),
+            worker_threads=min(4, _env_int("SOLIN_WORKER_THREADS", 2) or 2),
+            worker_poll_s=_env_int("SOLIN_WORKER_POLL_S", 5) or 5,
+            worker_block_timeout_s=_env_int("SOLIN_WORKER_BLOCK_TIMEOUT_S", 180) or 180,
+            ingest_asr_cmd=_env("SOLIN_INGEST_ASR_CMD"),
+            ingest_seed_cluster=_env("SOLIN_SEED_CLUSTER"),
+            ingest_data_root=_env("SOLIN_INGEST_DATA_ROOT"),
+            ingest_attempts=max(1, _env_int("SOLIN_INGEST_ATTEMPTS", 1)),
+            ingest_transcript_persist=_env_bool("SOLIN_INGEST_TRANSCRIPT", default=True),
+            ingest_transcript_max_chars=_env_int("SOLIN_INGEST_MAX_CHARS", 200_000) or 200_000,
+            ingest_trust_threshold=min(0.90, max(0.50, _env_float("SOLIN_INGEST_TRUST_THRESHOLD", 0.55))),
+            ingest_identity_per_min=_env_int("SOLIN_INGEST_THROTTLE_PER_MIN", 20) or 20,
+            ingest_identity_window_s=_env_int("SOLIN_INGEST_THROTTLE_WINDOW_S", 60) or 60,
+            ingest_queue_inflight=_env_int("SOLIN_INGEST_QUEUE_INFLIGHT", 12) or 12,
+            ingest_max_records=_env_int("SOLIN_INGEST_MAX_RECORDS", 200) or 200,
+            ingest_expiry_h=_env_int("SOLIN_INGEST_EXPIRY_H", 24) or 24,
+            ingestion_run_chain=_env_bool("SOLIN_INGEST_RUN_CHAIN"),
+            url_fetch=_env_bool("SOLIN_URL_FETCH"),
+            url_fetch_hosts=_env("SOLIN_URL_FETCH_HOSTS",
+                                 "tiktok.com,vt.tiktok.com,instagram.com,"
+                                 "www.instagram.com,instagr.am"),
         )
 
         # Fail fast only when we know it's a DEPLOYMENT (SOLIN_ENV set to a
@@ -218,6 +265,26 @@ class Settings:
             "img_max_stored_bytes": self.img_max_stored_bytes,
             "img_quality_ladder": list(self.img_quality_ladder),
             "img_max_dimension": self.img_max_dimension,
+            "ingestion": {
+                "enabled": self.ingest_enabled,
+                "run_chain": self.ingestion_run_chain,
+                "threads": self.worker_threads,
+                "block_timeout_s": self.worker_block_timeout_s,
+                "attempts_per_record": self.ingest_attempts,
+                "transcript": {"persist": self.ingest_transcript_persist,
+                               "max_chars": self.ingest_transcript_max_chars},
+                "trust": {"mode": "confidence",
+                          "trust_threshold": self.ingest_trust_threshold,
+                          "anchor_rule": "seed-main-not-companion"},
+                "identity_per_min": self.ingest_identity_per_min,
+                "queue": {"inflight": self.ingest_queue_inflight,
+                         "retries": {"no_auto_requeue": True}},
+                "seed_cluster": self.ingest_seed_cluster,
+                "trigger_resources": {
+                    "file_exists": {"interval_h": self.ingest_expiry_h},
+                    "size_min_bytes": {"interval_h": self.ingest_expiry_h},
+                },
+            },
         }
         if secret:
             # Full view for local operators (never served over the wire).
