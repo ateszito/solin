@@ -3,3 +3,4 @@ uvicorn
 python-multipart
 pytest
 httpx
+Pillow>=10.3

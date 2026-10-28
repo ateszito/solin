@@ -38,7 +38,9 @@ UNITS = ("g", "kg", "mg", "ml", "l", "cup", "tbsp", "tsp",
 #: §3.7 — the three accepted image content-types.
 ALLOWED_IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
 
-#: §3.7 — max upload bytes. QA's oversized-file test expects 413 above this.
+#: §3.7 — import-time fallback. The EFFECTIVE cap is settings-driven:
+#: ``SOLIN_IMG_MAX_UPLOAD_BYTES`` (P1, default 25 MiB) — §15 P7 keeps this
+#: constant alive for the kill-switch path only.
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 #: The two image slots (product photo + label photo), in canonical order.
@@ -262,6 +264,19 @@ def validate_image_body(value: Any, slot: str) -> Dict[str, Any]:
                                  f"images.{slot}.byte_size must be an integer > 0",
                                  fields=[f"images.{slot}.byte_size"])
         out["byte_size"] = int(byte_size)
+    # §15.4 imgpipe_v1 keys — PUT bodies may round-trip the ImageSlot the
+    # upload returned; ACCEPT both new keys (and carry them) so the SPA
+    # never has to re-derive them. No new mime enum members here.
+    if value.get("original_size") is not None:
+        v = value["original_size"]
+        if isinstance(v, bool) or not _is_number(v) or v <= 0:
+            raise InventoryError("VALIDATION_ERROR", 400,
+                                 f"images.{slot}.original_size must be an integer > 0",
+                                 fields=[f"images.{slot}.original_size"])
+        out["original_size"] = int(v)
+    if value.get("pipeline") is not None:
+        out["pipeline"] = _clean_str(value["pipeline"], 16,
+                                      f"images.{slot}.pipeline", fields)
     if value.get("uploaded_at") is not None:
         out["uploaded_at"] = _clean_str(
             value["uploaded_at"], 64, f"images.{slot}.uploaded_at", fields)

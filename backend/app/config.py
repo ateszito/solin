@@ -62,6 +62,31 @@ def _env_float(name: str, default: float = 0.0) -> float:
         raise RuntimeError(f"Solin config: {name} must be a number, got {raw!r}")
 
 
+def _env_ladder(name: str, default: str = "82,72,62,52") -> List[int]:
+    """Parse a CSV of positive ints (image quality ladder, §15 P4).
+
+    Fail-fast contract (config.py header rule): non-numeric rungs or an
+    empty list raise RuntimeError at import — never silently default.
+    """
+    raw = _env(name, default)
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    ladder: List[int] = []
+    for p in parts:
+        try:
+            v = int(p)
+        except ValueError:
+            raise RuntimeError(
+                f"Solin config: {name} must be a comma-separated list of "
+                f"integers, got {raw!r}")
+        if not (1 <= v <= 100):
+            raise RuntimeError(
+                f"Solin config: {name} rungs must be in 1..100, got {p!r}")
+        ladder.append(v)
+    if not ladder:
+        raise RuntimeError(f"Solin config: {name} must not be empty")
+    return ladder
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable snapshot of every env var the backend consumes."""
@@ -98,6 +123,21 @@ class Settings:
     #   <media_root>/inventory/<product_id>/<slot>/<filename> (contract §2)
     media_root: str = ""
 
+    # ---- Tier B — image upload pipeline (contract §15, t_fd20d685) ----
+    # Kill switch: false = exact pre-§15 §3.7 behavior (P7).
+    img_compress: bool = True
+    # P1 — 413 gate + HTTP stream read cap base (bytes).
+    img_max_upload_bytes: int = 26_214_400
+    # P2 — compress-if-bigger threshold + ladder stop (bytes).
+    img_target_bytes: int = 307_200
+    # P6 — hard stored guard; bigger result → 422 IMAGE_COMPRESS_FAILED.
+    img_max_stored_bytes: int = 2_097_152
+    # P4 — WebP quality ladder, first successful quality first.
+    img_quality_ladder: List[int] = field(
+        default_factory=lambda: [82, 72, 62, 52])
+    # P4 — long-edge clamp before the ladder (px).
+    img_max_dimension: int = 2048
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Build Settings from os.environ, validating what the contract requires."""
@@ -126,6 +166,15 @@ class Settings:
             jwt_secret_key=_env("JWT_SECRET_KEY"),
             data_dir=_env("SOLIN_DATA_DIR"),
             media_root=_env("SOLIN_MEDIA_ROOT"),
+            # ---- image pipeline keys (§15; all non-secret, docs §3.2) ----
+            img_compress=_env_bool("SOLIN_IMG_COMPRESS", default=True),
+            img_max_upload_bytes=_env_int("SOLIN_IMG_MAX_UPLOAD_BYTES",
+                                          26_214_400),
+            img_target_bytes=_env_int("SOLIN_IMG_TARGET_BYTES", 307_200),
+            img_max_stored_bytes=_env_int("SOLIN_IMG_MAX_STORED_BYTES",
+                                          2_097_152),
+            img_quality_ladder=_env_ladder("SOLIN_IMG_QUALITY_LADDER"),
+            img_max_dimension=_env_int("SOLIN_IMG_MAX_DIMENSION", 2048),
         )
 
         # Fail fast only when we know it's a DEPLOYMENT (SOLIN_ENV set to a
@@ -162,6 +211,13 @@ class Settings:
             "postgres_user": self.postgres_user,
             "data_dir": self.data_dir,
             "media_root": self.media_root,
+            # image pipeline knobs (§15.5 — six keys, non-secret)
+            "img_compress": self.img_compress,
+            "img_max_upload_bytes": self.img_max_upload_bytes,
+            "img_target_bytes": self.img_target_bytes,
+            "img_max_stored_bytes": self.img_max_stored_bytes,
+            "img_quality_ladder": list(self.img_quality_ladder),
+            "img_max_dimension": self.img_max_dimension,
         }
         if secret:
             # Full view for local operators (never served over the wire).

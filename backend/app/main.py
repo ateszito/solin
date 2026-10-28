@@ -80,6 +80,9 @@ register_inventory(app)
 #   <MEDIA_ROOT>/inventory/<product_id>/<slot>/<filename>
 # StaticFiles is mounted on a dir that exists (seed images go there), so
 # creating it at import time is safe.
+import mimetypes
+mimetypes.add_type("image/webp", ".webp")
+
 _inv_media_root = media_root()
 os.makedirs(os.path.join(_inv_media_root, "inventory"), exist_ok=True)
 app.mount(MEDIA_URL_PREFIX, StaticFiles(directory=_inv_media_root), name="media")
