@@ -19,15 +19,17 @@ from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from ..config import settings
 from .service import default_service as svc
 from .validation import InventoryError
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
-# 10 MB hard stream cap on uploads (FastAPI's UploadFile spools to disk past
-# this anyway; we cap the *read* so a 50 MB upload 413s at the service
-# boundary — the service does the normative 413, this just bounds memory).
-MAX_UPLOAD_READ = 11 * 1024 * 1024
+# Hard stream cap on uploads (FastAPI's UploadFile spools to disk past
+# this anyway; we cap the *read* so a grossly oversized upload 413s at the
+# service boundary — the service does the normative 413, this just bounds
+# memory). §15.2: now settings-driven, max bytes + 1 MiB of slack, so the
+# SOLIN_IMG_MAX_UPLOAD_BYTES gate can never be starved by the transport.
 
 
 def register(app) -> None:
@@ -147,7 +149,7 @@ async def upload_image(product_id: str, slot: str,
     * ``filename``— optional original name (multipart filename is the default)
     Re-upload replaces the previous file (last-write-wins).
     """
-    raw = await file.read(MAX_UPLOAD_READ)
+    raw = await file.read(settings.img_max_upload_bytes + 1024 * 1024)
     original = filename or file.filename or None
     content_type = file.content_type or "application/octet-stream"
     slot_obj = svc.upload_image(

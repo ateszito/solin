@@ -335,11 +335,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .app-main { padding: 22px 24px 40px; }
   .recipe-grid { grid-template-columns: repeat(2, 1fr); }
   .macro-cards { grid-template-columns: repeat(4, 1fr); }
-  .detail-wrap { display: grid; grid-template-columns: minmax(0, 640px) 320px; gap: 22px; align-items: start; }
+  .detail-wrap { display: grid; grid-template-columns: minmax(0, 640px) 320px; gap: 22px; align-items: start; justify-content: center; }
   .detail-media { margin-bottom: 0; position: sticky; top: 76px; }
   .detail-media video { max-height: 70vh; }
   .detail-main { max-width: 640px; }
-  .detail-actions { display: none; } /* edit btn is already inline on head */
+  /* t_1fbc1ef4 / contract §14.2-C5: "display:none" hid the ONLY Edit
+     button (rendered inside .detail-actions, detail.js render()); the
+     "inline on head" fallback it references was never implemented.
+     Edit affordance stays inline on wide screens. */
+  .detail-actions { margin-top: 0; }
   .edit-form .grid2, .edit-form .grid3 { max-width: 560px; }
 }
 
@@ -348,18 +352,27 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
    ============================================================ */
 @media (min-width: 1080px) {
   .recipe-grid { grid-template-columns: repeat(3, 1fr); }
-  body { padding-bottom: 24px; }
+  /* t_1fbc1ef4 (DEFECT-1/2, repro t_7d998dc2): this block previously made the
+     bar position:sticky WITHOUT a bottom/top pin anchor (sticky does not pin
+     without one) and gave the viewport-wide box `left:50%` +
+     `translateX(-50%)` → −½·innerWidth displacement (x −640/−720/−960/−1280
+     measured at 1280/1440/1920/2560) → whole nav + all four buttons
+     offscreen; the bottom strip became a dead click zone (DEFECT-2).
+     Contract §14.2-C1: keep position:fixed with an explicit bottom anchor,
+     never pair a viewport-wide box with a half-viewport transform. The bar
+     keeps its full-width fixed-bar shape (QA control 390×844, §14.1 BP-M);
+     only its buttons become centered pills here. body keeps the base
+     padding-bottom clearance (L32) so nothing occludes the bottom card. */
   .bottom-nav {
-    position: sticky; position: -webkit-sticky; bottom: auto;
-    left: 50%; transform: translateX(-50%); width: auto;
-    height: auto; padding: 6px; border: 1px solid var(--line);
-    border-radius: 999px; background: rgba(255,255,255,.95);
-    box-shadow: var(--shadow); margin: 26px auto 10px;
-    flex-direction: row; gap: 2px;
+    position: fixed; bottom: 0; top: auto; left: 0; right: 0;
+    height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+    padding: 4px 12px; margin: 0;
+    justify-content: center; gap: 2px;
   }
   .bottom-nav button { flex: none; flex-direction: row; gap: 6px; padding: 8px 16px; border-radius: 999px; font-size: 13px; }
   .bottom-nav button.active { background: var(--card-bg); }
-  .toast { bottom: 20px; }
+  /* toast stays above the fixed bar (same clearance as base .toast rule) */
+  .toast { bottom: calc(var(--nav-h) + 14px); }
 }
 
 /* ============================================================
@@ -646,6 +659,40 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .pg-warns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .pg-result .scale-status { margin: 8px 0; }
 
+/* ============================================================
+   Custom "egyéb hozzávaló" rows (t_a411a23e, spec §11.2).
+   Rows live in #pg-rows under the "Egyéb hozzávalók" sub-label,
+   AFTER the paired rows (user-entry order, §11.3). The macro
+   inputs are TOTALS for the used quantity (not per 100).
+   ============================================================ */
+.pg-sublabel {
+  font-size: 11.5px; font-weight: 800; letter-spacing: .5px;
+  color: var(--text-2); text-transform: uppercase; margin: 6px 0 2px;
+}
+.pg-custom { background: #FFFCF7; }
+/* R3: invalid rows are marked red and EXCLUDED from the count —
+   never clamped, never silently dropped. */
+.pg-custom.bad { border-color: #D9534A; background: #FDECEA; }
+.pg-custom.bad input { border-color: #E8B4B0; background: #fff; }
+.pg-egyeb { /* "egyéb" tag in the result table (§11.4) */
+  display: inline-block; font-size: 10.5px; font-weight: 700; color: #6B5B2A;
+  background: #FFF4D9; border-radius: 999px; padding: 1px 7px; margin-left: 4px;
+}
+.pg-cust-name { flex: 1 1 180px; min-width: 0; }
+.pg-cust-del {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0; line-height: 1;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  color: #B3261E; font-size: 17px; font-weight: 800; cursor: pointer;
+}
+.pg-cust-del:active { background: #FDECEA; }
+.pg-cust-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.pg-cust-cell { flex: 1 1 64px; min-width: 0; }
+.pg-cust-lbl {
+  display: block; font-size: 10.5px; font-weight: 800; letter-spacing: .4px;
+  color: var(--text-2); margin-bottom: 3px;
+}
+.pg-cust-grid input { width: 100%; padding: 7px 8px; font-size: 13.5px; background: #fff; }
+
 /* mobile: stack the pairing controls (phone ~390 px) */
 @media (max-width: 480px) {
   .pg-controls .pg-prod { flex: 1 1 100%; }
@@ -653,4 +700,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .pg-controls .pg-unit { flex: 1 1 45%; min-width: 0; }
   .pg-actions .btn { flex: 1 1 40%; }
   .pg-table th:nth-child(8), .pg-table td:nth-child(8) { display: none; }
+  /* custom rows stay in one column flow — NO horizontal scroll (§11.6 A4) */
+  .pg-cust-cell { flex: 1 1 46%; }
+  .pg-cust-grid input { padding: 6px 7px; }
 }

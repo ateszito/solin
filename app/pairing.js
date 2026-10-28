@@ -35,9 +35,14 @@
    convert-to-base for the common HU unit words — anything the engine
    still rejects surfaces as the UNITS_INCOMPATIBLE row, never a crash.
 
-   Data: localStorage solin.pairings.v1
-     { "<recipeId>": { saved_at, rows: [{name, product_id|null,
-          amount:number|null, unit:string|null, note}] } }
+   Data: localStorage solin.pairings.v2  (was .v1 — version bumped per
+   spec §11.4 so v1 readers never see custom rows; v1 stays READABLE and
+   falls back on load. A row without "source" is a paired product row.)
+     { "<recipeId>": { saved_at, version:2, rows: [
+         {name, product_id|null, amount, unit, note}              // paired
+         {name, product_id:null, source:"custom", amount, unit,
+          price, currency, macros{7}}                            // custom
+     ] } }
 
    Hungarian copy to match the app registers (detail.js / foodcounter.js).
    ============================================================ */
@@ -46,7 +51,9 @@ window.Pairing = (function () {
   const { $, $$, S, esc, toast } = window.Solin;
   const Fc = window.FcApi;
 
-  const K = "solin.pairings.v1";
+  /* v2 key (spec §11.4). K1 = legacy file, still readable on load. */
+  const K2 = "solin.pairings.v2";
+  const K1 = "solin.pairings.v1";
 
   /* ---------- small shared bits ---------- */
   function fmt(v) { return Fc.fmt(v); }
@@ -140,6 +147,24 @@ window.Pairing = (function () {
   /* ---------- pairing state (per recipe, session-scoped) ---------- */
   // rows: [{ ing_index, name, product_id, amount, unit, note }]
   let ROWS = null;         // currently mounted rows for the active recipe
+  /* CUSTOM = "egyéb hozzávaló" rows (spec §11.2 R1, task t_a411a23e).
+     Independent of the recipe ingredient list AND of inventory: unlimited
+     rows, each with its own × delete; product-only actions (Auto-pár,
+     "Kiválasztott termékek törlése") never touch them. Keyed by a
+     module-serial key (splices never shift indices under a re-render). */
+  let CUSTOM = [];         // [{key, name, qty, unit, price, currency, macros{7}}]
+  let CKEY = 0;            // key generator for CUSTOM rows
+  /* QUICK (t_c05b328b, terv V §13.3/§13.5): quick-select working set, ONE
+     per-recipe view state like ROWS/CUSTOM (initRows remounts; NOT persisted
+     to the pairing file — deletion semantics stay "eltüntet", spec §13.6).
+     Each entry is a RESOLVED QuickSelect.resolveEntry result; blocked/skipped
+     input never reaches this set (§13.2). collectItems appends them AFTER
+     paired + custom rows, in fill order (§13.5 additive). */
+  let QUICK = [];          // [{key, product_id (catalog key), name, quantity, unit, item}]
+  let QUICK_SEL = null;    // selected search hit (resolve FIRST, then amount — §13.3)
+  let QUICK_HITS = [];     // last search result rows (index = data-quick-hit)
+  let QUICK_SEQ = 0;       // stale guard for the async search chain (last wins)
+  let PV_SEQ = 0;          // stale guard for the delegated preview count
   let ACTIVE_RECIPE = null;
   let PRODUCTS = [];       // cached product list for pickers
   let PORTIONS = 1;        // selected portion count for the mounted view
@@ -162,26 +187,53 @@ window.Pairing = (function () {
      nothing here touches localStorage and a page reload clears it. */
   const VIEW = {};         // { recipeId: { portions, res, ts } }
 
+  /* ---- pairing storage (spec §11.4: key v1 → v2, additive shape) ----
+     Load reads v2; when a recipe has no v2 record yet, the legacy v1
+     file stays readable (rows without `source` are paired rows). Save
+     always writes v2, so custom rows can never leak into a v1 reader. */
   function loadPairing(recipeId) {
-    const v = S.load(K, {});
+    let v = S.load(K2, null);
+    if (!v || !v[recipeId]) v = S.load(K1, {});
     return v[recipeId] || null;
   }
-  function savePairing(recipeId, rows) {
-    const v = S.load(K, {});
-    v[recipeId] = {
-      saved_at: new Date().toISOString(),
-      rows: rows.map((r) => ({
-        name: r.name, product_id: r.product_id || null,
-        amount: r.amount != null ? Number(r.amount) : null,
-        unit: r.unit || null, note: r.note || "",
-      })),
-    };
-    S.save(K, v);
+  function savePairing(recipeId, rows, custom) {
+    const v = S.load(K2, {});
+    const paired = (rows || []).map((r) => ({
+      name: r.name, product_id: r.product_id || null,
+      amount: r.amount != null ? Number(r.amount) : null,
+      unit: r.unit || null, note: r.note || "",
+    }));
+    const cust = (custom || []).map((c) => ({
+      name: c.name, product_id: null, source: "custom",
+      amount: c.qty != null && String(c.qty).trim() !== "" ? Number(c.qty) : null,
+      unit: c.unit || null, note: "",
+      price: c.price != null && String(c.price).trim() !== "" ? Number(c.price) : null,
+      currency: c.currency || "HUF",
+      macros: Object.assign({}, c.macros || {}),
+    }));
+    v[recipeId] = { saved_at: new Date().toISOString(), version: 2,
+                   rows: paired.concat(cust) };
+    S.save(K2, v);
   }
-  function deletePairing(recipeId) {
-    const v = S.load(K, {});
-    delete v[recipeId];
-    S.save(K, v);
+
+  /* AUTO-PERSIST (t_bb942564, spec §11.6 A5): the pairing working set
+     (paired rows + custom rows) is written to solin.pairings.v2 the
+     moment ANY row interaction changes it, so a reload (and Browse→A
+     navigation) re-renders exactly what the user had typed. This is the
+     data fix behind "custom rows persist across reload (double check)":
+     the spec E2E chain never presses "💾 Párosítás mentése" between
+     edits, and A5 still demands the rows survive a reload. The explicit
+     save button stays untouched (same storage, same toast). Name-less
+     custom rows stay drafts (never stored), mirroring saveCurrent. An
+     unchanged EMPTY working set (e.g. Auto-pár with no match, no custom
+     rows) never overwrites a saved file — the empty guard skips the
+     write instead of blanking storage. */
+  function persist() {
+    if (ACTIVE_RECIPE == null || !ROWS) return;
+    const paired = ROWS.some((r) => r.product_id);
+    const custom = (CUSTOM || []).some((c) => String(c.name || "").trim() !== "");
+    if (!paired && !custom) return;
+    savePairing(ACTIVE_RECIPE, ROWS, CUSTOM);
   }
 
   /* ---------- products cache (shared picker source) ---------- */
@@ -221,7 +273,9 @@ window.Pairing = (function () {
   function initRows(recipe) {
     const ings = recipe.ingredients || [];
     const saved = loadPairing(recipe.id);
-    const savedRow = (name) => saved && (saved.rows || []).find((r) => r.name === name);
+    const all = (saved && saved.rows) || [];
+    // paired hydration ignores custom rows (v2 files mix both kinds)
+    const savedRow = (name) => all.find((r) => r.name === name && r.source !== "custom");
     ACTIVE_RECIPE = recipe.id;
     ROWS = ings.map((ing, i) => {
       const p = parseAmount(ing.qty);
@@ -236,6 +290,80 @@ window.Pairing = (function () {
         unit: srow ? (srow.unit || null) : null,
       };
     });
+    // Custom rows hydrate from the saved file (v2 round-trip, spec §11.4).
+    // Display-empty sentinels stay "" so the inputs render blank, not "0".
+    CUSTOM = all
+      .filter((r) => r.source === "custom")
+      .map((r) => ({
+        key: "c" + (++CKEY),
+        name: r.name || "",
+        qty: r.amount != null ? String(r.amount) : "",
+        unit: r.unit || "",
+        price: r.price != null ? String(r.price) : "",
+        currency: r.currency || "HUF",
+        macros: Object.assign(blankMacros(), r.macros || {}),
+      }));
+  }
+
+  /* ---------- custom "egyéb hozzávaló" rows (spec §11.2) ---------- */
+  const CUSTOM_UNITS = ["g", "kg", "ml", "dl", "db", "szelet", "szem",
+                        "evőkanál", "teáskanál"];
+
+  // 7 MacroBlock keys, raw-string storage so inputs round-trip verbatim.
+  function blankMacros() {
+    const m = {};
+    MACRO_KEYS.forEach((k) => { m[k] = ""; });
+    return m;
+  }
+
+  function blankCustomRow() {
+    return { key: "c" + (++CKEY), name: "", qty: "", unit: "",
+             price: "", currency: "HUF", macros: blankMacros() };
+  }
+
+  /* Validate one custom row + build its API item (spec §11.2 R2/R3,
+     §11.4). Returns:
+       {blank:true}                    → totally empty row: silently skipped
+       {bad:[field,…], name}           → invalid: row goes red + ONE toast,
+                                          EXCLUDED from the count, never
+                                          clamped (an empty name WITH values
+                                          is invalid too, and never sent)
+       {item:{type:'custom',…}}        → valid → joins items[] AFTER the
+                                          paired rows, in user-entry order.
+     Macro values are TOTALS for the used quantity (not per-100), each
+     0–9999 with ≤2 decimals — verified against the raw typed string. */
+  function customItemOf(c) {
+    const s = (v) => String(v == null ? "" : v).trim();
+    const name = s(c.name);
+    const macros = c.macros || {};
+    const macroFilled = MACRO_KEYS.some((k) => s(macros[k]) !== "");
+    const filled = !!(name || s(c.qty) !== "" || s(c.unit) !== "" ||
+                     s(c.price) !== "" || macroFilled);
+    if (!filled) return { blank: true };
+    const bad = [];
+    if (!name || name.length > 80) bad.push("name");
+    if (s(c.qty) !== "" && !(Number(c.qty) > 0)) bad.push("quantity");
+    if (s(c.unit).length > 10) bad.push("unit");
+    if (s(c.price) !== "" && !(Number(c.price) > 0)) bad.push("price");
+    const cur = s(c.currency).toUpperCase();
+    if (s(c.price) !== "" && !/^[A-Z]{3}$/.test(cur)) bad.push("currency");
+    MACRO_KEYS.forEach((k) => {
+      const v = s(macros[k]);
+      // 0–9999, max 2 decimals, non-negative — "abc"/"-5"/1.234 are
+      // invalid and mark the row red (R3: nothing is clamped or repaired)
+      if (v !== "" && (!/^\d+(\.\d{1,2})?$/.test(v) || Number(v) > 9999)) bad.push(k);
+    });
+    if (bad.length) return { bad: bad, name: name || "(név nélkül)" };
+    const item = { type: "custom", name: name };
+    if (s(c.qty) !== "") item.quantity = Number(c.qty);
+    if (s(c.unit) !== "") item.unit = s(c.unit);
+    if (s(c.price) !== "") { item.price = Number(c.price); item.currency = cur; }
+    if (macroFilled) {
+      const m = {};
+      MACRO_KEYS.forEach((k) => { if (s(macros[k]) !== "") m[k] = Number(macros[k]); });
+      item.macros = m;
+    }
+    return { item: item };
   }
 
   function productOf(id) {
@@ -315,6 +443,13 @@ window.Pairing = (function () {
       '      <button class="btn sm primary" id="pg-count">Számolás →</button>' +
       '      <button class="btn sm" id="pg-save">💾 Párosítás mentése</button>' +
       '      <button class="btn sm ghost" id="pg-clear">Kiválasztott termékek törlése</button>' +
+      // R1 (spec §11.2): ONE entry chip for custom extras, independent of
+      // the ingredient list + inventory. Unlimited rows, each with its own ×.
+      '      <button class="btn sm ghost" id="pg-add-custom" type="button">＋ Egyéb hozzávaló</button>' +
+      // t_c05b328b (terv V §13.1): trigger chip + SEARCH/quick-add panel, ALUL,
+      // trope-re indulva (NONE). Hit item AND quick block look and behave like
+      // an ingredient row; quick input never becomes one.
+      '      <button class="btn sm ghost" id="pg-quick-toggle" type="button">＋ Hozzávaló a termékeimből</button>' +
       '    </div>' +
       '    <div class="pg-portions">' +
       '      <label for="pg-portions-in">Portionok</label>' +
@@ -333,6 +468,27 @@ window.Pairing = (function () {
       // Single #pg-result container (no duplicate result section); renderResult()
       // is the only writer and it replaces innerHTML wholesale.
       '    <div id="pg-result"></div>' +
+      // Live PREVIEW block — the display twin of what "Számolás" WILL do
+      // (QuickSelect.perIngredientMirror over the current working set).
+      // Re-renders on quick push/delete + custom add/save/delete (totals
+      // refresh rule, task body). Non-authoritative; Számolás stays the boss.
+      '    <div class="pg-preview" id="pg-preview" hidden></div>' +
+      // t_c05b328b (terv V §13.1/§13.3): SEARCH + SELECTED(amount) run as ONE
+      // input row, chained: hit select reveals the amount field (§13.3 order).
+      // Hits + quick block look/behave like ingredient rows (§13.6/§13.8).
+      '    <div class="pg-quick" hidden>' +
+      '      <input id="pg-quick-q" class="pg-quick-q" type="text" autocomplete="off" spellcheck="false" aria-label="keresés a raktárban" placeholder="Keresés a termékeid közül…" />' +
+      '      <div id="pg-quick-status" class="scale-status hidden" role="status"></div>' +
+      '      <ul id="pg-quick-list" class="pg-quick-hits"></ul>' +
+      '      <div id="pg-quick-add" class="pg-quick-add" hidden>' +
+      '        <button type="button" class="pg-quick-x" aria-label="kiválasztott elvetése">×</button>' +
+      '        <span id="pg-quick-selname" class="pg-quick-selname"></span>' +
+      '        <input id="pg-quick-amt" type="text" autocomplete="off" spellcheck="false" aria-label="mennyiség és egység" placeholder="mennyiség + egység (pl. 200 g)" /></div>' +
+      '    </div>' +
+      // unit-family datalist shared by all custom rows (spec §11.2 R2)
+      '    <datalist id="pg-units" hidden>' +
+      CUSTOM_UNITS.map((u) => '<option value="' + esc(u) + '"></option>').join("") +
+      '</datalist>' +
       '    <ul class="pg-rows" id="pg-rows"></ul>' +
       '  </div>' +
       '</div>';
@@ -368,18 +524,65 @@ window.Pairing = (function () {
       '</li>';
   }
 
+  /* ---------- custom row markup (§11.2 R2 field set) ---------- */
+  function custCell(label, inner) {
+    return '<span class="pg-cust-cell"><span class="pg-cust-lbl">' + label + "</span>" + inner + "</span>";
+  }
+
+  function customRowHtml(c) {
+    const key = esc(c.key);
+    const num = (role, label, val, ph) =>
+      custCell(label,
+        '<input data-crole="' + role + '" type="number" step="any" inputmode="decimal" min="0" ' +
+        'placeholder="' + esc(ph) + '" value="' + esc(val == null ? "" : val) + '" ' +
+        'aria-label="' + esc(label) + '" />');
+    const macroCells = MACRO_KEYS.map((k) => {
+      const lbl = ({ calories: "kcal", protein: "P", fat: "Z", carbs: "C",
+                    fiber: "rost", sugar: "cukor", sodium: "Na" })[k];
+      return '<span class="pg-cust-cell"><span class="pg-cust-lbl">' + lbl + "</span>" +
+        '<input data-crole="macros" data-macro="' + k + '" type="text" inputmode="decimal" ' +
+        'value="' + esc((c.macros && c.macros[k]) || "") + '" aria-label="' + esc(lbl + ' (összesen)') + '" /></span>';
+    }).join("");
+    return '<li class="pg-row pg-custom' + (c.bad ? " bad" : "") + '" data-cust="' + key + '">' +
+      '<div class="pg-rowtop">' +
+        '<input class="pg-cust-name" data-crole="name" type="text" maxlength="80" ' +
+          'placeholder="név (kötelező) – pl. Chilipehely" value="' + esc(c.name) + '" aria-label="megnevezés" />' +
+        // t_c05b328b (task 2): per-row + per-key SAVE chain. Same row-top
+        // spot as delete; only VALID rows ever POST (validateCustom refuses
+        // invalid ones inside InvSync.saveToInventory — §13.2/§13.9).
+        '<button type="button" class="pg-cust-save btn sm ghost" data-cust-save="' + key + '" title="Mentés a termékek közé">Mentés a termékek közé</button>' +
+        '<button type="button" class="pg-cust-del" data-cust-del="' + key + '" aria-label="sor törlése">×</button>' +
+      "</div>" +
+      '<div class="pg-cust-grid">' +
+        num("qty", "menny.", c.qty, "mennyiség") +
+        custCell("m. egység", '<input data-crole="unit" type="text" maxlength="10" list="pg-units" placeholder="g" value="' + esc(c.unit) + '" aria-label="mértékegység" />') +
+        num("price", "ár", c.price, "ár (összesen)") +
+        custCell("valuta", '<input data-crole="currency" type="text" maxlength="3" style="text-transform:uppercase" placeholder="HUF" value="' + esc(c.currency) + '" aria-label="valuta" />') +
+        macroCells +
+      "</div>" +
+      "</li>";
+  }
+
   function renderRows() {
     const ul = $("#pg-rows");
     if (!ul || !ROWS) return;
-    ul.innerHTML = (ROWS || []).map(rowHtml).join("");
+    // Paired rows first, then — under a sub-label — the custom extras,
+    // in user-entry order (spec §11.3 display rule).
+    let html = (ROWS || []).map(rowHtml).join("");
+    if (CUSTOM && CUSTOM.length) {
+      html += '<li class="pg-sublabel">Egyéb hozzávalók</li>' +
+              CUSTOM.map(customRowHtml).join("");
+    }
+    ul.innerHTML = html;
   }
 
   function refreshBadge() {
     const b = $("#pg-badge");
     if (!b || !ROWS) return;
     const paired = ROWS.filter((r) => r.product_id).length;
-    b.textContent = paired + "/" + ROWS.length + " termék";
-    b.classList.toggle("on", paired > 0);
+    b.textContent = paired + "/" + ROWS.length + " termék" +
+      (CUSTOM.length ? " · " + CUSTOM.length + " egyéb" : "");
+    b.classList.toggle("on", paired > 0 || CUSTOM.length > 0);
   }
 
   function setStatus(kind, msg) {
@@ -451,6 +654,7 @@ window.Pairing = (function () {
           if (g) { row.product_id = g.id; row.unit = row.unit || g.base_unit; n++; }
         });
         renderRows(); refreshBadge();
+        persist(); // auto-matches are working-set changes too (t_bb942564)
         toast(n ? n + " hozzávaló auto-párosítva" : "Nincs egyértelmű egyezés a raktári termékekben");
       });
     });
@@ -460,12 +664,27 @@ window.Pairing = (function () {
     sec.querySelector("#pg-clear").addEventListener("click", () => {
       (ROWS || []).forEach((r) => { r.product_id = null; r.unit = null; });
       renderRows(); refreshBadge();
+      persist(); // mirror the cleared working set (customs survive; an
+                 // all-empty set keeps the empty guard → no blanking)
       $("#pg-result").innerHTML = "";
       // The cached result is stale now (its products/quantities are gone) —
       // drop it so a portions edit can't re-render old numbers. The portion
       // setting itself persists per recipe view (independent of products).
       LAST_RES = null; COUNTED_P = null;
       stashView();
+      // t_c05b328b (§13.11 → resetQuick on #pg-clear): the QUICK working set
+      // clears WITH the paired rows. It is a per-view working set and NEVER
+      // persisted — a remount starts it empty again (TERV V §13.6).
+      QUICK = []; QUICK_SEL = null; QUICK_HITS = [];
+      const qp = sec.querySelector(".pg-quick");
+      if (qp) {
+        const l = qp.querySelector("#pg-quick-list"); if (l) l.innerHTML = "";
+        const a = qp.querySelector("#pg-quick-add"); if (a) a.hidden = true;
+        const st = qp.querySelector("#pg-quick-status");
+        if (st) { st.textContent = ""; st.classList.add("hidden"); }
+      }
+      const pv = sec.querySelector("#pg-preview");
+      if (pv) { pv.hidden = true; pv.textContent = ""; }
       toast("Kiválasztott termékek törölve");
     });
 
@@ -510,6 +729,7 @@ window.Pairing = (function () {
           row.unit = null;
         }
         renderRows(); refreshBadge();
+        persist();
       }
     });
     rowsEl.addEventListener("input", (e) => {
@@ -519,12 +739,227 @@ window.Pairing = (function () {
       const v = e.target.value.trim();
       row.amount = v === "" ? null : Number(v);
       refreshBadge();
+      persist();
     });
+
+    /* ---- custom "egyéb hozzávaló" wiring (spec §11.2 R1, t_a411a23e) ---- */
+
+    // ＋ entry chip: unlimited custom rows, independent of the ingredient
+    // list and of inventory (R1). Lives in .pg-actions next to Számolás.
+    const addBtn = sec.querySelector("#pg-add-custom");
+    if (addBtn) addBtn.addEventListener("click", () => {
+      CUSTOM.push(blankCustomRow());
+      renderRows(); refreshBadge();
+      const li = rowsEl && rowsEl.lastElementChild;
+      if (li) { const f = li.querySelector("input"); if (f) f.focus(); }
+    });
+
+    // typing into a custom row keeps the model in sync WITHOUT a full
+    // re-render (re-rendering on every keystroke would kill input focus).
+    // bad-row red paint clears as soon as the row is edited.
+    rowsEl.addEventListener("input", (e) => {
+      const role = e.target.dataset && e.target.dataset.crole;
+      if (!role) return;
+      const li = e.target.closest && e.target.closest(".pg-custom");
+      if (!li) return;
+      const c = CUSTOM.find((r) => r.key === li.dataset.cust);
+      if (!c) return;
+      if (role === "macros") {
+        const mk = e.target.dataset.macro;
+        if (mk) c.macros[mk] = e.target.value;
+      } else {
+        c[role] = e.target.value;
+      }
+      if (c.bad) c.bad = false;
+      persist();
+    });
+
+    // per-row "×" delete — only ever removes custom rows, and product
+    // actions (clear) never add/remove custom rows (R1).
+    rowsEl.addEventListener("click", (e) => {
+      const btn = e.target.closest && e.target.closest("[data-cust-del]");
+      if (!btn) return;
+      const i = CUSTOM.findIndex((r) => r.key === btn.dataset.custDel);
+      if (i >= 0) CUSTOM.splice(i, 1);
+      renderRows(); refreshBadge();
+      persist(); // the deletion is the new working set — persist it too,
+                 // or a reload would resurrect the deleted row (t_bb942564)
+    });
+
+    /* ---- delegated [data-cust-save] chain (t_c05b328b, TERV V §13.9) ----
+       per KEY + per ROW, valid rows ONLY (the InvSync chain itself
+       refuses invalid/empty ones — "empty/invalid → SOHA nem POST"):
+       #pg-rows click → InvSync.saveToInventory. A successful add then
+       re-reads a FRESH product listing (never the cached one) and
+       refreshes badge + preview → the new product is pairable too, so
+       the PRODUCT chain continues (Task 2). */
+    rowsEl.addEventListener("click", (e) => {
+      const sb = e.target.closest && e.target.closest("[data-cust-save]");
+      if (!sb) return;
+      const c = CUSTOM.find((r) => r.key === sb.dataset.custSave);
+      if (!c || !window.InvSync) return;
+      sb.disabled = true;                    // one press per row while in flight
+      window.InvSync.saveToInventory([c], { products: PRODUCTS }).then((res) => {
+        sb.disabled = false;
+        if (res && res.ok && res.sent) {
+          toast("Mentve a termékek közé: " + c.name);
+          window.FcApi.listProducts().then((list) => {
+            PRODUCTS = list || PRODUCTS;     // FRESH listing (never the cached snapshot)
+            refreshBadge();
+            refreshPreview();                // totals refresh AFTER a save (Task 2)
+          }, () => {});
+        } else {
+          // blocked chain → toast + red error row (§13.2); NO blanket-key prefix
+          if (res && (res.stage === "validate" || res.stage === "blocked")) {
+            c.bad = true;
+            renderRows();
+          }
+          toast("Nem menthető: " + (c.name || "sor") + " — " +
+                ((res && res.message) || "ismeretlen hiba"));
+        }
+      }, () => { sb.disabled = false; });   // rejects stay rare (invsync resolves); pairing untouched
+    });
+
+    /* ---- quick-select chain (t_c05b328b, TERV V §13.1–§13.6) ----
+       search → select → amount, ONE chain, ALWAYS LIVE: every committed
+       keystroke re-reads /inventory (searchProducts default transport —
+       uncached; QUICK_SEQ last-wins drops stale answers, so the page
+       NEVER mixes TWO listing snapshots). Select NEVER auto-counts: the
+       hit click only reveals the amount field (§13.3 order). Blocked
+       amount toasts and never enters the working set (§13.2). */
+    const QS = window.QuickSelect;
+    if (QS) {
+      const quickPanel = sec.querySelector(".pg-quick");
+      const qIn = sec.querySelector("#pg-quick-q");
+      const qSt = sec.querySelector("#pg-quick-status");
+      const qList = sec.querySelector("#pg-quick-list");
+      const qAdd = sec.querySelector("#pg-quick-add");
+      const qSel = sec.querySelector("#pg-quick-selname");
+      const qAmt = sec.querySelector("#pg-quick-amt");
+      let qTimer = null;
+
+      const setQuickStatus = (msg) => {
+        if (!qSt) return;
+        qSt.textContent = msg || "";
+        qSt.classList.toggle("hidden", !msg);
+      };
+
+      /* trigger chip (§13.9): opens/closes the panel — DEFAULT CLOSED
+         (mobile-only trigger; the `hidden` attr starts the panel off). */
+      const qTog = sec.querySelector("#pg-quick-toggle");
+      if (qTog) qTog.addEventListener("click", () => {
+        if (!quickPanel) return;
+        quickPanel.hidden = !quickPanel.hidden;
+        if (quickPanel.hidden) setQuickStatus("");
+        else if (qIn) qIn.focus();
+      });
+
+      /* SEARCH (debounced 250 ms, §13.2/§13.4): a new query invalidates
+         any in-flight chain (QUICK_SEQ last-wins). EMPTY and ERROR stay
+         TWO SEPARATE chains — neither counts, neither enters the set. */
+      if (qIn && qList) qIn.addEventListener("input", (e) => {
+        const query = String(e.target.value || "").trim();
+        if (qTimer) clearTimeout(qTimer);
+        if (!query) { QUICK_HITS = []; qList.innerHTML = ""; setQuickStatus(""); return; }
+        const seq = ++QUICK_SEQ;            // stale guard: last keystroke wins
+        qTimer = setTimeout(() => {
+          if (seq !== QUICK_SEQ) return;
+          setQuickStatus("Keresés…");
+          QS.searchProducts(query).then((r) => {   // default transport = LIVE (FcApi.listProducts)
+            if (seq !== QUICK_SEQ) return;        // stale answer → dropped
+            if (r && r.ok && !r.empty) {
+              QUICK_HITS = r.items || [];
+              qList.innerHTML = QUICK_HITS.map((p, i) =>
+                '<li class="pg-quick-hit" data-quick-hit="' + i + '" role="button" tabindex="0">' +
+                esc(p.name || p.id) + (p.brand ? ' <span class="hint sm">' + esc(p.brand) + "</span>" : "") +
+                "</li>").join("");
+              setQuickStatus("");
+            } else {
+              QUICK_HITS = [];
+              qList.innerHTML = "";
+              setQuickStatus(r && r.ok
+                ? "Nincs találat: " + query
+                : "Raktári hiba: " + ((r && r.message) || "ismeretlen hiba"));
+            }
+          });
+        }, 250);
+      });
+
+      /* SELECT (§13.3 order): hit click ONLY reveals the amount field. */
+      if (qList) qList.addEventListener("click", (e) => {
+        const li = e.target.closest && e.target.closest("[data-quick-hit]");
+        if (!li) return;
+        const p = QUICK_HITS[Number(li.dataset.quickHit)];
+        if (!p) return;
+        QUICK_SEL = p;
+        QUICK_SEQ = 0;                        // listing snapshot consumed (§13.2)
+        if (qSel) qSel.textContent = p.name || String(p.id);
+        if (qAdd) qAdd.hidden = false;
+        if (qAmt) { qAmt.value = ""; qAmt.focus(); }
+      });
+
+      /* AMOUNT (§13.3 step-3): Enter / valid text → ONE resolve, THEN
+         count. QuickSelect.resolveEntry builds item/row from
+         product.product_id — the LIVE listing rows key by `id`
+         (server-minted pr{n}) → normalize it here so the delegated
+         count can still resolve the product. blocked → toast, NO
+         chain (§13.2); `skipped` (empty input) toasts NOTHING (§13.7). */
+      const quickAddAmount = () => {
+        if (!QS || !QUICK_SEL) return;
+        const text = String(qAmt.value || "").trim();
+        const r = QS.resolveEntry(Object.assign({}, QUICK_SEL,
+          { product_id: QUICK_SEL.product_id || QUICK_SEL.id }), text);
+        if (r.skipped) return;
+        if (r.blocked) {
+          toast("Nem számolható: " + text + " — " + r.code + " (a termék nem változik)");
+          return;
+        }
+        QUICK.push({ key: "q" + (++CKEY),
+                     product_id: QUICK_SEL.product_id || QUICK_SEL.id,
+                     name: QUICK_SEL.name, quantity: r.item.quantity,
+                     unit: r.item.unit, item: r.item });
+        QUICK_SEL = null;
+        if (qAdd) qAdd.hidden = true;
+        if (qAmt) qAmt.value = "";
+        if (qList) qList.innerHTML = "";      // listing snapshot replaced (fresh query refreshes)
+        refreshBadge();                        // totals + badge refresh on push (§13.5)
+        refreshPreview();
+      };
+      if (qAmt) {
+        qAmt.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); quickAddAmount(); }
+        });
+        qAmt.addEventListener("change", quickAddAmount);
+      }
+
+      /* quick "×" (§13.3): drops the CURRENT selection → back to SEARCH
+         (delete applies to the selection, never to a row). */
+      if (qAdd) qAdd.addEventListener("click", (e) => {
+        if (!(e.target.closest && e.target.closest(".pg-quick-x"))) return;
+        QUICK_SEL = null;
+        qAdd.hidden = true;
+        if (qIn) { qIn.value = ""; qIn.focus(); }
+        QUICK_HITS = [];
+        if (qList) qList.innerHTML = "";
+      });
+    }
   }
 
   /* ---------- count (POST /api/v1/inventory/macros/count) ---------- */
+  /* items[] = paired rows (unchanged) → then valid custom rows, in
+     user-entry order (spec §11.3/§11.4). Blank custom rows are skipped
+     silently; INVALID ones are flagged (c.bad=true → red row), toated
+     once in doCount and EXCLUDED from this request (R3: no clamping,
+     nothing sent half-broken). Empty-name-with-values is invalid, never
+     sent. The assembled custom-only refusal (no valid row at all) is
+     refused client-side too — mirror of the server's VALIDATION_ERROR. */
   function collectItems() {
     const items = [];
+    const bad = [];
+    /* QUICK chain (t_c05b328b): search→select→addit — searching is LIVE
+       (uncached) listing, so the same page never reads TWO snapshots.
+       Entries come back on remount (mount() → collectItems), NEVER from
+       persist(): the v2 writer is untouched, deletion stays "eltüntet". */
     (ROWS || []).forEach((row) => {
       if (!row.product_id) return;
       const p = productOf(row.product_id);
@@ -538,7 +973,48 @@ window.Pairing = (function () {
         name_override: row.name,       // show the recipe ingredient name in the row
       });
     });
-    return items;
+    (CUSTOM || []).forEach((c) => {
+      const built = customItemOf(c);
+      if (built.blank) return;
+      if (built.bad) { c.bad = true; bad.push(built.name); return; }
+      c.bad = false;
+      items.push(built.item);
+    });
+    // t_c05b328b (§13.5 additive): quick entries join AFTER the paired +
+    // custom rows, in fill order. Keys are SET-side (listing `id` + the
+    // resolved basis unit), so the count chain always reads FRESH data —
+    // never a second, stale listing snapshot on the same page (§13.2/§13.4).
+    (QUICK || []).forEach((q) => { if (q && q.item) items.push(q.item); });
+    return { items: items, bad: bad };
+  }
+
+  /* ---- live PREVIEW (t_c05b328b, TERV V §13.4/§13.5): every working-set
+     change DELEGATES the count — the chain is EXACTLY what "Számolás" runs
+     (Fc.countMacros over the full collectItems set, PORTIONS-aware). No
+     client-side macro re-derivation, NO perIngredientMirror against live
+     listing data (live rows key by `id` — that would "Nem számolható"
+     every row). PV_SEQ = last-wins guard (a stale preview is dropped,
+     same rule as QUICK_SEQ). Display twin only; Számolás stays the boss. */
+  function refreshPreview() {
+    const out = $("#pg-preview");
+    if (!out) return;
+    const built = collectItems();
+    if (!built.items.length) { out.hidden = true; out.textContent = ""; return; }
+    const seq = ++PV_SEQ;
+    Promise.resolve().then(() => Fc.countMacros(built.items, PORTIONS))
+      .then((res) => {
+        if (seq !== PV_SEQ) return;              // stale preview → drop (last wins)
+        const PU = window.PairingUI;
+        const text = PU ? PU.previewText((res && res.per_ingredient) || []) : "";
+        if (text) { out.hidden = false; out.textContent = text; }
+        else { out.hidden = true; out.textContent = ""; }
+      })
+      .catch(() => {
+        if (seq !== PV_SEQ) return;
+        out.hidden = false;
+        out.textContent = "Nem számolható (preview): a számolási látás nem "
+          + "elérhető — a Számolás gomb újra próbálkozik.";
+      });
   }
 
   async function doCount() {
@@ -550,9 +1026,19 @@ window.Pairing = (function () {
       return;
     }
     const out = $("#pg-result");
-    const items = collectItems();
+    const built = collectItems();
+    const items = built.items;
+    // R3: one toast per Számolás press, listing the red rows; they are
+    // already excluded from `items` (renderRows repaints them red).
+    if (built.bad.length) {
+      renderRows();
+      toast("Érvénytelen egyéb sor (nem számít be): " +
+        built.bad.slice(0, 3).join(", ") + (built.bad.length > 3 ? " …" : ""));
+    }
     if (!items.length) {
-      setStatus("err", "Válassz legalább 1 hozzávalóhoz raktári terméket ÉS adj meg mennyiséget.");
+      setStatus("err", built.bad.length
+        ? "Add hozzá vagy javítsd meg legalább egy adatot (termék-párosítás vagy egyéb sor)."
+        : "Válassz legalább 1 hozzávalóhoz raktári terméket ÉS adj meg mennyiséget (vagy adj hozzá egyéb sort).");
       return;
     }
     setStatus("ok", "Számolom a tényleges makrókat és az étel árát…");
@@ -630,12 +1116,15 @@ window.Pairing = (function () {
       ? res.per_portion
       : perPortionOf(t, N);
     const rows = pi.map((r) => {
+      const isCustom = r.source === "custom";   // additive API key, spec §11.4
       const warns = (r.warnings || []).map((w) => {
         const code = (typeof w === "string") ? w : (w && w.code) || "?";
-        return '<span class="pg-warn sm" title="' + esc(r.product_id || "") + '">' + esc(warnLabel(code)) + "</span>";
+        return '<span class="pg-warn sm" title="' + esc(r.product_id || r.name || "") + '">' + esc(warnLabel(code)) + "</span>";
       }).join("");
+      const nameCell = esc(r.name || r.product_id) +
+        (isCustom ? ' <span class="pg-egyeb" title="Egyéb hozzávaló (kézzel megadva)">egyéb</span>' : "");
       return "<tr>" +
-        "<td>" + esc(r.name || r.product_id) + "</td>" +
+        "<td>" + nameCell + "</td>" +
         '<td class="num">' + fmt(r.quantity) + " " + esc(r.unit || "") + "</td>" +
         '<td class="num">' + fmt(r.macros && r.macros.calories) + "</td>" +
         '<td class="num">' + fmt(r.macros && r.macros.protein) + "</td>" +
@@ -699,9 +1188,13 @@ window.Pairing = (function () {
   function saveCurrent() {
     if (!ACTIVE_RECIPE) return;
     const paired = (ROWS || []).filter((r) => r.product_id).length;
-    if (!paired) { toast("Nincs mit menteni — egy termék sincs kiválasztva."); return; }
-    savePairing(ACTIVE_RECIPE, ROWS);
-    toast("Párosítás elmentve ehhez a recepthez (" + paired + " termék)");
+    // Custom rows save too (spec §11.4: a v2 file with source:"custom"
+    // rows must save/load/round-trip). Name-less custom rows are drafts.
+    const custom = (CUSTOM || []).filter((c) => String(c.name || "").trim() !== "").length;
+    if (!paired && !custom) { toast("Nincs mit menteni — egy termék sincs kiválasztva és nincs megadott egyéb sor."); return; }
+    savePairing(ACTIVE_RECIPE, ROWS, CUSTOM);
+    toast("Párosítás elmentve ehhez a recepthez (" + paired + " termék" +
+      (custom ? " · " + custom + " egyéb" : "") + ")");
   }
 
   /* =========================== exports ============================ */
@@ -712,9 +1205,29 @@ window.Pairing = (function () {
     __test: {
       MACRO_KEYS,
       halfUp2, perPortionOf, parsePortions, renderResult,
+      // Custom-row surface (spec §11.2 R2/R3) — pure, DOM-free so the
+      // Node spec can unit-test validation + the API item shape.
+      customItemOf, blankCustomRow,
       // Set/clear the "LAST_RES was computed for this count" context so a
       // spec can exercise the stale-server-echo path (see renderResult).
       setLastCountFor: (n) => { COUNTED_P = n; },
+      // Data-layer surface for app/tests/custom_items.spec.js (spec §11.4
+      // A5): drive the collect→items assembly + the v2 storage round-trip
+      // without a browser. collect mirrors doCount's request assembly;
+      // setState mounts recipe state directly (ROWS/CUSTOM/PRODUCTS).
+      collect: () => collectItems(),
+      // Full count chain (guard + toast + fetch + render) for the Node
+      // spec: set state, stub window.FcApi.countMacros, then await this.
+      count: () => doCount(),
+      // The rejected-batch mirror lives in renderResult's sibling: bad
+      // rows keep .bad=true so renderRows re-renders them flagged.
+      getRows: () => ROWS,
+      setState: (rows, custom, products) => {
+        ROWS = rows || [];
+        CUSTOM = custom || [];
+        PRODUCTS = products || [];
+      },
+      savePairing, loadPairing, initRows,
     },
   };
 })();

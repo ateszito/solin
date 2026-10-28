@@ -39,7 +39,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # ---------------------------------------------------------------------------
 # C4 canonical macro keys (single source of truth shared with validation.py)
 # ---------------------------------------------------------------------------
-from .validation import MACRO_KEYS, _validate_portions  # noqa: E402
+from .validation import (  # noqa: E402
+    MACRO_KEYS, InventoryError, _validate_portions, validate_custom_items)
 
 #: Zero macro block (C4 order). Every unresolved ingredient carries this.
 ZERO_BLOCK: Dict[str, float] = {k: 0.0 for k in MACRO_KEYS}
@@ -332,6 +333,61 @@ def aggregate_macro_result(
     return result
 
 
+# ---------------------------------------------------------------------------
+# custom "egyéb" entries (spec §11.2-§11.4, task t_5721a2dd)
+# ---------------------------------------------------------------------------
+
+def _is_custom(entry: Any) -> bool:
+    """Discriminator: an explicit ``type``/``source`` marker (either key,
+    any case). NOT "has no product_id" — mixed batches hold real product
+    references that legitimately lack an id, those stay on the paired
+    path (spec §11.4 A3: no double-flagging)."""
+    if not isinstance(entry, dict):
+        return False
+    marker = next((entry.get(k) for k in ("type", "source")
+                   if entry.get(k) is not None), None)
+    return isinstance(marker, str) and marker.strip().lower() == "custom"
+
+
+def _custom_has_values(entry: dict) -> bool:
+    """Computable check: any macro key > 0, or a price amount > 0. Empty
+    customs (no macros, no price) never enter totals (spec §11.3); an
+    all-empty / all-invalid batch has nothing computable -> the batch
+    itself is rejected (spec §11.4 A4/A5: never a 200 of zeros)."""
+    block = entry.get("macros")
+    if isinstance(block, dict):
+        for v in block.values():
+            d = _num(v)
+            if d is not None and d > 0:
+                return True
+    price = entry.get("price")
+    if isinstance(price, dict):
+        d = _num(price.get("amount"))
+    else:
+        d = _num(price)
+    return d is not None and d > 0
+
+
+def _custom_price(entry: dict) -> Optional[Dict[str, Any]]:
+    """Normalise a custom entry's price to {amount, currency} or None.
+    Accepts scalar ``price`` (+ optional ``currency``/``price_currency``)
+    or the ``{amount, currency}`` pair shape (spec §11.4 harness shape);
+    omitted currency = HUF, never USD (R1)."""
+    raw = entry.get("price")
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        amount = _num(raw.get("amount"))
+        ccy = raw.get("currency")
+    else:
+        amount = _num(raw)
+        ccy = entry.get("currency") or entry.get("price_currency")
+    if amount is None or amount <= 0:
+        return None
+    ccy = (str(ccy).strip().upper() if ccy else None) or "HUF"
+    return {"amount": amount, "currency": ccy}
+
+
 def _aggregate(
     ingredients: Sequence[dict],
     products: Optional[Dict[str, dict]] = None,
@@ -345,6 +401,26 @@ def _aggregate(
     """
     if not isinstance(ingredients, (list, tuple)):
         raise TypeError("ingredients must be a list of ingredient references")
+
+    # ---- custom "egyéb" batch gate (spec §11.4, task t_5721a2dd) ----------
+    # Everything about customs is validated BEFORE any aggregation — the
+    # same discipline as PORTIONS_INVALID (§3.6): invalid values raise
+    # CUSTOM_ITEM_INVALID with the precise fields (never clamped to 0,
+    # never silently dropped); a batch whose only items are empty/invalid
+    # customs has no computable row -> VALIDATION_ERROR (never a
+    # 200-with-zeros). A mixed list keeps the byte-for-byte pair
+    # contract (A3, §5.2 regression): customs go through this same gate
+    # too, so a mixed list containing an invalid custom is rejected as
+    # well instead of being silently excluded.
+    customs = [i for i in ingredients if _is_custom(i)]
+    if customs:
+        validate_custom_items(customs)
+        if not any(not _is_custom(i) for i in ingredients) \
+                and not any(_custom_has_values(c) for c in customs):
+            raise InventoryError(
+                "VALIDATION_ERROR", 400,
+                "no computable rows (empty or invalid custom entries only)"
+                " — add or fix at least one item", fields=["items"])
 
     prod_map = _resolve_products(products)
 
@@ -360,7 +436,13 @@ def _aggregate(
     def add(code: str, product_id: str) -> None:
         warnings.append({"code": code, "product_id": product_id})
 
-    for ing in ingredients:
+    # -- paired resolve loop (§11.4, task t_5721a2dd) -------------------------
+    # Custom "egyéb" rows are NOT product references — they skip this loop
+    # entirely (no PRODUCT_NOT_FOUND for custom keys, no double-listing).
+    # Paired references that legitimately lack an id stay on this path (A3).
+    paired = [i for i in ingredients if not _is_custom(i)]
+
+    for ing in paired:
         row: Dict[str, Any] = {
             "product_id": None,
             "name": None,
@@ -482,6 +564,64 @@ def _aggregate(
         per_ingredient.append(row)
 
     # -- totals (contract §4.2) ----------------------------------------------
+    #
+    # -- custom "egyéb" carry (spec §11.2-§11.4, task t_5721a2dd) ------------
+        # Appended AFTER the pair loop so a pair-only batch stays byte-for-byte
+    # identical (A3 §5.2). Rules per custom row, fixed by §11.2/§11.3:
+    #   * macros enter totals AS ENTERED (already <=2 dp: no rescale, no
+    #     re-round, no quantity factor) and echo in per_ingredient;
+    #   * empty customs (no macro > 0, no price) never count at all;
+    #   * a custom price joins total_cost when its currency equals the
+    #     batch base currency, or when it is the first price captured
+    #     (a custom-only batch defaults the base to the custom currency —
+    #     HUF when omitted, never USD);
+    #   * a cross-currency custom price is EXCLUDED and flagged, both in
+    #     the row and in top-level ``warnings`` (never silently dropped);
+    #   * custom entries are never product references, so they never emit
+    #     PRODUCT_NOT_FOUND (they skip the resolve loop entirely).
+    for ing in customs:
+        if not _custom_has_values(ing):
+            continue
+        row = {
+            "product_id": None,
+            "source": "custom",
+            "name": ing.get("name") or None,
+            "quantity": _out(_num(ing.get("quantity"))),
+            "unit": (str(ing.get("unit")).strip()
+                     if ing.get("unit") is not None else None),
+            "macros": dict(ZERO_BLOCK),
+            "cost": None,
+            "warnings": [],
+        }
+        block = ing.get("macros") if isinstance(ing.get("macros"), dict) else {}
+        per_block: Dict[str, Any] = {}
+        for k in MACRO_KEYS:
+            raw_dec = _num(block.get(k, 0.0))
+            if raw_dec is None or raw_dec < 0:
+                raw_dec = Decimal("0")
+            per_block[k] = _out(raw_dec)
+            totals[k] += raw_dec  # as-entered (exact Decimal, r2 happens below)
+        row["macros"] = per_block
+        price = _custom_price(ing)
+        if price is not None:
+            # §11.3: cost = r2(price), joined AS-ROUNDED (§4.2/§4.3.3 symmetry
+            # with paired cost). An unrounded amount would make total_cost a
+            # sum of unrounded rows (violates "Σ already-rounded rows").
+            cost = r2(price["amount"])
+            row["cost"] = _out(cost)
+            if base_currency is None:
+                base_currency = price["currency"]
+                cost_sum = cost
+                any_captured = True
+            elif price["currency"] == base_currency:
+                cost_sum += cost
+                any_captured = True
+            else:
+                wcode = "CROSS_CURRENCY_EXCLUDED"
+                row["warnings"].append(wcode)
+                add(wcode, str(ing.get("name") or "custom"))
+        per_ingredient.append(row)
+
     totals_out: Dict[str, Any] = {}
     for k in MACRO_KEYS:
         totals_out[k] = _out(r2(totals[k]))

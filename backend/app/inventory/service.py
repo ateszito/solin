@@ -18,12 +18,17 @@ Semantics implemented (normative):
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import shutil
+import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from .. import config as _config
 from . import media as m
+from . import image_pipeline as ip
 from .seed_data import (SEED_JPEG, SEED_PNG, seed_products)
 from .macros import aggregate_macro_result
 from .store import ProductStore
@@ -38,6 +43,38 @@ from .validation import (
     validate_price_entry,
     validate_slot_name,
 )
+
+#: §15.6 — structured upload telemetry goes to this logger, one
+#: ``solin.media upload `` line per pipeline attempt (success OR failure).
+MEDIA_LOG = logging.getLogger("solin.media")
+
+#: §15.3 canonical toasts (single source of truth — the SPA renders the
+#: server ``message`` verbatim; never add client-side copies).
+IMG_TOO_LARGE_MSG = ("The picture is too large (max {max_mb} MB). "
+                     "Take a new photo or pick a smaller file.")
+IMG_UNREADABLE_MSG = "This file is not a readable JPEG, PNG or WebP picture."
+IMG_COMPRESS_FAILED_MSG = ("This picture could not be compressed. Take a new "
+                           "photo of the product, or pick a smaller file.")
+
+
+def _settings():
+    """Live Settings view (module singleton re-read per call).
+
+    Tests monkeypatch ``app.inventory.service._config.settings`` to flip the
+    §15.5 Tier-B knobs without rebuilding the service singleton.
+    """
+    return _config.settings
+
+
+def _media_log(att: Dict[str, Any]) -> None:
+    """Emit ONE greppable §15.6 line; stable key order, no secrets."""
+    MEDIA_LOG.info(
+        "upload product_id=%s slot=%s original_bytes=%s stored_bytes=%s "
+        "mode=%s q=%s outcome=%s dur_ms=%.1f sha1_8=%s",
+        att["product_id"], att["slot"], att["original_bytes"],
+        "-" if att["stored_bytes"] is None else att["stored_bytes"],
+        att["mode"], att["q"], att["outcome"], att["dur_ms"],
+        att["sha1_8"])
 
 # ---------------------------------------------------------------------------
 # Product payload validation (POST body / PUT body shared field setters)
@@ -331,37 +368,158 @@ class InventoryService:
     def upload_image(self, product_id: str, slot: str, data: bytes,
                      content_type: str,
                      original_name: Optional[str] = None) -> dict:
-        """POST /inventory/{id}/images/{slot}.
+        """POST /inventory/{id}/images/{slot} — the §15 imgpipe_v1 flow.
 
-        * 415 UNSUPPORTED_MEDIA_TYPE — content-type not in §3.7 list.
-        * 413 PAYLOAD_TOO_LARGE      — body over MAX_IMAGE_BYTES (10 MB).
-        * Re-upload to the same slot REPLACES the previous file (delete old
-          file, write new one, overwrite slot metadata — last-write-wins).
-        Returns the ImageSlot object (contract §1.1 shape).
+        Pipeline (normative order §15.2, first match short-circuits):
+        size gate P1 → magic-byte sniff → passthrough ≤ P2 → decode →
+        clamp+ladder compress (P4/P5) → stored guard P6 → store. A
+        ``SOLIN_IMG_COMPRESS=false`` kill switch (P7) reroutes to the
+        exact pre-§15 §3.7 behaviour (:meth:`_upload_legacy`).
+
+        Every attempt emits exactly ONE ``solin.media upload `` log line
+        (§15.6), success or failure; no stack traces/paths/secrets in
+        the error bodies (C8). Returns the ImageSlot object (§1.1 shape
+        + §15.4's ``original_size``/``pipeline`` keys, computed from the
+        STORED artifact, not the upload).
         """
         if not self.store.get(product_id):
             raise InventoryError("NOT_FOUND", 404,
                                  f"product {product_id} not found",
                                  details={"product_id": product_id})
         slot = validate_slot_name(slot)
-        ctype = (content_type or "").split(";")[0].strip().lower()
-        if ctype not in ALLOWED_IMAGE_TYPES:
-            raise InventoryError(
-                "UNSUPPORTED_MEDIA_TYPE", 415,
-                f"content-type {ctype!r} not in {list(ALLOWED_IMAGE_TYPES)}",
-                fields=["file"])
         if not data:
             raise InventoryError("VALIDATION_ERROR", 400,
                                  "file body is empty", fields=["file"])
-        if len(data) > MAX_IMAGE_BYTES:
+
+        # §15.6 correlation fields — one line per ATTEMPT (success or fail).
+        attempt = {"product_id": product_id, "slot": slot,
+                   "original_bytes": len(data), "stored_bytes": None,
+                   "mode": "-", "q": "-", "outcome": "internal",
+                   "t0": time.perf_counter(),
+                   "sha1_8": hashlib.sha1(data).hexdigest()[:8]}
+        try:
+            if _settings().img_compress:
+                slot_obj = self._upload_pipeline(
+                    product_id, slot, data, content_type,
+                    original_name, attempt)
+            else:
+                slot_obj = self._upload_legacy(
+                    product_id, slot, data, content_type,
+                    original_name, attempt)
+            attempt["outcome"] = "stored"
+            return slot_obj
+        except InventoryError as exc:
+            if attempt["outcome"] == "internal":
+                attempt["outcome"] = {
+                    413: "too_large", 415: "bad_type",
+                    422: "compress_failed"}.get(exc.status_code, "internal")
+            raise
+        finally:
+            attempt["dur_ms"] = (time.perf_counter() - attempt["t0"]) * 1000.0
+            _media_log(attempt)
+
+    # ---- imgpipe_v1 internals (contract §15.2) ------------------------------
+
+    def _upload_pipeline(self, product_id: str, slot: str, data: bytes,
+                         content_type: str, original_name: Optional[str],
+                         attempt: dict) -> dict:
+        cfg = _settings()
+
+        # 1. size gate (P1) — reads SOLIN_IMG_MAX_UPLOAD_BYTES (25 MiB).
+        if len(data) > cfg.img_max_upload_bytes:
+            attempt["outcome"] = "too_large"
+            max_mb = round(cfg.img_max_upload_bytes / 1_048_576, 1)
             raise InventoryError(
                 "PAYLOAD_TOO_LARGE", 413,
-                f"file is {len(data)} bytes; max is {MAX_IMAGE_BYTES}",
-                fields=["file"])
+                IMG_TOO_LARGE_MSG.format(max_mb=max_mb), fields=["file"])
 
+        # 2. type sniff from magic bytes — beats the declared header, and
+        #    closes the hole where a text file shipped as image/jpeg
+        #    passed validation (§15.2 step 2). An EMPTY/declared value of
+        #    application/octet-stream is "undeclared" → trust the sniff.
+        sniffed = ip.sniff_image_type(data)
+        declared = (content_type or "").split(";")[0].strip().lower()
+        if (sniffed is None
+                or (declared not in ("", "application/octet-stream")
+                    and declared != sniffed)):
+            attempt["outcome"] = "bad_type"
+            raise InventoryError("UNSUPPORTED_MEDIA_TYPE", 415,
+                                 IMG_UNREADABLE_MSG, fields=["file"])
+
+        # 3. passthrough shortcut (P5): ≤ target bytes stores byte-identical.
+        if len(data) <= cfg.img_target_bytes:
+            attempt.update(mode="passthrough", q="-",
+                           stored_bytes=len(data))
+            return self._store_upload(product_id, slot, data, data,
+                                      sniffed, "passthrough", None,
+                                      original_name)
+
+        # 4./5. decode + compress. A corrupt-but-sniff-valid payload is a
+        # bad FILE (415), an unexpected Pillow fault is a server fault (500).
+        try:
+            res = ip.compress_image(data, ip.PipelineConfig(
+                target_bytes=cfg.img_target_bytes,
+                max_dimension=cfg.img_max_dimension,
+                quality_ladder=list(cfg.img_quality_ladder)))
+        except ip.ImageDecodeError:
+            attempt["outcome"] = "undecodable"
+            raise InventoryError("UNSUPPORTED_MEDIA_TYPE", 415,
+                                 IMG_UNREADABLE_MSG, fields=["file"])
+        except Exception as exc:  # Pillow/storage fault mid-pipeline (§15.3)
+            attempt["outcome"] = "internal"
+            raise InventoryError(
+                "INTERNAL", 500,
+                f"media pipeline fault: {type(exc).__name__}",
+                fields=["file"]) from exc
+
+        # 6. stored guard (P6) — anything the ladder cannot bring under
+        # SOLIN_IMG_MAX_STORED_BYTES is rejected, never stored (422).
+        if len(res.stored) > cfg.img_max_stored_bytes:
+            attempt["outcome"] = "compress_failed"
+            raise InventoryError("IMAGE_COMPRESS_FAILED", 422,
+                                 IMG_COMPRESS_FAILED_MSG, fields=["file"])
+
+        attempt.update(mode=res.mode,
+                       q="-" if res.quality is None else res.quality,
+                       stored_bytes=len(res.stored))
+        return self._store_upload(product_id, slot, data, res.stored,
+                                  res.mime, res.mode, res.quality,
+                                  original_name)
+
+    def _upload_legacy(self, product_id: str, slot: str, data: bytes,
+                       content_type: str, original_name: Optional[str],
+                       attempt: dict) -> dict:
+        """Kill-switch path (P7): pre-§15 §3.7 behaviour.
+
+        No sniff/decode/re-encode: the declared content-type is trusted,
+        bytes store byte-identical. The 413 gate still reads
+        SOLIN_IMG_MAX_UPLOAD_BYTES (the old flat 10 MiB constant is gone).
+        """
+        ctype = (content_type or "").split(";")[0].strip().lower()
+        if len(data) > _settings().img_max_upload_bytes:
+            attempt["outcome"] = "too_large"
+            max_mb = round(_settings().img_max_upload_bytes / 1_048_576, 1)
+            raise InventoryError(
+                "PAYLOAD_TOO_LARGE", 413,
+                IMG_TOO_LARGE_MSG.format(max_mb=max_mb), fields=["file"])
+        if ctype not in ALLOWED_IMAGE_TYPES:
+            raise InventoryError(
+                "UNSUPPORTED_MEDIA_TYPE", 415, IMG_UNREADABLE_MSG,
+                fields=["file"])
+        attempt.update(mode="passthrough", q="-", stored_bytes=len(data))
+        return self._store_upload(product_id, slot, data, data,
+                                  ctype, "passthrough", None,
+                                  original_name)
+
+    def _store_upload(self, product_id: str, slot: str, original: bytes,
+                      stored: bytes, stored_mime: str, mode: str,
+                      quality: Optional[int],
+                      original_name: Optional[str]) -> dict:
+        """§15.2 step 6 — store + slot JSON (unchanged §3.7 shape + §15.4 keys)."""
         dirname = m.slot_dir(product_id, slot)
-        filename = m.slugify(original_name or "upload") + "." + m.EXT_BY_MIME[ctype]
-        self._media_write(dirname, filename, data, ctype)
+        filename = (m.slugify(original_name or "upload") + "."
+                    + m.EXT_BY_MIME[stored_mime])
+        self._media_write(dirname, filename, stored, stored_mime)
 
         # Replace the previous file in this slot (last-write-wins, §3.7).
         doc = self.store.get(product_id)
@@ -380,8 +538,10 @@ class InventoryService:
         images[slot] = {
             "url": m.slot_url(product_id, slot, filename),
             "filename": filename,
-            "mime_type": ctype,
-            "byte_size": len(data),
+            "mime_type": stored_mime,
+            "byte_size": len(stored),
+            "original_size": len(original),
+            "pipeline": ip.PIPELINE_VERSION,
             "original_name": original_name or None,
             "uploaded_at": now,
         }

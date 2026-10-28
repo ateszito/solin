@@ -11,7 +11,7 @@ design/
 schemas/
 config/
 components/
-backend/
+
 frontend/
 scripts/
 *.py
