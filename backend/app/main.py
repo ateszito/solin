@@ -19,6 +19,7 @@ from .services.recipe_scaling import (
 from .inventory.routes import register as register_inventory
 from .inventory.media import MEDIA_URL_PREFIX, media_root
 from .inventory.service import default_service as _inv_svc
+from .ingestion.register import register_ingestion
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -75,6 +76,9 @@ def healthz() -> dict:
 # ------ Inventory module (contract use_cases.md §3) ------------------------
 # Router + the two error handlers (C8 shape) live on the app.
 register_inventory(app)
+
+# ------ Recipe Ingestion module (contract use_cases.md §16) -----------------
+register_ingestion(app, settings)
 
 # Serve uploaded product images at the canonical /media prefix (C7/§2):
 #   <MEDIA_ROOT>/inventory/<product_id>/<slot>/<filename>
