@@ -32,7 +32,7 @@ from .store import NONTERMINAL, TERMINAL_ERR, TERMINAL_OK
 
 # Accepted submit kinds (§16.3 "one-of submit"). Unknown kind → 400
 # VALIDATION_ERROR (kind-reject default).
-KINDS = ("url", "file_submit", "file_ref", "transcript")
+KINDS = ("url", "file_submit", "file_ref", "transcript", "tiktok", "instagram")
 
 
 def identity_of(request: Request) -> str:
@@ -97,7 +97,9 @@ def build_router(store, cfg: Dict[str, Any]) -> APIRouter:
                                  fields=["source_id", "file_key"])
 
         orig_kind = kind
-        if kind == "file_ref":
+        if kind in ("tiktok", "instagram"):
+            kind = "url"
+        elif kind == "file_ref":
             kind = "file_submit"
             if not fkey and sid:
                 fkey = sid

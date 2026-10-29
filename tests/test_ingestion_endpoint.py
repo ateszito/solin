@@ -83,3 +83,14 @@ def test_ingest_unknown_kind(ingest_app):
     r = c.post("/api/v1/ingest", json={"source_type": "invalid_kind", "source_id": "abc"})
     assert r.status_code == 400
     assert r.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_ingest_platform_kind_aliases(ingest_app):
+    c = TestClient(ingest_app)
+    # tiktok alias normalized to url -> 403 FEATURE_DISABLED when url_fetch is false
+    r = c.post(
+        "/api/v1/ingest",
+        json={"source_type": "tiktok", "source_id": "https://www.tiktok.com/@chef/video/12345"},
+    )
+    assert r.status_code == 403
+    assert r.json()["code"] == "FEATURE_DISABLED"

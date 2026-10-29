@@ -161,8 +161,8 @@
   /* live submit body shape (identical-partial-fields clause, §16.3):
      only keys with values are sent; session pins USER_LOCALE default "hu". */
   function submitBody(src, fileRef, locale) {
-    var b = { source_type: src.kind === "url" ? (src.platform || "other")
-              : (src.kind || "url") };
+    var b = { source_type: (src.kind === "url" || src.platform) ? "url" : (src.kind || "url") };
+    if (src.platform) b.platform = src.platform;
     if (src.url) b.source_id = src.url;
     if (fileRef != null && fileRef !== "") b.file_ref = fileRef; /* proxy key only */
     var loc = locale || (typeof navigator !== "undefined" && navigator.language) || "hu";
