@@ -1,0 +1,21 @@
+{
+  "name": "solin",
+  "version": "0.1.3",
+  "description": "Solin — Recipe Platform (Web & Mobile)",
+  "private": true,
+  "scripts": {
+    "test:frontend": "node app/tests/add_recipe_flow.spec.js && node app/tests/custom_items.spec.js && node app/tests/custom_items_data.spec.js && node app/tests/pairing_ui.spec.js && node app/tests/quick_select.spec.js && node app/tests/scale.spec.js",
+    "cap:sync": "cap sync",
+    "cap:ios": "cap open ios",
+    "cap:build": "cap copy"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/ios": "^8.6.0"
+  }
+}
