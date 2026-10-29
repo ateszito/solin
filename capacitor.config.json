@@ -1,6 +1,6 @@
 {
-  "appId": "com.ateszito.solin",
-  "appName": "Solin",
+  "appId": "com.ateszito.solin.dev",
+  "appName": "Solin (Dev)",
   "webDir": "app",
   "server": {
     "androidScheme": "https",
