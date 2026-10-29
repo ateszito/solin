@@ -8,6 +8,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { execSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const APP_DIR = path.join(ROOT, "app");
@@ -110,7 +111,6 @@ console.log(`[mobile_env] Updated capacitor.config.json (appId=${target.appId}, 
 const infoPlistPath = path.join(IOS_DIR, "App", "App", "Info.plist");
 if (fs.existsSync(infoPlistPath)) {
   let plist = fs.readFileSync(infoPlistPath, "utf8");
-  // Replace <key>CFBundleDisplayName</key>\s*<string>.*?</string>
   plist = plist.replace(
     /(<key>CFBundleDisplayName<\/key>\s*<string>)(.*?)(<\/string>)/,
     `$1${target.appName}$3`
@@ -131,4 +131,48 @@ if (fs.existsSync(pbxPath)) {
   console.log(`[mobile_env] Updated iOS project.pbxproj PRODUCT_BUNDLE_IDENTIFIER -> ${target.appId}`);
 }
 
-console.log(`[mobile_env] Successfully prepared ${target.appName}! Run "npx cap sync ios" or use "npm run cap:${target.key}".`);
+// 6. Run Capacitor Sync
+console.log("[mobile_env] Running cap sync ios...");
+execSync("npx cap sync ios", { cwd: ROOT, stdio: "inherit" });
+
+// 7. Fix symlinks in ios/App/App/public (Apple installd strictly forbids escaping/broken symlinks)
+function fixSymlinks() {
+  const publicDir = path.join(IOS_DIR, "App", "App", "public");
+  if (!fs.existsSync(publicDir)) return;
+
+  const entries = fs.readdirSync(publicDir);
+  for (const entry of entries) {
+    const fullPath = path.join(publicDir, entry);
+    try {
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        const srcPath = path.join(APP_DIR, entry);
+        fs.unlinkSync(fullPath);
+        if (fs.existsSync(srcPath)) {
+          fs.cpSync(srcPath, fullPath, { recursive: true, dereference: true });
+          console.log(`[mobile_env] Replaced symlink with real directory: ${entry}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[mobile_env] Warning fixing symlink ${entry}:`, e.message);
+    }
+  }
+
+  // Also clean stale build caches from Xcode DerivedData
+  try {
+    const derivedDataDir = path.join(process.env.HOME || "", "Library/Developer/Xcode/DerivedData");
+    if (fs.existsSync(derivedDataDir)) {
+      const items = fs.readdirSync(derivedDataDir).filter(n => n.startsWith("App-"));
+      for (const item of items) {
+        const buildDir = path.join(derivedDataDir, item, "Build/Products");
+        if (fs.existsSync(buildDir)) {
+          execSync(`find "${buildDir}" -name "VideoContent" -type l -exec rm -rf {} + 2>/dev/null || true`);
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+fixSymlinks();
+
+console.log(`[mobile_env] Ready! Switch to Xcode and hit Run (Cmd + R) to install ${target.appName} on your phone.`);
