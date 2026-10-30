@@ -53,3 +53,32 @@ def test_video_download_endpoint(monkeypatch):
     assert res["creator"] == "aussiefitness"
     assert res["title"] == "Creamy Garlic Chicken"
 
+
+def test_video_extract_endpoint(monkeypatch):
+    from backend.app.recipes import video_service
+
+    def fake_download(url, recipe_id=None):
+        return {
+            "video_url": "/api/v1/media/videos/rec_mock_123.mp4",
+            "filename": "rec_mock_123.mp4",
+            "thumbnail_url": "/api/v1/media/videos/rec_mock_123_thumb.jpg",
+            "title": "Creamy Garlic Chicken & Mashed Potatoes",
+            "duration": 45,
+            "creator": "aussiefitness",
+            "description": "549 Kcal | 74g Protein | 46g Carbs | 9.5g Fat\n\nIngredients:\n• 1.4KG Peeled & Diced Potatoes\n• 300g Blended Low Fat Cottage Cheese\n• 800g Chicken Breast\n\nInstructions:\n1. Peel & dice potatoes and boil for 20 minutes\n2. Blend cottage cheese and mix with mash",
+            "size_bytes": 10240,
+        }
+
+    monkeypatch.setattr(video_service, "download_video_from_url", fake_download)
+
+    payload = {"url": "https://www.tiktok.com/@aussiefitness/video/123456"}
+    resp = client.post("/api/v1/recipes/extract-video", json=payload)
+    assert resp.status_code == 200
+    res = resp.json()
+    assert res["title"] == "Creamy Garlic Chicken & Mashed Potatoes"
+    assert res["video"] == "/api/v1/media/videos/rec_mock_123.mp4"
+    assert res["macrosPerServing"]["kcal"] == 549
+    assert res["macrosPerServing"]["protein"] == 74
+    assert len(res["ingredients"]) >= 2
+    assert len(res["steps"]) >= 2
+

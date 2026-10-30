@@ -99,27 +99,37 @@ window.Detail = (function () {
       .join("")}</div>`;
   }
 
+  function scaleSection(r) {
+    return `<div class="detail-section" id="scale-section">
+      <button type="button" class="sec-head" data-toggle="scale" aria-expanded="false">
+        <span>⚖️ Recept skálázása</span>
+        <span class="scale-factor" id="scale-factor">×1.00</span>
+      </button>
+      <div class="sec-body" id="scale-body">
+        <div class="scale-panel" id="scale-panel" style="border:none; padding:10px 0 0; background:transparent;">
+          <p class="scale-help" style="margin-top:0;">Ha ennyi van belőled: válassz hozzávalót, írd be, mennyid van, és átszámolom a többit.</p>
+          <form class="scale-controls" id="scale-form" autocomplete="off">
+            <select id="scale-anchor" class="grow" aria-label="Skálázó hozzávaló (horgony)"></select>
+            <input id="scale-available" type="number" min="0" step="any" inputmode="decimal" aria-label="Elérhető mennyiség" />
+            <span id="scale-unit" class="scale-unit"></span>
+            <button type="submit" class="btn primary" id="scale-apply">Skálázom →</button>
+          </form>
+          <div class="scale-status hidden" id="scale-status" role="status"></div>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function ingredientSection(r) {
     const id = getChecked(r.id);
     const total = (r.ingredients || []).length;
     const done = (r.ingredients || []).filter((i) => id.has(i.name)).length;
 
     return `<div class="detail-section">
-      <div class="scale-panel" id="scale-panel">
-        <div class="scale-head">
-          <span class="scale-title">🎚 Recept skálázása</span>
-          <span class="scale-factor" id="scale-factor">×1.00</span>
-        </div>
-        <p class="scale-help">Ha ennyi van belőled: válassz hozzávalót, írd be, mennyid van, és számolom át a többit.</p>
-        <form class="scale-controls" id="scale-form" autocomplete="off">
-          <select id="scale-anchor" class="grow" aria-label="Skálázó hozzávaló (horgony)"></select>
-          <input id="scale-available" type="number" min="0" step="any" inputmode="decimal" aria-label="Elérhető mennyiség" />
-          <span id="scale-unit" class="scale-unit"></span>
-          <button type="submit" class="btn primary" id="scale-apply">Skálázom →</button>
-        </form>
-        <div class="scale-status hidden" id="scale-status" role="status"></div>
-      </div>
-      <button class="sec-head" data-toggle="ing" aria-expanded="true">Hozzávalók <span>${done}/${total}</span></button>
+      <button type="button" class="sec-head" data-toggle="ing" aria-expanded="true">
+        <span>🥕 Hozzávalók</span>
+        <span>${done}/${total}</span>
+      </button>
       <div class="sec-body open">
         <div class="ing-progress"><span>${done} / ${total} kijelölve</span><div class="prog-bar"><i style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div>
           <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="ing-clear">Pipák törlése</button></div>
@@ -137,7 +147,9 @@ window.Detail = (function () {
       </li>`)
       .join("");
     return `<div class="detail-section">
-      <button class="sec-head" data-toggle="steps" aria-expanded="true">Elkészítés ${r.video ? "(videó-szinkron)" : ""}</button>
+      <button type="button" class="sec-head" data-toggle="steps" aria-expanded="true">
+        <span>👨‍🍳 Elkészítés ${r.video ? "(videó-szinkron)" : ""}</span>
+      </button>
       <div class="sec-body open">
         <ol class="step-list" id="step-list">${rows || `<li class="hint">Még nincsenek lépések.</li>`}</ol>
         ${r.video ? `<p class="hint" style="margin-top:10px">Lejátszás közben az aktuális lépés kiemelődik. Egy lépésre koppintva oda ugrik a videó.</p>` : ""}
@@ -178,14 +190,41 @@ window.Detail = (function () {
       ? r.images.map((img) => (typeof img === "string" ? img : (img.url || img.data_url))).filter(Boolean)
       : (r.image ? [r.image] : []);
     const hasMedia = !!(r.video || recipeImages.length > 0);
+    const hasVideo = !!r.video;
+    const hasImages = recipeImages.length > 0;
 
     const resolve = Solin.resolveMediaUrl || ((u) => u);
     let mediaHtml = "";
-    if (r.video) {
+    if (hasVideo && hasImages) {
+      const mainImg = recipeImages[0];
+      mediaHtml = `
+        <div class="detail-media-switcher">
+          <div class="media-tabs" style="display:flex; gap:6px; margin-bottom:8px;">
+            <button type="button" class="btn sm active" id="media-tab-video">🎬 Videó</button>
+            <button type="button" class="btn sm ghost" id="media-tab-photo">📷 Fotók (${recipeImages.length})</button>
+          </div>
+          <div class="detail-media" id="detail-media-video-box">
+            <video id="det-video" src="${esc(resolve(r.video))}" controls playsinline loop preload="metadata"></video>
+          </div>
+          <div class="detail-media detail-media-photo hidden" id="detail-media-photo-box">
+            <img id="det-img" class="detail-img" src="${esc(resolve(mainImg))}" alt="${esc(r.title)}" />
+            <span class="detail-img-hint">🔍 Koppints a nagyításhoz</span>
+            ${recipeImages.length > 1 ? `
+              <div class="detail-gallery">
+                ${recipeImages.map((src, idx) => `<img src="${esc(resolve(src))}" class="detail-gallery-thumb${idx === 0 ? " active" : ""}" data-idx="${idx}" alt="Fotó ${idx + 1}" />`).join("")}
+              </div>` : ""}
+          </div>
+          <div class="detail-gallery" id="detail-media-preview-strip" style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <span style="font-size:12px; color:var(--text-2); font-weight:600;">Fotók:</span>
+            ${recipeImages.map((src, idx) => `<img src="${esc(resolve(src))}" class="detail-gallery-thumb media-strip-thumb" data-idx="${idx}" alt="Fotó ${idx + 1}" title="Kattints a fotó megtekintéséhez" style="cursor:pointer;" />`).join("")}
+          </div>
+        </div>
+      `;
+    } else if (hasVideo) {
       mediaHtml = `<div class="detail-media">
         <video id="det-video" src="${esc(resolve(r.video))}" controls playsinline loop preload="metadata"></video>
       </div>`;
-    } else if (recipeImages.length > 0) {
+    } else if (hasImages) {
       const mainImg = recipeImages[0];
       const thumbsHtml = recipeImages.length > 1
         ? `<div class="detail-gallery">
@@ -219,6 +258,7 @@ window.Detail = (function () {
       ${macroCards(r)}
       ${ingredientSection(r)}
       ${stepsSection(r)}
+      ${scaleSection(r)}
       <!-- t_a411a23e (spec §11.5): pairing card (incl. #pg-result + portion
            selector) is the LAST block; instructions sit above it.
            Inner card order unchanged (t_d6c25424): actions→portions→result→rows. -->
@@ -237,6 +277,51 @@ window.Detail = (function () {
     const editBtn = $("#edit-open");
     if (editBtn) editBtn.addEventListener("click", () => openEdit(r.id));
 
+    // Media switcher interactions (if recipe has both video and photo)
+    const tabVideo = box.querySelector("#media-tab-video");
+    const tabPhoto = box.querySelector("#media-tab-photo");
+    const videoBox = box.querySelector("#detail-media-video-box");
+    const photoBox = box.querySelector("#detail-media-photo-box");
+    const previewStrip = box.querySelector("#detail-media-preview-strip");
+
+    function showVideo() {
+      if (tabVideo) { tabVideo.classList.add("active"); tabVideo.classList.remove("ghost"); }
+      if (tabPhoto) { tabPhoto.classList.remove("active"); tabPhoto.classList.add("ghost"); }
+      if (videoBox) videoBox.classList.remove("hidden");
+      if (photoBox) photoBox.classList.add("hidden");
+      if (previewStrip) previewStrip.classList.remove("hidden");
+    }
+
+    function showPhoto(idx) {
+      if (tabPhoto) { tabPhoto.classList.add("active"); tabPhoto.classList.remove("ghost"); }
+      if (tabVideo) { tabVideo.classList.remove("active"); tabVideo.classList.add("ghost"); }
+      if (photoBox) photoBox.classList.remove("hidden");
+      if (videoBox) {
+        videoBox.classList.add("hidden");
+        const vid = videoBox.querySelector("video");
+        if (vid && !vid.paused) vid.pause();
+      }
+      if (idx != null && idx >= 0 && recipeImages[idx]) {
+        const dImg = photoBox.querySelector("#det-img");
+        if (dImg) dImg.src = resolve(recipeImages[idx]);
+        const ths = photoBox.querySelectorAll(".detail-gallery-thumb");
+        ths.forEach((t, i) => {
+          if (i === idx) t.classList.add("active");
+          else t.classList.remove("active");
+        });
+      }
+    }
+
+    if (tabVideo) tabVideo.addEventListener("click", () => showVideo());
+    if (tabPhoto) tabPhoto.addEventListener("click", () => showPhoto(0));
+
+    box.querySelectorAll(".media-strip-thumb").forEach((th) => {
+      th.addEventListener("click", () => {
+        const idx = parseInt(th.dataset.idx, 10);
+        showPhoto(idx);
+      });
+    });
+
     // Wire recipe photo lightbox zoom & gallery switcher
     const detImg = box.querySelector("#det-img");
     if (detImg) {
@@ -245,7 +330,7 @@ window.Detail = (function () {
         if (lb) lb(detImg.src, r.title);
       });
     }
-    const thumbs = box.querySelectorAll(".detail-gallery-thumb");
+    const thumbs = box.querySelectorAll(".detail-gallery:not(#detail-media-preview-strip) .detail-gallery-thumb");
     thumbs.forEach((th) => {
       th.addEventListener("click", (e) => {
         e.stopPropagation();

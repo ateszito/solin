@@ -407,6 +407,11 @@ class VideoDownloadRequest(BaseModel):
     recipe_id: Optional[str] = None
 
 
+class VideoExtractRequest(BaseModel):
+    url: str
+    target_lang: Optional[str] = "auto"
+
+
 @app.post("/api/v1/recipes/video/upload")
 async def upload_recipe_video_endpoint(
     file: UploadFile = File(...),
@@ -443,6 +448,24 @@ def download_recipe_video_endpoint(payload: VideoDownloadRequest):
         import logging
         logging.getLogger("uvicorn.error").exception("Video download failed: %s", e)
         raise HTTPException(status_code=422, detail=f"Videó letöltése sikertelen: {str(e)}")
+
+
+@app.post("/api/v1/recipes/extract-video")
+def extract_recipe_from_video_endpoint(payload: VideoExtractRequest):
+    """Download video and extract complete recipe (title, macros, ingredients, steps)."""
+    from .recipes.video_service import download_video_from_url
+    from .recipes.video_extractor import extract_recipe_from_video_info
+    try:
+        video_info = download_video_from_url(payload.url)
+        video_info["source"] = payload.url
+        recipe_data = extract_recipe_from_video_info(video_info, target_lang=payload.target_lang or "auto")
+        return recipe_data
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").exception("Video recipe extraction failed: %s", e)
+        raise HTTPException(status_code=422, detail=f"Recept kinyerése sikertelen: {str(e)}")
 
 @app.get("/api/v1/recipes/{recipe_id}", response_model=RecipeResponse)
 def get_recipe(recipe_id: str):
