@@ -157,10 +157,91 @@ assert.strictEqual(resLidlEng.protein, 18);
 assert.strictEqual(resLidlEng.sodium, 1600);
 console.log("  ✓ English OCR variant of Lidl photo passed");
 
-// 6. Format bytes helper
+// 6. Delimiter robustness & dropped delimiter tests (45,6 / 45.6 / 45 6 / 456)
+const delimiterVariantsLabel = `
+Energia: 250 kcal
+Zsír: 45,6 g
+Fehérje: 18 6 g
+Szénhidrát: 0, 9 g
+Cukor: 456 g
+Rost: 0 g
+Só: 4, 00 g
+`;
+const resDelim = SolinImg.parseNutrition(delimiterVariantsLabel);
+assert.strictEqual(resDelim.calories, 250);
+assert.strictEqual(resDelim.fat, 45.6, "Comma delimiter 45,6 -> 45.6");
+assert.strictEqual(resDelim.protein, 18.6, "Space delimiter 18 6 -> 18.6");
+assert.strictEqual(resDelim.carbs, 0.9, "Spaced comma 0, 9 -> 0.9");
+assert.strictEqual(resDelim.sugar, 45.6, "Dropped delimiter 456 -> 45.6");
+assert.strictEqual(resDelim.fiber, 0);
+assert.strictEqual(resDelim.sodium, 1600);
+console.log("  ✓ Delimiter variants & dropped decimal recovery passed");
+
+// 7. Format bytes helper
 assert.strictEqual(SolinImg.formatBytes(500), "500 B");
 assert.strictEqual(SolinImg.formatBytes(1500), "1.5 KB");
 assert.strictEqual(SolinImg.formatBytes(5 * 1024 * 1024), "5.0 MB");
 console.log("  ✓ formatBytes helper passed");
+
+// 8. Mendula jar label cropped Tesseract output
+const mendulaCroppedOcr = `
+Átlagos tápérték]
+Nutrition facts"
+r100g
+Energia / Energy 9523 k
+567 kcal
+Zsír Fat
+45
+amelyből telített zsírsavak / s. satu
+5,0
+Szénhidrát / Garbohydrat
+26
+amelyből cukrók / sugars
+8,0 g
+ost / Fiber
+10
+*hérje/ Protxin
+21
+9/ salt
+0,0 g
+`;
+const resMendula = SolinImg.parseNutrition(mendulaCroppedOcr);
+assert.strictEqual(resMendula.calories, 567, "Mendula calories should be 567");
+assert.strictEqual(resMendula.fat, 45, "Mendula fat should be 45");
+assert.strictEqual(resMendula.carbs, 26, "Mendula carbs should be 26");
+assert.strictEqual(resMendula.sugar, 8.0, "Mendula sugar should be 8.0");
+assert.strictEqual(resMendula.fiber, 10, "Mendula fiber should be 10");
+assert.strictEqual(resMendula.protein, 21, "Mendula protein should be 21");
+assert.strictEqual(resMendula.sodium, 0, "Mendula sodium should be 0");
+console.log("  ✓ Mendula jar cropped OCR passed (all 7 macros)");
+
+// 9. Two-column sequential block layout
+const twoColumnLabel = `
+Energia / Energy
+Zsir / Fat
+amelyból telitett zsirsavak / saturated
+Szénhidrát / Carbohydrates
+amelybol cukrak / sugars
+Rost / Fiber
+Fehérje / Protein
+Số / salt
+2523kJ / 567 kcal
+45 g
+5,0 g
+26 g
+8,0 g
+10 g
+21 g
+0,0 g
+`;
+const resTwoCol = SolinImg.parseNutrition(twoColumnLabel);
+assert.strictEqual(resTwoCol.calories, 567);
+assert.strictEqual(resTwoCol.fat, 45);
+assert.strictEqual(resTwoCol.carbs, 26);
+assert.strictEqual(resTwoCol.sugar, 8.0);
+assert.strictEqual(resTwoCol.fiber, 10);
+assert.strictEqual(resTwoCol.protein, 21);
+assert.strictEqual(resTwoCol.sodium, 0);
+console.log("  ✓ Two-column sequential block layout passed");
 
 console.log("ALL SolinImg unit tests passed successfully!");

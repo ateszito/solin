@@ -18,23 +18,34 @@
   /**
    * Normalize and parse a single macro number string extracted from OCR.
    * Handles OCR quirks like:
+   *  - Delimiters: "," / "." / "'" / "·" / "•" / ":" / "-" / space between digits (e.g. "45,6", "45 6", "45'6")
+   *  - Missing decimal commas/dots in tight font (e.g. "456" -> 45.6g, "186" -> 18.6g)
    *  - "g" misread as trailing "9" (e.g. "45,09", "1809", "099", "029", "09", "4009")
-   *  - Missing decimal commas in tight font (e.g. "450g" or "450" -> 45.0)
    *  - Accidental non-numeric noise
    *  - Salt (g) -> Sodium (mg) conversion (1g salt ≈ 400mg sodium)
    */
   function cleanMacroNumber(str, key) {
     if (!str) return null;
-    let s = String(str).trim().toLowerCase().replace(/,/g, ".");
+    let s = String(str).trim().toLowerCase();
 
     if (key === "calories") {
-      const kcalMatch = s.match(/(\d+(?:\.\d+)?)\s*kcal/i);
-      if (kcalMatch) return Math.round(parseFloat(kcalMatch[1]));
-      const kjMatch = s.match(/(\d+(?:\.\d+)?)\s*k[j3]/i);
-      if (kjMatch) return Math.round(parseFloat(kjMatch[1]) / 4.184);
+      const kcalMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i);
+      if (kcalMatch) return Math.round(parseFloat(kcalMatch[1].replace(/,/g, ".").replace(/\s+/g, "")));
+      const kjMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i);
+      if (kjMatch) return Math.round(parseFloat(kjMatch[1].replace(/,/g, ".").replace(/\s+/g, "")) / 4.184);
       const anyNum = s.match(/(\d+)/);
-      return anyNum ? parseInt(anyNum[1], 10) : null;
+      if (anyNum) {
+        const n = parseInt(anyNum[1], 10);
+        if (n > 1200 && n < 4500) return Math.round(n / 4.184);
+        return n;
+      }
+      return null;
     }
+
+    // 1. Normalize delimiters: comma, dot, apostrophe, middle dot, colon, dash between digits
+    s = s.replace(/(\d)\s*[,.\x27·•~:;-]\s*(\d)/g, "$1.$2");
+    // Normalize digit space single-digit (e.g. "45 6 g" -> "45.6 g")
+    s = s.replace(/(\d)\s+(\d)(?=\s*(?:g|mg|kcal|9)|$)/g, "$1.$2");
 
     // Strip leading / trailing OCR symbols
     s = s.replace(/^[|:;=\-—~_\])}]+/, "").replace(/[|:;=\-—~_{([]+$/, "").trim();
@@ -46,37 +57,40 @@
     if (!numPart) return null;
 
     if (!isMg) {
-      // Case 1: Trailing 9 on decimal (e.g. "0.99" where original was "0.9 g" and "g" became 9)
-      if (/^\d+\.\d9$/.test(numPart) && key !== "sodium") {
-        numPart = numPart.slice(0, -1);
-      }
-      // Case 2: Multi-digit integer without dot (e.g. "4509", "1809", "099", "029", "09", "4009")
-      else if (/^\d{2,4}$/.test(numPart) && !numPart.includes(".")) {
-        if (numPart.endsWith("9") && numPart.length > 1 && !isG) {
-          numPart = numPart.slice(0, -1); // strip trailing "9" representing unit "g"
+      if (numPart.includes(".")) {
+        // Case 1: Trailing 9 on decimal (e.g. "0.99" where original was "0.9 g" and "g" became 9)
+        if (/^\d+\.\d9$/.test(numPart) && key !== "sodium") {
+          numPart = numPart.slice(0, -1);
         }
-
-        if (key === "sodium" || key === "salt") {
-          // Salt in grams: "400" -> 4.00g, "40" -> 0.40g
+      } else {
+        // Case 2: Multi-digit integer without dot (e.g. "456", "4509", "1809", "099", "029", "09", "4009")
+        if (numPart.startsWith("0") && numPart.length >= 2) {
           if (numPart.length === 3) {
-            numPart = (parseFloat(numPart) / 100).toFixed(2);
-          } else if (numPart.length === 2) {
-            numPart = (parseFloat(numPart) / 10).toFixed(1);
+            numPart = "0." + numPart[1]; // e.g. "099" -> 0.9, "029" -> 0.2
+          } else if (numPart === "09" || numPart === "00") {
+            numPart = "0"; // "0" + "g" -> 0g
+          } else {
+            numPart = "0." + numPart[1];
           }
-        } else if (numPart.length === 3 && (key === "fat" || key === "protein" || key === "carbs" || key === "sugar")) {
-          // Macro > 100g per 100g is impossible; e.g. "450" -> 45.0, "180" -> 18.0
-          if (parseFloat(numPart) > 100) {
-            numPart = (parseFloat(numPart) / 10).toFixed(1);
+        } else {
+          if (numPart.endsWith("9") && numPart.length > 2 && !isG) {
+            numPart = numPart.slice(0, -1); // strip trailing "9" representing unit "g"
           }
-        } else if (numPart.length === 2 && numPart.startsWith("0")) {
-          // e.g. "09" -> 0.9, "02" -> 0.2
-          numPart = "0." + numPart[1];
-        }
-      } else if (isG && /^\d{3,}$/.test(numPart) && !numPart.includes(".")) {
-        if (key === "sodium" || key === "salt") {
-          numPart = (parseFloat(numPart) / 100).toFixed(2);
-        } else if (parseFloat(numPart) > 100) {
-          numPart = (parseFloat(numPart) / 10).toFixed(1);
+
+          if (key === "sodium" || key === "salt") {
+            // Salt in grams: "400" -> 4.00g, "40" -> 0.40g
+            if (numPart.length === 3) {
+              numPart = (parseFloat(numPart) / 100).toFixed(2);
+            } else if (numPart.length === 2) {
+              numPart = (parseFloat(numPart) / 10).toFixed(1);
+            }
+          } else {
+            // For macros per 100g (fat, protein, carbs, fiber, sugar): max possible is 100g!
+            // Any value >= 100g on a 100g label had its decimal dropped (e.g. "456" -> 45.6, "186" -> 18.6, "450" -> 45.0)
+            if (numPart.length === 3 && parseFloat(numPart) >= 100) {
+              numPart = (parseFloat(numPart) / 10).toFixed(1);
+            }
+          }
         }
       }
     }
@@ -85,6 +99,8 @@
     if (isNaN(val)) return null;
 
     if (key === "sodium" || key === "salt") {
+      if (/k[j31]|kcal/i.test(s)) return null;
+      if (!isMg && val > 50) return null;
       if (isMg) return Math.round(val);
       // Convert salt in grams to sodium in mg (1g salt ≈ 400mg sodium)
       return Math.round(val * 400);
@@ -97,33 +113,32 @@
   const W = "(?![a-záéíóöőúüű])";
 
   const labelPatterns = {
-    calories: [
-      new RegExp("(?:energia|energy|energie|kal[oó]ria|calories?|brennwert)" + W, "i"),
-      new RegExp("(\\d+(?:\\.\\d+)?)\\s*kcal" + W, "i")
-    ],
     fat: [
-      new RegExp("(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|total\\s*fat|fat|fett)" + W, "i")
+      new RegExp("(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|zsf|zsl|total\\s*fat|fat|fett)" + W, "i")
     ],
     carbs: [
-      new RegExp("(?:sz[eé]nhidr[aá]t|carbohydrate|total\\s*carb(?:ohydrate)?|carbs|kohlenhydrate)" + W, "i")
+      new RegExp("(?:sz[eé]nhidr[aá]t|garbohydrat|carbohydrate|total\\s*carb(?:ohydrate)?|carbs|kohlenhydrate)" + W, "i")
     ],
     sugar: [
-      new RegExp("(?:amelyb[oöőeé06d][l1]?\\s*(?:cukr|cukt|cukor|cukrok)|cukrok?|cukor|of\\s*which\\s*sugars?|total\\s*sugars?|sugars?|davon\\s*zucker|zucker)" + W, "i")
+      new RegExp("(?:amelyb[oöőeé06d][l1]?\\s*(?:cukr|cukt|cukor|cukrok)|cukr[oó]k?|cukor|of\\s*which\\s*sugars?|total\\s*sugars?|sugars?|davon\\s*zucker|zucker)" + W, "i")
     ],
     fiber: [
-      new RegExp("(?:[eé]lelmi\\s*rost|rost|dietary\\s*fiber|fiber|fibre|ballaststoffe)" + W, "i")
+      new RegExp("(?:[eé]lelmi\\s*rost|rost|ost\\s*[/|]?\\s*fiber|dietary\\s*fiber|fiber|fibre|ballaststoffe)" + W, "i")
     ],
     protein: [
-      new RegExp("(?:feh[eé]rje|feh[eé]r]e|feherje|protein|eiwei[sß])" + W, "i")
+      new RegExp("(?:feh[eé]rje|feh[eé]r]e|[eé]h[eé]rje|h[eé]rje|protein|protx?in|provain|eiwei[sß])" + W, "i")
     ],
     sodium: [
       new RegExp("(?:n[aá]trium|sodium)" + W, "i"),
-      new RegExp("(?:^|[^a-záéíóöőúüű])(?:s[oó0$]|salt|salz)" + W, "i")
+      new RegExp("(?:^|[^a-záéíóöőúüű])(?:[s96$]?\\s*[/|]\\s*salt|s[oó0$]|salt|salz)" + W, "i")
     ]
   };
 
+  // Matches numeric tokens with flexible delimiters (e.g. "45,6", "45.6", "45, 6", "45 6", "45'6")
+  const NUM_VALUE_RX = /[:=]?\s*([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)/i;
+
   function isSaturatedLine(line) {
-    return /tel[ií]tett|saturated|ges[aä]ttigt/i.test(line);
+    return /tel[ií]tett|saturated|ges[aä]ttigt|satu\b/i.test(line);
   }
 
   /**
@@ -140,7 +155,12 @@
 
     const lines = rawText
       .split(/[\r\n]+/)
-      .map((s) => s.trim())
+      .map((s) => {
+        let t = s.trim();
+        t = t.replace(/^[|¦\[\]!©+~:;\s]+/, "").replace(/[|¦\[\]!©+~:;\s]+$/, "").trim();
+        t = t.replace(/\s+[|¦]\s+/g, " ");
+        return t;
+      })
       .filter(Boolean);
 
     const result = {};
@@ -149,13 +169,31 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Calories priority check (handles "1986 kJ/481 kcal" or "481 kcal")
+      // Calories priority check (handles "1986 kJ/481 kcal", "Calories 250", "25231) 567.kcal", "481 kcal")
       if (result.calories == null) {
-        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,]\d+)?)\s*k[j3]\s*[/|]\s*(\d+(?:[.,]\d+)?)\s*kcal/i)
-          || line.match(/(\d+(?:[.,]\d+)?)\s*kcal/i)
+        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,\s]\d+)?)\s*k[j31]?\s*[/|\\)\s]\s*(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i)
+          || line.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i)
           || line.match(/(?:calories|kal[oó]ria)\s*[:=]?\s*(\d+)/i);
         if (kcalM) {
           result.calories = cleanMacroNumber(kcalM[2] || kcalM[1], "calories");
+        } else if (/energia|energy|energie|brennwert/i.test(line)) {
+          // Check subsequent 1-2 lines for explicit kcal before taking kJ
+          for (let off = 1; off <= 2 && i + off < lines.length; off++) {
+            const nextL = lines[i + off];
+            const nextKcal = nextL.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i);
+            if (nextKcal) {
+              result.calories = cleanMacroNumber(nextKcal[1], "calories");
+              break;
+            }
+          }
+          // Fallback: check if line or next line has kJ
+          if (result.calories == null) {
+            const kjM = line.match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i)
+              || (i + 1 < lines.length ? lines[i + 1].match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i) : null);
+            if (kjM && parseFloat(kjM[1]) > 50) {
+              result.calories = cleanMacroNumber(kjM[1] + " kJ", "calories");
+            }
+          }
         }
       }
 
@@ -167,7 +205,7 @@
           const match = line.match(rx);
           if (match) {
             const after = line.slice(match.index + match[0].length);
-            const numM = after.match(/[:=]?\s*([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)/i);
+            const numM = after.match(NUM_VALUE_RX);
             if (numM && /\d/.test(numM[1])) {
               const val = cleanMacroNumber(numM[1], key);
               if (val != null) {
@@ -188,8 +226,8 @@
       if (result.calories == null && /energia|energy|energie|kal[oó]ria|calories?/i.test(line)) {
         for (let off = 1; off <= 2 && i + off < lines.length; off++) {
           const nxt = lines[i + off];
-          const kcalM = nxt.match(/(\d+(?:[.,]\d+)?)\s*kcal/i)
-            || nxt.match(/(\d+(?:[.,]\d+)?)\s*k[j3]/i);
+          const kcalM = nxt.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i)
+            || nxt.match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i);
           if (kcalM) {
             result.calories = cleanMacroNumber(kcalM[1], "calories");
             break;
@@ -213,8 +251,11 @@
               );
               if (isOtherLabel && !/^\d/.test(nextL)) break;
 
-              const numM = nextL.match(/^[^a-záéíóöőúüű\d]*([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)/i)
-                || nextL.match(/([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)$/i);
+              // If nextL is an energy/calorie line (contains kJ or kcal), do not consume it for non-calorie macros
+              if (key !== "calories" && /(?:k[j31]|kcal)\b/i.test(nextL)) break;
+
+              const numM = nextL.match(/^[^a-záéíóöőúüű\d]*([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)/i)
+                || nextL.match(/([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)$/i);
 
               if (numM && /\d/.test(numM[1])) {
                 const val = cleanMacroNumber(numM[1], key);
@@ -252,6 +293,63 @@
       }
     }
 
+    // Pass 4: Two-column / sequential block alignment
+    // Many labels are formatted as two distinct columns (all labels first, then all values).
+    // If fewer than 3 macros were detected, check if we have a sequence of label lines
+    // followed by a sequence of numeric value lines.
+    const detectedCount = Object.keys(result).filter((k) => k !== "rawText" && result[k] != null).length;
+    if (detectedCount < 3) {
+      const orderKeys = [
+        { key: "calories", rx: /energia|energy|brennwert/i },
+        { key: "fat", rx: /(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|zsf|zsl|total\\s*fat|fat|fett)(?![a-záéíóöőúüű])/i },
+        { key: "sat_fat", rx: /tel[ií]tett|saturated|ges[aä]ttigt|satu\b/i },
+        { key: "carbs", rx: /sz[eé]nhidr[aá]t|garbohydrat|carbohydrate|total\\s*carb|carbs|kohlenhydrate/i },
+        { key: "sugar", rx: /cukr|sugar|zucker/i },
+        { key: "fiber", rx: /rost|fiber|fibre|ballaststoffe/i },
+        { key: "protein", rx: /feh[eé]rje|feh[eé]r]e|[eé]h[eé]rje|h[eé]rje|protein|protx?in|provain|eiwei[sß]/i },
+        { key: "sodium", rx: /[s96$]?\\s*[\/|]\\s*salt|s[oó0$]|salt|salz|n[aá]trium|sodium/i }
+      ];
+
+      const labelSeq = [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (/^per\s+\d+/i.test(l) || /^100\s*g/i.test(l)) continue;
+        for (const it of orderKeys) {
+          if (it.rx.test(l)) {
+            labelSeq.push({ key: it.key, lineIdx: i, text: l });
+            break;
+          }
+        }
+      }
+
+      const valSeq = [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (/^per\s+\d+/i.test(l) || /^100\s*g/i.test(l)) continue;
+        if (/^\d{1,2}\.\s*\d{1,2}\.\s*\d{2,4}/.test(l)) continue; // ignore dates like 18. 07. 2027
+        const isLabelLine = orderKeys.some((it) => it.rx.test(l));
+        if (isLabelLine) continue;
+
+        const hasNum = /\d/.test(l);
+        const hasMacroUnit = /(?:k[j31]|kcal|g|mg|9)\b/i.test(l);
+        if (hasNum && (hasMacroUnit || (l.replace(/[^\d.,]/g, "").length <= 5))) {
+          valSeq.push({ lineIdx: i, text: l });
+        }
+      }
+
+      if (labelSeq.length >= 3 && valSeq.length >= 3) {
+        labelSeq.forEach((lbl, idx) => {
+          if (idx < valSeq.length) {
+            const k = lbl.key;
+            if (k !== "sat_fat" && result[k] == null) {
+              const val = cleanMacroNumber(valSeq[idx].text, k);
+              if (val != null) result[k] = val;
+            }
+          }
+        });
+      }
+    }
+
     result.rawText = rawText;
     return result;
   }
@@ -271,30 +369,53 @@
         try {
           let w = img.naturalWidth || img.width;
           let h = img.naturalHeight || img.height;
-          const maxDim = 2000;
-          if (w > maxDim || h > maxDim) {
-            if (w > h) {
-              h = Math.round((h * maxDim) / w);
-              w = maxDim;
-            } else {
-              w = Math.round((w * maxDim) / h);
-              h = maxDim;
+
+          // For cropped label images, ensure width is at least 1400px (upscale if small)
+          // and cap max dimension at 2200px
+          let targetW = w;
+          let targetH = h;
+          if (w < 1200 && h < 1200) {
+            const upFactor = Math.min(2.5, 1400 / Math.max(w, h));
+            targetW = Math.round(w * upFactor);
+            targetH = Math.round(h * upFactor);
+          } else {
+            const maxDim = 2200;
+            if (w > maxDim || h > maxDim) {
+              if (w > h) {
+                targetH = Math.round((h * maxDim) / w);
+                targetW = maxDim;
+              } else {
+                targetW = Math.round((w * maxDim) / h);
+                targetH = maxDim;
+              }
             }
           }
-          const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fillRect(0, 0, w, h);
-          ctx.drawImage(img, 0, 0, w, h);
 
-          const imgData = ctx.getImageData(0, 0, w, h);
+          const canvas = document.createElement("canvas");
+          canvas.width = targetW;
+          canvas.height = targetH;
+          const ctx = canvas.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, targetW, targetH);
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+
+          // Suppress border artefacts on outer margins (turns them white)
+          const edgeX = Math.round(targetW * 0.025);
+          const edgeY = Math.round(targetH * 0.02);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, edgeX, targetH);
+          ctx.fillRect(targetW - edgeX, 0, edgeX, targetH);
+          ctx.fillRect(0, 0, targetW, edgeY);
+          ctx.fillRect(0, targetH - edgeY, targetW, edgeY);
+
+          const imgData = ctx.getImageData(0, 0, targetW, targetH);
           const d = imgData.data;
-          const contrast = 40;
+          const contrast = 55;
           const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
           for (let i = 0; i < d.length; i += 4) {
-            const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            const gray = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
             const boosted = Math.min(255, Math.max(0, factor * (gray - 128) + 128));
             d[i] = boosted;
             d[i + 1] = boosted;
@@ -475,6 +596,65 @@
    * Uses PSM 11 (Sparse text) to prevent tabular column dropouts.
    */
   async function extractNutrition(imageSource, onProgress) {
+    if (typeof onProgress === "function") {
+      onProgress({ status: "loading", progress: 0.1, message: "Kép előkészítése elemzéshez..." });
+    }
+
+    // 1. Try Backend API first (server-side Pillow + Tesseract hun+eng + ingredients extraction)
+    if (typeof fetch !== "undefined") {
+      try {
+        const apiBase = (typeof window !== "undefined" && window.SolinCfg && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+        const extractUrl = (apiBase + "/api/v1/inventory/extract-label").replace(/\/+$/, "");
+
+        if (typeof onProgress === "function") {
+          onProgress({ status: "processing", progress: 0.3, message: "Szerveroldali OCR és összetevő-elemzés..." });
+        }
+
+        let reqBody = null;
+        const headers = {};
+
+        if (typeof Blob !== "undefined" && (imageSource instanceof Blob || (typeof File !== "undefined" && imageSource instanceof File))) {
+          const formData = new FormData();
+          formData.append("file", imageSource, "label.jpg");
+          reqBody = formData;
+        } else {
+          let b64 = "";
+          if (typeof HTMLCanvasElement !== "undefined" && imageSource instanceof HTMLCanvasElement) {
+            b64 = imageSource.toDataURL("image/jpeg", 0.9);
+          } else if (typeof imageSource === "string") {
+            b64 = imageSource;
+          }
+          if (b64) {
+            headers["Content-Type"] = "application/json";
+            reqBody = JSON.stringify({ image_base64: b64, target: "all" });
+          }
+        }
+
+        if (reqBody) {
+          const resp = await fetch(extractUrl, {
+            method: "POST",
+            headers: headers,
+            body: reqBody,
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (typeof onProgress === "function") {
+              onProgress({ status: "done", progress: 1.0, message: "Sikeres elemzés!" });
+            }
+            return {
+              macros: data.macros || {},
+              ingredients: data.ingredients || null,
+              ingredients_list: data.ingredients_list || [],
+              rawText: data.raw_text || "",
+            };
+          }
+        }
+      } catch (netErr) {
+        console.warn("[SolinImg] Backend extract-label failed, falling back to local OCR:", netErr);
+      }
+    }
+
+    // 2. Fallback to client-side Tesseract.js if backend is offline or unavailable
     if (typeof Tesseract === "undefined") {
       throw new Error("A Tesseract OCR motor nem elérhető.");
     }
@@ -561,6 +741,7 @@
 
   return {
     parseNutrition: parseNutrition,
+    cleanMacroNumber: cleanMacroNumber,
     compress: compress,
     extractNutrition: extractNutrition,
     formatBytes: formatBytes

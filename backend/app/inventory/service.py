@@ -156,6 +156,25 @@ def _set_macros(doc: dict, body: dict, required: bool) -> None:
     doc["macros_per_100"] = validate_macro_block(block, "macros_per_100")
 
 
+def _set_ingredients(doc: dict, body: dict) -> None:
+    if "ingredients" not in body:
+        return
+    v = body["ingredients"]
+    if v is None:
+        doc["ingredients"] = None
+        return
+    if not isinstance(v, str):
+        raise InventoryError("UNPROCESSABLE", 422,
+                             "ingredients must be a string or null",
+                             fields=["ingredients"])
+    s = v.strip()
+    if len(s) > 4000:
+        raise InventoryError("VALIDATION_ERROR", 400,
+                             "ingredients exceeds max length 4000",
+                             fields=["ingredients"])
+    doc["ingredients"] = s or None
+
+
 def _none_error() -> None:
     raise InventoryError(
         "VALIDATION_ERROR", 400,
@@ -252,6 +271,7 @@ class InventoryService:
             "serving_size": None,
             "serving_label": None,
             "macros_per_100": None,
+            "ingredients": None,
             "prices": [],
             "images": {slot: None for slot in IMAGE_SLOTS},
             "created_at": now,
@@ -275,6 +295,7 @@ class InventoryService:
                 "VALIDATION_ERROR", 400,
                 "macros_per_100 is required — a product without macros is unaggregable",
                 fields=["macros_per_100"])
+        _set_ingredients(doc, body)
         _set_prices(doc, body, now, self.store.next_price_id)
         self.store.upsert(doc)
         return self.store.get(doc["id"])
@@ -313,7 +334,7 @@ class InventoryService:
                                  "request body must be a JSON object",
                                  fields=["body"])
         allowed = {"name", "brand", "base_unit", "serving_size",
-                   "serving_label", "macros_per_100", "prices", "images"}
+                   "serving_label", "macros_per_100", "ingredients", "prices", "images"}
         unknown = [k for k in body if k not in allowed]
         if unknown:
             raise InventoryError("VALIDATION_ERROR", 400,
@@ -331,6 +352,7 @@ class InventoryService:
         _set_base_unit(doc, body)
         _set_serving(doc, body)
         _set_macros(doc, body, required=False)
+        _set_ingredients(doc, body)
         # Contract §3.4 validation rule: product MUST have a macro block after
         # the update (a product without macros is unaggregable).
         if doc.get("macros_per_100") is None:

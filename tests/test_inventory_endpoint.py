@@ -611,3 +611,153 @@ def test_total_cost_invariant_across_portions_1_4_6(client, seeded):
         b = r.json()
         costs.add((b["total_cost"]["amount"], b["total_cost"]["currency"]))
     assert costs == {(2.05, "USD")}
+
+
+def test_cors_capacitor_and_localhost_allowed(client):
+    """Capacitor iOS/Android and local origins must pass CORS preflight and GET."""
+    for origin in ("capacitor://localhost", "ionic://localhost", "http://localhost"):
+        # Preflight OPTIONS
+        pre = client.options(
+            "/api/v1/inventory",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type",
+            },
+        )
+        assert pre.status_code == 200, f"OPTIONS failed for {origin}: {pre.status_code}"
+        assert pre.headers.get("access-control-allow-origin") == origin
+
+        # GET request
+        res = client.get("/api/v1/inventory", headers={"Origin": origin})
+        assert res.status_code == 200, f"GET failed for {origin}: {res.status_code}"
+        assert res.headers.get("access-control-allow-origin") == origin
+
+
+def test_create_and_update_with_ingredients(client):
+    """Product ingredients field can be created, retrieved and updated."""
+    p_body = {
+        "name": "Mendula Pisztáciakrém",
+        "base_unit": "g",
+        "macros_per_100": {
+            "calories": 567.0, "protein": 21.0, "fat": 59.0,
+            "carbs": 26.0, "fiber": 10.0, "sugar": 8.0, "sodium": 0.0,
+        },
+        "ingredients": "Pörkölt pisztácia (100%)",
+    }
+    r = client.post("/api/v1/inventory", json=p_body)
+    assert r.status_code == 201
+    created = r.json()
+    assert created["ingredients"] == "Pörkölt pisztácia (100%)"
+    pid = created["id"]
+
+    # Verify GET
+    r_get = client.get(f"/api/v1/inventory/{pid}")
+    assert r_get.status_code == 200
+    assert r_get.json()["ingredients"] == "Pörkölt pisztácia (100%)"
+
+    # Verify PUT update
+    r_put = client.put(f"/api/v1/inventory/{pid}", json={"ingredients": "100% pisztácia, tengeri só"})
+    assert r_put.status_code == 200
+    assert r_put.json()["ingredients"] == "100% pisztácia, tengeri só"
+
+
+def test_extract_label_endpoint(client):
+    """POST /api/v1/inventory/extract-label parses label image and returns macros + ingredients."""
+    import io
+    from PIL import Image
+
+    # Create dummy label image with Pillow
+    img = Image.new("RGB", (300, 150), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    raw_png = buf.getvalue()
+
+    # Multipart test
+    res = client.post(
+        "/api/v1/inventory/extract-label",
+        files={"file": ("label.png", raw_png, "image/png")},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "macros" in data
+    assert "ingredients" in data
+    assert "ingredients_list" in data
+    assert "raw_text" in data
+    assert "engine" in data
+
+
+def test_extract_via_ollama_mocked(monkeypatch):
+    """Verify Ollama extraction parsing logic, macro normalization, and ingredient splitting."""
+    import io
+    from PIL import Image
+    from backend.app.inventory.extractor import extract_from_image
+
+    img = Image.new("RGB", (100, 100), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    raw_jpg = buf.getvalue()
+
+    fake_ollama_resp = {
+        "calories": 567,
+        "protein": "21g",
+        "fat": "45,0",
+        "carbs": "26",
+        "fiber": 10,
+        "sugar": "8.0",
+        "salt": "4.0",
+        "sodium": 0,
+        "ingredients": "mandula (80%, pörkölt), repceolaj; tengeri só",
+    }
+
+    class FakeResponse:
+        def read(self):
+            import json
+            return json.dumps({
+                "message": {
+                    "content": json.dumps(fake_ollama_resp)
+                }
+            }).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("backend.app.inventory.extractor.get_ollama_host", lambda: "http://fake-ollama:11434")
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=60: FakeResponse())
+
+    res = extract_from_image(raw_jpg)
+    assert res["engine"].startswith("ollama:")
+    assert res["macros"]["calories"] == 567.0
+    assert res["macros"]["protein"] == 21.0
+    assert res["macros"]["fat"] == 45.0
+    assert res["macros"]["carbs"] == 26.0
+    assert res["macros"]["fiber"] == 10.0
+    assert res["macros"]["sugar"] == 8.0
+    # salt 4.0 -> sodium 1600.0 (salt * 400.0)
+    assert res["macros"]["sodium"] == 1600.0
+    assert res["ingredients"] == "mandula (80%, pörkölt), repceolaj; tengeri só"
+    # Parentheses preserved during splitting
+    assert res["ingredients_list"] == ["mandula (80%, pörkölt)", "repceolaj", "tengeri só"]
+
+
+def test_extract_via_ollama_fallback_to_tesseract(monkeypatch):
+    """When Ollama is unreachable, extractor gracefully falls back to Tesseract OCR."""
+    import io
+    from PIL import Image
+    from backend.app.inventory.extractor import extract_from_image
+
+    img = Image.new("RGB", (100, 100), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    raw_jpg = buf.getvalue()
+
+    monkeypatch.setattr("backend.app.inventory.extractor.get_ollama_host", lambda: None)
+
+    res = extract_from_image(raw_jpg)
+    assert res["engine"] == "tesseract_ocr"
+    assert "macros" in res
+    assert "ingredients" in res
+
+
+
