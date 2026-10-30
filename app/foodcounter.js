@@ -1152,21 +1152,6 @@ window.FoodCounter = (function () {
     });
   }
 
-    overlay.querySelector("#fc-modal-apply").addEventListener("click", () => {
-      const edited = {};
-      overlay.querySelectorAll("[data-compare-key]").forEach((inp) => {
-        const k = inp.dataset.compareKey;
-        const val = inp.value.trim();
-        if (val !== "") {
-          const num = Number(val);
-          if (!isNaN(num)) edited[k] = num;
-        }
-      });
-      close();
-      if (typeof onConfirm === "function") onConfirm(edited);
-    });
-  }
-
   function priceRowHtml(amount, currency, pack, source) {
     return `<div class="fc-price-row">
       <input type="number" step="any" data-pr="amount" placeholder="összeg" value="${amount != null && amount !== "" ? esc(amount) : ""}" />
