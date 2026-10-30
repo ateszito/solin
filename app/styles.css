@@ -254,6 +254,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .detail-gallery-thumb:hover {
   opacity: 1; border-color: var(--primary);
 }
+.media-tabs {
+  margin-bottom: 8px;
+}
+.media-tabs button.btn.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
 
 /* ---------- recipe photo picker in forms ---------- */
 .rec-photos-grid {

@@ -46,6 +46,21 @@ window.Solin = (function () {
       .replace(/"/g, "&quot;");
   }
 
+  function resolveMediaUrl(url) {
+    if (!url || typeof url !== "string") return "";
+    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:") || url.startsWith("blob:")) {
+      return url;
+    }
+    if (url.startsWith("/api/")) {
+      let base = "";
+      try {
+        base = (window.SolinCfg && window.SolinCfg.apiBase && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+      } catch (e) {}
+      if (base) return base.replace(/\/+$/, "") + url;
+    }
+    return url;
+  }
+
   // Drill-down screens (recipe / edit / add) push ONE history entry when
   // entered from a main tab, so the browser / Android back button returns
   // to where the user came from instead of leaving the app. Moves between
@@ -135,7 +150,7 @@ window.Solin = (function () {
   }
 
   return {
-    state, $, $$, S, toast, esc,
+    state, $, $$, S, toast, esc, resolveMediaUrl,
     initNav, go, back, tab, openRecipe, openEdit, setHash
   };
 })();
