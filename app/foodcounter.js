@@ -52,13 +52,10 @@ window.FoodCounter = (function () {
   }
   async function listProducts(search) {
     const q = search ? "?limit=50&search=" + encodeURIComponent(search) : "?limit=50";
-    try {
-      const res = await api(q);
-      return (res && Array.isArray(res.items)) ? res.items : [];
-    } catch (e) {
-      console.warn("[FoodCounter] listProducts failed:", e);
-      return [];
-    }
+    // Errors propagate: the list view must be able to tell "backend
+    // unreachable" apart from "no products yet".
+    const res = await api(q);
+    return (res && Array.isArray(res.items)) ? res.items : [];
   }
 
   /* ============================================================
@@ -99,21 +96,31 @@ window.FoodCounter = (function () {
 
   async function renderList() {
     const box = $("#fc-product-list");
-    box.innerHTML = '<li class="hint">Bövegszám letöltése…</li>';
+    // skeleton rows keep the layout stable while the API answers
+    const sk = '<li class="fc-product skeleton" aria-hidden="true"><span class="fc-thumb-none sk-block"></span>' +
+      '<span class="fc-main"><span class="sk-line" style="width:55%"></span><span class="sk-line" style="width:80%"></span></span></li>';
+    box.innerHTML = '<li class="sr-only" role="status">Termékek betöltése…</li>' + sk + sk + sk;
     // keep search filter in sync with the input
     const q = ($("#fc-search") || {}).value || "";
     let items;
     try {
       items = await listProducts(q.trim());
     } catch (e) {
-      box.innerHTML = `<li class="hint">Hiba: ${esc(e.message)}</li>`;
+      console.warn("[FoodCounter] listProducts failed:", e);
+      FC.products = FC.products || [];
+      box.innerHTML = `<li class="hint">A terméklista most nem érhető el (${esc(e.message)}). ` +
+        `<button type="button" class="btn sm" data-fc-retry>Újrapróbálás</button></li>`;
+      const retry = box.querySelector("[data-fc-retry]");
+      if (retry) retry.addEventListener("click", () => renderList());
       return;
     }
     FC.products = items; // cache for product picker + detail lookups
     const countEl = $("#fc-count");
     if (countEl) countEl.textContent = items.length + " termék";
     if (!items.length) {
-      box.innerHTML = '<li class="hint">Még nincs termék — hozz létre egyet felül.</li>';
+      box.innerHTML = q.trim()
+        ? `<li class="hint">Nincs találat erre: „${esc(q.trim())}”.</li>`
+        : '<li class="hint">Még nincs termék — az „+ Új termék” gombbal hozhatsz létre egyet.</li>';
       return;
     }
     box.innerHTML = items.map((p) => {
@@ -143,12 +150,14 @@ window.FoodCounter = (function () {
   async function openDetail(id) {
     const panel = $("#fc-detail");
     panel.hidden = false;
-    panel.innerHTML = '<p class="hint">Betöltés…</p>';
+    panel.innerHTML = '<div class="skeleton" aria-busy="true"><span class="sk-line" style="width:40%;height:18px"></span>' +
+      '<span class="sk-line" style="width:70%"></span><span class="sk-block" style="height:64px"></span></div>';
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     let p;
     try {
       p = await api("/" + encodeURIComponent(id));
     } catch (e) {
-      panel.innerHTML = `<p class="hint">Hiba: ${esc(e.message)}</p>`;
+      panel.innerHTML = `<p class="hint">Nem sikerült betölteni a terméket (${esc(e.message)}).</p>`;
       return;
     }
     FC.detailId = id;
@@ -179,7 +188,7 @@ window.FoodCounter = (function () {
       <p class="hint">Alapegység: ${esc(p.base_unit || "–")}` +
       (p.serving_size != null ? ` · adag: ${fmt(p.serving_size)} ${esc(p.base_unit || "")}` +
         (p.serving_label ? ` (${esc(p.serving_label)})` : "") : "") + `</p>
-      <h4>Tápanyány / 100 ${esc(p.base_unit || "egység")}</h4>
+      <h4>Tápanyag / 100 ${esc(p.base_unit || "egység")}</h4>
       <div class="fc-macro-grid">
         <div><b>${fmt(m.calories)}</b><small>kcal</small></div>
         <div><b>${fmt(m.protein)}</b><small>fehérje</small></div>
@@ -204,7 +213,7 @@ window.FoodCounter = (function () {
       if (!confirm(`Biztosan törlöd: ${del.dataset.fcdelnm}?`)) return;
       try {
         await api("/" + encodeURIComponent(id), { method: "DELETE" });
-        toast("Törlve: " + del.dataset.fcdelnm);
+        toast("Törölve: " + del.dataset.fcdelnm);
         back();
         renderList();
       } catch (e) { toast("Törlési hiba: " + e.message); }
@@ -278,7 +287,7 @@ window.FoodCounter = (function () {
         </div>
         <label>Adag felirat (pl. "1 db")<input name="serving_label" value="${esc(p.serving_label || "")}" /></label>
 
-        <h4>Tápanyány per 100 egység (opcionális, tizedestört)</h4>
+        <h4>Tápanyag / 100 egység (opcionális, tizedestört)</h4>
         <div class="fc-macro-inputs">
           ${macroField("calories", "Kalória (kcal)")}
           ${macroField("protein", "Fehérje (g)")}
@@ -335,7 +344,7 @@ window.FoodCounter = (function () {
           <label>Adagméret (szabadon)<input type="number" step="any" name="serving_size" /></label>
         </div>
         <label>Adag felirat (pl. "1 db")<input name="serving_label" /></label>
-        <h4>Tápanyány per 100 egység (opcionális)</h4>
+        <h4>Tápanyag / 100 egység (opcionális)</h4>
         <div class="fc-macro-inputs">
           <label>Kalória (kcal)<input type="number" step="any" data-macro="calories" /></label>
           <label>Fehérje (g)<input type="number" step="any" data-macro="protein" /></label>
@@ -449,7 +458,7 @@ window.FoodCounter = (function () {
     if (errEl) errEl.textContent = "";
     if (!body) { toast("A termék neve kötelező"); return; }
     if (body.prices.some((pr) => pr.amount == null || isNaN(pr.amount))) {
-      toast("Ársor: a összeg legyen szám");
+      toast("Ársor: az összeg legyen szám");
       if (errEl) errEl.textContent = "Ársor: a összeg legyen szám";
       return;
     }

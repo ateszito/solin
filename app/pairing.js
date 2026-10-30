@@ -1,7 +1,6 @@
 /* ============================================================
    Solin v3 — pairing.js
-   "Recept ↔ termék párosítás" — recipe–product real-macro pairing
-   (task t_47368aba, dashboard ask 2026-10-06).
+   "Recept ↔ termék párosítás" — recipe–product real-macro pairing.
 
    What this module does (all in the recipe DETAIL view, mobile-first):
      1. Lists the recipe's ingredients.
@@ -432,7 +431,7 @@ window.Pairing = (function () {
     const ingCount = (recipe.ingredients || []).length;
     el.innerHTML =
       '<div class="detail-section" id="pairing-section">' +
-      '  <button class="sec-head" data-pg-toggle="1">Recept ↔ Termék párosítás <span class="pbadge" id="pg-badge">0/' + ingCount + ' termék</span></button>' +
+      '  <button class="sec-head" data-pg-toggle="1">Recept ↔ Termék párosítás <span class="pg-badge" id="pg-badge">0/' + ingCount + ' termék</span></button>' +
       '  <div class="sec-body open" id="pairing-body">' +
       '    <p class="hint">Párosítsd a hozzávalókat a raktári <b>termékeidhez</b>' +
       '      (a Makrószámláló listából). A <b>ténylegesen használt mennyiséget</b> írd be' +

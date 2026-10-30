@@ -73,16 +73,64 @@ window.SolinCfg = (function () {
     console.debug("[solin.cfg]", cfg);
   }
 
+  /* ---- Cloudflare service-token storage ----
+     The client SECRET is a credential. On the web it lives in
+     sessionStorage (dies with the tab) unless the user explicitly ticks
+     "remember on this device". The native app runs in a sandboxed
+     WKWebView whose storage is private to the app, so it persists there. */
+  const CF_ID = "solin.cf_client_id";
+  const CF_SECRET = "solin.cf_client_secret";
+  const CF_REMEMBER = "solin.cf_remember";
+
+  function readSecret() {
+    try {
+      return sessionStorage.getItem(CF_SECRET) || localStorage.getItem(CF_SECRET) || "";
+    } catch (e) { return ""; }
+  }
+  function writeSecret(secret, remember) {
+    try {
+      sessionStorage.removeItem(CF_SECRET);
+      localStorage.removeItem(CF_SECRET);
+      if (!secret) { localStorage.removeItem(CF_REMEMBER); return; }
+      const persist = isNative || remember;
+      (persist ? localStorage : sessionStorage).setItem(CF_SECRET, secret);
+      if (remember) localStorage.setItem(CF_REMEMBER, "1");
+      else localStorage.removeItem(CF_REMEMBER);
+    } catch (e) {}
+  }
+  // One-time migration: older builds always persisted the secret in
+  // localStorage on the web — move it to the session unless opted in.
+  try {
+    if (!isNative && localStorage.getItem(CF_SECRET) && !localStorage.getItem(CF_REMEMBER)) {
+      sessionStorage.setItem(CF_SECRET, localStorage.getItem(CF_SECRET));
+      localStorage.removeItem(CF_SECRET);
+    }
+  } catch (e) {}
+
   /* ---- Auth headers for Cloudflare Zero Trust / Service Token ---- */
   function getAuthHeaders() {
     const h = {};
     try {
-      const id = localStorage.getItem("solin.cf_client_id");
-      const secret = localStorage.getItem("solin.cf_client_secret");
+      const id = localStorage.getItem(CF_ID);
+      const secret = readSecret();
       if (id && id.trim()) h["CF-Access-Client-Id"] = id.trim();
       if (secret && secret.trim()) h["CF-Access-Client-Secret"] = secret.trim();
     } catch (e) {}
     return h;
+  }
+
+  // Only ever attach the service token to our own backends: same-origin
+  // relative paths, or a host that IS (a subdomain of) ateszito.com.
+  // (A substring check would also leak it to e.g. evil.com/?ateszito.com.)
+  function isTrustedApiUrl(url) {
+    if (typeof url !== "string" || !url) return false;
+    if (url.startsWith("/") && !url.startsWith("//")) return true;
+    try {
+      const u = new URL(url, window.location.href);
+      if (u.protocol !== "https:" && u.origin !== window.location.origin) return false;
+      return u.hostname === "ateszito.com" || u.hostname.endsWith(".ateszito.com") ||
+        u.origin === window.location.origin;
+    } catch (e) { return false; }
   }
 
   /* ---- small helpers used by the views ---- */
@@ -111,8 +159,12 @@ window.SolinCfg = (function () {
     const isOverridden = !!getStoredEnv();
     const badge = document.querySelector("#env-badge");
     if (badge) {
+      // End users on the production web build don't need to see (or tap)
+      // an environment switcher. Keep it for dev/staging, overrides,
+      // DEBUG builds and the native app (used by testers).
+      badge.hidden = current === "production" && !isOverridden && !cfg.debug && !isNative;
       badge.textContent = current + (isOverridden ? " *" : "");
-      badge.title = "Environment: " + current + " (Tap to change environment or Cloudflare credentials)";
+      badge.title = "Környezet: " + current + " (koppints a váltáshoz / Cloudflare beállításokhoz)";
       badge.style.background =
         current === "production" ? "#FDECEC" :
         current === "staging"    ? "#FFF4E0" : "#E6F7E6";
@@ -144,6 +196,11 @@ window.SolinCfg = (function () {
       const eb = document.querySelector("#edit-open");
       if (eb) eb.hidden = true;
     }
+    // QA / demo helpers (e.g. the canonical sample-data button) are only
+    // shown on non-production builds or when DEBUG is on.
+    if (cfg.env === "production" && !cfg.debug) {
+      document.querySelectorAll("[data-dev-only]").forEach((el) => { el.hidden = true; });
+    }
   }
 
   /* ---- Transparent fetch interceptor for Native & Cloudflare Access ---- */
@@ -166,7 +223,7 @@ window.SolinCfg = (function () {
 
       // Inject Cloudflare Access headers if configured and requesting target backend
       const auth = getAuthHeaders();
-      if (Object.keys(auth).length > 0 && typeof url === "string" && (url.includes("ateszito.com") || url.startsWith("/api/"))) {
+      if (Object.keys(auth).length > 0 && isTrustedApiUrl(url)) {
         let headers = options.headers || (resource && resource.headers) || {};
         if (typeof Headers !== "undefined" && headers instanceof Headers) {
           for (const [k, v] of Object.entries(auth)) {
@@ -188,27 +245,25 @@ window.SolinCfg = (function () {
   /* ---- Environment & Cloudflare Settings Modal ---- */
   function openEnvModal() {
     let overlay = document.getElementById("env-modal-overlay");
-    if (overlay) {
-      overlay.classList.remove("hidden");
-      return;
-    }
+    if (overlay) overlay.remove();
 
     overlay = document.createElement("div");
     overlay.id = "env-modal-overlay";
     overlay.className = "env-modal-overlay";
 
     const current = getEffectiveEnv();
-    const cfId = localStorage.getItem("solin.cf_client_id") || "";
-    const cfSecret = localStorage.getItem("solin.cf_client_secret") || "";
+    const cfId = localStorage.getItem(CF_ID) || "";
+    const hasSecret = !!readSecret();
+    const remembered = !!localStorage.getItem(CF_REMEMBER);
 
     overlay.innerHTML = `
-      <div class="env-modal-card">
+      <div class="env-modal-card" role="dialog" aria-modal="true" aria-labelledby="env-modal-title">
         <div class="env-modal-header">
-          <h3>Solin Settings</h3>
-          <button type="button" class="btn sm ghost" id="env-modal-close" style="font-size:18px;padding:2px 8px;">✕</button>
+          <h3 id="env-modal-title">Solin beállítások</h3>
+          <button type="button" class="btn sm ghost" id="env-modal-close" aria-label="Bezárás" style="font-size:18px;padding:2px 8px;">✕</button>
         </div>
         <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">
-          Choose backend environment and configure optional Cloudflare Access Service Token.
+          Válaszd ki a backend környezetet, és add meg az opcionális Cloudflare Access service tokent.
         </div>
         <div class="env-option-group">
           <label class="env-option">
@@ -241,26 +296,38 @@ window.SolinCfg = (function () {
         </div>
         <div class="env-field-group">
           <label for="solin-cf-secret">CF-Access-Client-Secret</label>
-          <input id="solin-cf-secret" type="password" placeholder="Service token secret" value="${cfSecret.replace(/"/g, "&quot;")}" />
+          <input id="solin-cf-secret" type="password" autocomplete="off" placeholder="${hasSecret ? "•••••••• (mentve — üresen hagyva megmarad)" : "Service token secret"}" />
         </div>
+        ${isNative ? "" : `<label class="env-remember"><input type="checkbox" id="solin-cf-remember" ${remembered ? "checked" : ""}/> Megjegyzés ezen az eszközön <span class="muted">(különben a lap bezárásakor törlődik)</span></label>`}
+        ${hasSecret ? `<button type="button" class="btn sm ghost" id="solin-cf-forget" style="margin-bottom:8px">Mentett secret törlése</button>` : ""}
 
-        <div id="env-test-status" class="env-status-msg"></div>
+        <div id="env-test-status" class="env-status-msg" role="status"></div>
 
         <div class="env-modal-actions">
-          <button type="button" class="btn sm" id="env-test-btn">Test Connection</button>
-          <button type="button" class="btn sm primary" id="env-save-btn">Save &amp; Apply</button>
+          <button type="button" class="btn sm" id="env-test-btn">Kapcsolat tesztelése</button>
+          <button type="button" class="btn sm primary" id="env-save-btn">Mentés és alkalmazás</button>
         </div>
       </div>
     `;
 
     document.body.appendChild(overlay);
 
-    overlay.querySelector("#env-modal-close").addEventListener("click", () => {
-      overlay.classList.add("hidden");
-    });
+    // The modal is rebuilt on every open so it always reflects the stored
+    // state (and the secret is never kept in the DOM after closing).
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    overlay.querySelector("#env-modal-close").addEventListener("click", close);
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) overlay.classList.add("hidden");
+      if (e.target === overlay) close();
     });
+    const forget = overlay.querySelector("#solin-cf-forget");
+    if (forget) forget.addEventListener("click", () => {
+      writeSecret("", false);
+      forget.remove();
+      overlay.querySelector("#solin-cf-secret").placeholder = "Service token secret";
+    });
+    setTimeout(() => { const c = overlay.querySelector('input[name="solin-env-radio"]:checked'); if (c) c.focus(); }, 0);
 
     const statusEl = overlay.querySelector("#env-test-status");
 
@@ -269,11 +336,11 @@ window.SolinCfg = (function () {
       const selected = overlay.querySelector('input[name="solin-env-radio"]:checked')?.value || "production";
       const targetBase = ENV_ENDPOINTS[selected];
       const testId = overlay.querySelector("#solin-cf-id").value.trim();
-      const testSecret = overlay.querySelector("#solin-cf-secret").value.trim();
+      const testSecret = overlay.querySelector("#solin-cf-secret").value.trim() || readSecret();
 
       statusEl.className = "env-status-msg";
       statusEl.style.display = "block";
-      statusEl.textContent = "Connecting to " + targetBase + "/healthz ...";
+      statusEl.textContent = "Kapcsolódás: " + targetBase + "/healthz …";
 
       try {
         const headers = {};
@@ -287,14 +354,14 @@ window.SolinCfg = (function () {
 
         if (res.ok) {
           statusEl.className = "env-status-msg ok";
-          statusEl.textContent = `✓ Connected (HTTP ${res.status}, ${latency}ms): ${text.trim()}`;
+          statusEl.textContent = `✓ Kapcsolódva (HTTP ${res.status}, ${latency} ms): ${text.trim().slice(0, 100)}`;
         } else {
           statusEl.className = "env-status-msg err";
           statusEl.textContent = `✗ HTTP ${res.status} ${res.statusText}: ${text.slice(0, 100)}`;
         }
       } catch (err) {
         statusEl.className = "env-status-msg err";
-        statusEl.textContent = "✗ Network error: " + (err.message || String(err));
+        statusEl.textContent = "✗ Hálózati hiba: " + (err.message || String(err));
       }
     });
 
@@ -302,25 +369,28 @@ window.SolinCfg = (function () {
     overlay.querySelector("#env-save-btn").addEventListener("click", () => {
       const selected = overlay.querySelector('input[name="solin-env-radio"]:checked')?.value || "production";
       const testId = overlay.querySelector("#solin-cf-id").value.trim();
-      const testSecret = overlay.querySelector("#solin-cf-secret").value.trim();
+      const newSecret = overlay.querySelector("#solin-cf-secret").value.trim();
+      const rememberEl = overlay.querySelector("#solin-cf-remember");
+      const remember = !!(rememberEl && rememberEl.checked);
 
       localStorage.setItem("solin.env.target", selected);
-      if (testId) localStorage.setItem("solin.cf_client_id", testId);
-      else localStorage.removeItem("solin.cf_client_id");
+      if (testId) localStorage.setItem(CF_ID, testId);
+      else localStorage.removeItem(CF_ID);
 
-      if (testSecret) localStorage.setItem("solin.cf_client_secret", testSecret);
-      else localStorage.removeItem("solin.cf_client_secret");
+      // empty field = keep the stored secret (it is never pre-filled)
+      writeSecret(newSecret || readSecret(), remember);
 
       cfg.env = selected;
       paintBadge();
-      overlay.classList.add("hidden");
+      close();
 
       if (typeof window.Solin !== "undefined" && typeof window.Solin.toast === "function") {
-        window.Solin.toast("Switched to " + selected + " environment");
+        window.Solin.toast("Környezet: " + selected);
       }
-      // If FcApi exists, trigger refresh
-      if (typeof window.FcApi !== "undefined" && typeof window.FoodCounter !== "undefined" && typeof window.FoodCounter.loadProducts === "function") {
-        window.FoodCounter.loadProducts();
+      // Refresh whatever API-backed view is open (product list etc.).
+      if (window.Solin && window.Solin.state && window.Solin.state.tab === "foodcounter" &&
+          window.FoodCounter && typeof window.FoodCounter.render === "function") {
+        window.FoodCounter.render();
       }
     });
   }

@@ -1,24 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="hu">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#FF6B6B" />
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)" />
+<meta name="color-scheme" content="light dark" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<title>Solin — Recipe Platform</title>
+<title>Solin — Receptek</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <header class="app-header">
   <div class="header-left">
-    <span class="logo">S</span>
-    <h1>Solin</h1>
+    <a class="header-home" href="#browse" aria-label="Solin — vissza a receptekhez"><span class="logo" aria-hidden="true">S</span>
+    <h1>Solin</h1></a>
     <span class="version">v0.0.0</span>
   </div>
   <div class="header-right">
-    <span id="env-badge" title="environment (SOLIN_ENV)">—</span>
-    <span id="recipe-count" class="pill">0 recipes</span>
-    <a class="btn sm ghost" id="add-open" href="#add" style="margin-left:8px">+ Add recipe</a>
+    <button type="button" id="env-badge" title="Környezet (SOLIN_ENV)">—</button>
+    <span id="recipe-count" class="pill">0 recept</span>
+    <a class="btn sm primary" id="add-open" href="#add">+ Recept</a>
   </div>
 </header>
 
@@ -27,100 +29,100 @@
   <section class="view" id="view-browse">
     <div class="toolbar">
       <div class="search-wrap">
-        <input id="search" type="search" placeholder="Search recipes, ingredients, tags…" autocomplete="off" />
+        <input id="search" type="search" placeholder="Keresés: recept, hozzávaló, címke…" autocomplete="off" enterkeyhint="search" aria-label="Receptek keresése" />
       </div>
-      <div class="tagbar" id="tagbar"></div>
+      <div class="tagbar" id="tagbar" role="toolbar" aria-label="Címke szűrő"></div>
     </div>
     <div class="recipe-grid" id="recipe-grid"></div>
-    <p id="browse-empty" class="empty hidden">No recipes match your search.</p>
+    <p id="browse-empty" class="empty hidden" aria-live="polite">Nincs találat.</p>
   </section>
 
   <!-- ================= ADD RECIPE (ingestion flow, S16) ================== -->
   <section class="view hidden" id="view-add">
-    <button class="back-btn" id="add-back">&larr; Back to recipes</button>
-    <h2 class="view-title">Add a recipe</h2>
+    <button class="back-btn" id="add-back">&larr; Vissza a receptekhez</button>
+    <h2 class="view-title">Új recept</h2>
     <div id="add-inner"></div>
   </section>
 
   <!-- ================= RECIPE DETAIL ================= -->
   <section class="view hidden" id="view-recipe">
-    <button class="back-btn" id="back-btn">← Back to recipes</button>
+    <button class="back-btn" id="back-btn">← Vissza a receptekhez</button>
     <article class="recipe-detail" id="recipe-detail"></article>
   </section>
 
   <!-- ================= EDIT ================= -->
   <section class="view hidden" id="view-edit">
-    <button class="back-btn" id="edit-back">← Back to recipe</button>
-    <h2 class="view-title">Edit recipe</h2>
-    <p class="hint">Your corrections are saved on this device (localStorage) and layered on top of the original recipe. Resetting restores the original data.</p>
-    <form id="edit-form" class="card edit-form"></form>
-    <div class="edit-actions">
-      <button id="edit-save" class="btn primary">Save changes</button>
-      <button id="edit-reset" class="btn ghost">Reset to original</button>
+    <button class="back-btn" id="edit-back">← Vissza a recepthez</button>
+    <h2 class="view-title">Recept szerkesztése</h2>
+    <p class="hint">A javításaid ezen a készüléken mentődnek, az eredeti recept fölé rétegezve. A „Visszaállítás” visszaállítja az eredetit.</p>
+    <form id="edit-form" class="card edit-form" novalidate></form>
+    <div class="edit-actions sticky-actions">
+      <button id="edit-save" class="btn primary">Mentés</button>
+      <button id="edit-reset" class="btn ghost">Visszaállítás eredetire</button>
     </div>
   </section>
 
   <!-- ================= INVENTORY ================= -->
   <section class="view hidden" id="view-inventory">
-    <h2 class="view-title">Ingredient inventory</h2>
-    <p class="hint">Your permanent pantry: base ingredients and their known substitutes. Add anything from your recipes, and Solin will use this list for matching and substitutions.</p>
+    <h2 class="view-title">Kamra</h2>
+    <p class="hint">Az alapanyagaid és ismert helyettesítőik. Solin ezt használja a recept-ajánláshoz és az alternatívák javaslásához.</p>
 
     <div class="card inventory-add">
-      <h3>Add a base ingredient</h3>
+      <h3>Alapanyag hozzáadása</h3>
       <div class="inline-form">
-        <input id="inv-name" type="text" placeholder="e.g. onion" />
-        <input id="inv-qty" type="text" placeholder="qty (optional)" />
-        <input id="inv-unit" type="text" placeholder="unit" />
-        <button id="inv-add" class="btn primary">Add</button>
+        <input id="inv-name" type="text" placeholder="pl. vöröshagyma" aria-label="alapanyag neve" enterkeyhint="done" />
+        <input id="inv-qty" type="text" inputmode="decimal" placeholder="mennyiség (opcionális)" aria-label="mennyiség" />
+        <input id="inv-unit" type="text" placeholder="egység (g, db…)" aria-label="mértékegység" />
+        <button id="inv-add" class="btn primary">Hozzáadás</button>
       </div>
-      <h4 class="muted" style="margin-top:14px">Add a substitute (alternative ingredient)</h4>
+      <h4 class="muted" style="margin-top:14px">Helyettesítő hozzáadása</h4>
       <div class="inline-form">
-        <select id="sub-for" class="grow"></select>
-        <input id="sub-name" type="text" placeholder="alternative name" />
-        <button id="sub-add" class="btn">Add</button>
+        <select id="sub-for" class="grow" aria-label="melyik alapanyaghoz"></select>
+        <input id="sub-name" type="text" placeholder="helyettesítő neve" aria-label="helyettesítő neve" />
+        <button id="sub-add" class="btn">Hozzáadás</button>
       </div>
     </div>
 
     <div class="card">
-      <h3>Your inventory <span id="inv-count" class="pill"></span></h3>
+      <h3>A kamrád <span id="inv-count" class="pill"></span></h3>
       <ul id="inv-list" class="inv-list"></ul>
     </div>
-    <p class="hint">Substitutes are checked as partial matches (lower credit) when Solin recommends what to cook.</p>
+    <p class="hint">A helyettesítők részleges egyezésként számítanak, amikor Solin ajánl, mit főzz.</p>
   </section>
 
   <!-- ================= MATCH ================= -->
   <section class="view hidden" id="view-match">
-    <h2 class="view-title">What can I cook?</h2>
-    <p class="hint">Add what you have at home right now. Solin matches it against every recipe — direct hits count full, a known substitute counts partial. If only a few items are missing, it tells you exactly what to grab.</p>
+    <h2 class="view-title">Mit főzzek?</h2>
+    <p class="hint">Add meg, mi van most otthon. Solin minden recepttel összeveti: a pontos egyezés teljes, a helyettesítő részleges pontot ér — és megmondja, mit kell még beszerezned.</p>
 
     <div class="card match-panel">
-      <h3>What I have at home <span id="match-count" class="pill"></span></h3>
+      <h3>Ami otthon van <span id="match-count" class="pill"></span></h3>
       <div class="chip-input" id="chip-input">
-        <input id="match-item" type="text" placeholder="type an ingredient + Enter (e.g. chicken breast)" />
+        <input id="match-item" type="text" placeholder="írj be egy alapanyagot + Enter" aria-label="alapanyag hozzáadása" enterkeyhint="enter" />
       </div>
       <div class="chip-presets" id="chip-presets">
-        <span class="presets-label">Quick add:</span>
+        <span class="presets-label">Gyors hozzáadás:</span>
       </div>
       <div class="match-actions">
-        <button id="match-clear" class="btn ghost sm">Clear all</button>
-        <button id="match-run" class="btn primary">Match recipes now</button>
+        <button id="match-clear" class="btn ghost sm">Lista törlése</button>
+        <button id="match-run" class="btn primary">Receptek újraszámolása</button>
       </div>
     </div>
 
-    <div id="match-results"></div>
+    <div id="match-results" aria-live="polite"></div>
   </section>
   <!-- ================= FOOD COUNTER (real macros + price) ================= -->
   <section class="view hidden" id="view-foodcounter">
-    <h2 class="view-title">Food &amp; Macro Counter</h2>
-    <p class="hint">Raktári termékek az API-ból, real makrókkal és ároptiókkal. Adj hozzá terméket, majd párosítsd egy étel alapanyagaival, és a számoló a tényleges makrókat + az elhasznált portiók árát adja. A mentett étel a localhoston (localStorage) marad a készüléken.</p>
+    <h2 class="view-title">Makró- és árszámláló</h2>
+    <p class="hint">A termékeid valós makrókkal és árakkal. Állíts össze egy ételt a termékekből, és a számláló megmutatja a tényleges makrókat és a felhasznált mennyiség árát. A mentett ételek ezen a készüléken maradnak.</p>
 
     <div class="card fc-product-card">
       <div class="fc-card-head">
         <h3>Terméklista <span id="fc-count" class="pill"></span></h3>
         <div class="inline-form fc-searchwrap">
-          <input id="fc-search" type="search" placeholder="Keresés…" />
-          <button id="fc-search-btn" class="btn sm ghost">Keres</button>
-          <button id="fc-new" class="btn sm primary">+ új termék</button>
+          <input id="fc-search" type="search" placeholder="Keresés…" aria-label="Termék keresése" enterkeyhint="search" />
+          <button id="fc-search-btn" class="btn sm ghost">Keresés</button>
+          <button id="fc-new" class="btn sm primary">+ Új termék</button>
         </div>
       </div>
       <ul id="fc-product-list" class="fc-products"></ul>
@@ -128,37 +130,45 @@
     </div>
 
     <div class="card fc-counter-card">
-      <h3>Keverék / étel makrók + ár</h3>
+      <h3>Étel összeállítása — makrók és ár</h3>
       <div id="fc-rows" class="fc-rows"></div>
       <div class="fc-portions-row">
         <label for="fc-portions-in">Adagok száma</label>
         <input id="fc-portions-in" type="number" inputmode="numeric" min="1" max="999" step="1" value="1" aria-label="adagok száma (1–999)" />
-        <span class="hint">az egész adag macros/ár ebből oszlik el</span>
+        <span class="hint">a makrók ennyi adagra oszlanak el</span>
       </div>
       <div class="fc-counter-actions">
-        <button id="fc-addrow" class="btn sm ghost">+ sor</button>
+        <button id="fc-addrow" class="btn sm ghost">+ Sor</button>
         <button id="fc-count-btn" class="btn sm primary">Számolás</button>
-        <button id="fc-load-canonical" class="btn sm ghost">Elvárt példa (p1 200 g + p2 100 g + p3 10 ml)</button>
+        <button id="fc-load-canonical" class="btn sm ghost" data-dev-only>Mintaadat (p1 200 g + p2 100 g + p3 10 ml)</button>
         <button id="fc-clear-rows" class="btn sm ghost">Sorok törlése</button>
       </div>
-      <div id="fc-result"></div>
+      <div id="fc-result" aria-live="polite"></div>
     </div>
 
     <div class="card fc-meals-card">
-      <h3>Mentett étel / párosítás</h3>
+      <h3>Mentett ételek</h3>
       <div id="fc-meals"></div>
     </div>
   </section>
 </main>
 
-<nav class="bottom-nav" id="bottom-nav">
-  <button data-nav="browse" class="active"><span class="nav-ic">▤</span><span>Browse</span></button>
-  <button data-nav="inventory"><span class="nav-ic">▣</span><span>Inventory</span></button>
-  <button data-nav="match"><span class="nav-ic">◎</span><span>What&nbsp;I&nbsp;have</span></button>
-  <button data-nav="foodcounter"><span class="nav-ic">⌬</span><span>Food&nbsp;Counter</span></button>
+<nav class="bottom-nav" id="bottom-nav" aria-label="Főmenü">
+  <button type="button" data-nav="browse" class="active" aria-current="page">
+    <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>
+    <span>Receptek</span></button>
+  <button type="button" data-nav="match">
+    <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.3-4.3"/></svg>
+    <span>Mit&nbsp;főzzek?</span></button>
+  <button type="button" data-nav="inventory">
+    <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M3 4h18v4H3zM10 12h4"/></svg>
+    <span>Kamra</span></button>
+  <button type="button" data-nav="foodcounter">
+    <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    <span>Makrók</span></button>
 </nav>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 <script src="_solin.env.js"></script>
 <script src="config.js"></script>
 <script src="data.js"></script>
