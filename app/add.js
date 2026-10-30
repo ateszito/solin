@@ -207,6 +207,9 @@
     doc.servings = data.servings || 1;
     doc.totalMin = data.total_time_min || data.totalMin || null;
     doc.cuisine = data.cuisine || "";
+    doc.creator = data.creator || doc.creator || "";
+    doc.source = data.source || doc.source || "";
+    doc.video = data.video || data.video_url || "";
     doc.macrosPerServing = data.macrosPerServing || {};
     doc.ingredients = (data.ingredients || []).map(function (i) {
       return {
@@ -254,15 +257,19 @@
       + '<button type="button" class="btn" id="add-blank">Üres recept indítása</button>'
       + '</div>'
       + '<div class="add-divider"><span>vagy</span></div>'
-      + '<div class="add-option' + (open ? "" : " is-disabled") + '">'
-      + '<h3>Importálás TikTok / Instagram linkről' + (open ? "" : ' <span class="pill">hamarosan</span>') + '</h3>'
-      + '<div class="field"><label for="add-url" class="sr-only">Videó linkje</label>'
-      + '<input id="add-url" type="url" inputmode="url" autocomplete="off" spellcheck="false"'
-      + ' placeholder="https://www.tiktok.com/@felhasznalo/video/…"' + (open ? "" : " disabled") + ' /></div>'
-      + '<button type="button" class="btn" id="add-submit"'
-      + (open ? "" : " disabled") + ">Recept importálása</button>"
-      + '<p class="hint" style="margin-top:8px">' + esc(hint) + "</p>"
-      + '</div></div>';
+      + '<div class="add-option" style="border: 2px dashed #10b981; padding: 14px; border-radius: var(--radius); background: var(--card-bg); margin-bottom: 16px;">'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<span style="font-size:22px;">🎬</span>'
+      + '<h3 style="margin:0;">Recept TikTok / Instagram videóból (AI)</h3>'
+      + '</div>'
+      + '<p class="hint" style="margin:8px 0 12px;">Illeszd be a TikTok vagy Instagram Reel linket! Letöltjük a videót, és automatikusan kinyerjük a hozzávalókat, lépéseket és makrókat a videó leírásából.</p>'
+      + '<div class="field"><label for="add-video-url" class="sr-only">Videó linkje</label>'
+      + '<input id="add-video-url" type="url" inputmode="url" autocomplete="off" spellcheck="false"'
+      + ' placeholder="https://www.tiktok.com/@felhasznalo/video/…" style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:14px;" /></div>'
+      + '<button type="button" class="btn primary" id="add-video-btn">🎬 Recept készítése videóból</button>'
+      + '<div id="add-video-status"></div>'
+      + '</div>'
+      + '</div>';
   }
 
   function pollHTML(f) {
@@ -469,6 +476,53 @@
             photoStatus.innerHTML = '<p class="hint" style="color:#ef4444;margin-top:8px;"><b>Hiba történt:</b> ' + esc(msg) + '<br/><button type="button" class="btn sm" id="add-photo-retry" style="margin-top:6px;">Újrapróbálás</button></p>';
             var retry = document.querySelector("#add-photo-retry");
             if (retry) retry.onclick = function () { photoInput.click(); };
+          }
+        }
+      };
+    }
+    var videoBtn = document.querySelector("#add-video-btn");
+    var videoInput = document.querySelector("#add-video-url");
+    var videoStatus = document.querySelector("#add-video-status");
+    if (videoBtn && videoInput) {
+      videoBtn.onclick = async function () {
+        var url = (videoInput.value || "").trim();
+        if (!url) {
+          toast("Illessz be egy TikTok vagy Instagram videó linket!");
+          videoInput.focus();
+          return;
+        }
+        videoBtn.disabled = true;
+        if (videoStatus) {
+          videoStatus.innerHTML = '<p class="hint" style="color:var(--primary);margin-top:10px;"><span class="spinner" aria-hidden="true"></span> <b>Videó letöltése és recept kinyerése…</b> Ez eltarthat 15-30 másodpercig, kérlek várj!</p>';
+        }
+        try {
+          var apiBase = (window.SolinCfg && SolinCfg.apiBase && SolinCfg.apiBase()) || "";
+          var endpoint = "/api/v1/recipes/extract-video";
+          if (apiBase && (typeof window !== "undefined" && window.location && window.location.origin && !apiBase.startsWith(window.location.origin))) {
+            endpoint = apiBase.replace(/\/+$/, "") + "/api/v1/recipes/extract-video";
+          }
+
+          var resp = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: url, target_lang: "auto" })
+          });
+
+          if (!resp.ok) {
+            var errData = {};
+            try { errData = await resp.json(); } catch (e) {}
+            throw new Error(errData.detail || ("Hiba a szervertől: HTTP " + resp.status));
+          }
+
+          var extracted = await resp.json();
+          toast("Recept és videó sikeresen betöltve! ✓");
+          startFromExtracted(extracted);
+        } catch (err) {
+          console.error("Recipe video extraction error:", err);
+          videoBtn.disabled = false;
+          var msg = (err && err.message) || String(err);
+          if (videoStatus) {
+            videoStatus.innerHTML = '<p class="hint" style="color:#ef4444;margin-top:8px;"><b>Hiba történt:</b> ' + esc(msg) + '</p>';
           }
         }
       };

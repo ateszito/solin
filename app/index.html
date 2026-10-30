@@ -65,29 +65,41 @@
   <!-- ================= INVENTORY ================= -->
   <section class="view hidden" id="view-inventory">
     <h2 class="view-title">Kamra</h2>
-    <p class="hint">Az alapanyagaid és ismert helyettesítőik. Solin ezt használja a recept-ajánláshoz és az alternatívák javaslásához.</p>
+    <p class="hint">Központi alapanyag-nyilvántartás kétnyelvű (HU / EN) támogatással, ismert helyettesítőkkel és a valós bolti termékek csatolásával.</p>
 
     <div class="card inventory-add">
-      <h3>Alapanyag hozzáadása</h3>
-      <div class="inline-form">
-        <input id="inv-name" type="text" placeholder="pl. vöröshagyma" aria-label="alapanyag neve" enterkeyhint="done" />
-        <input id="inv-qty" type="text" inputmode="decimal" placeholder="mennyiség (opcionális)" aria-label="mennyiség" />
-        <input id="inv-unit" type="text" placeholder="egység (g, db…)" aria-label="mértékegység" />
+      <h3>Alapanyag hozzáadása a Kamrához</h3>
+      <div class="inline-form" style="gap:8px; margin-bottom:8px;">
+        <input id="inv-name" type="text" placeholder="Magyar név (pl. csirkemell)" aria-label="alapanyag neve" enterkeyhint="next" style="flex:2 1 150px;" />
+        <input id="inv-name-en" type="text" placeholder="Angol név (pl. Chicken breast)" aria-label="angol név" enterkeyhint="next" style="flex:2 1 150px;" />
+        <select id="inv-category" style="flex:1 1 130px;" aria-label="Kategória">
+          <option value="other">Kategória…</option>
+          <option value="meat">🥩 Hús</option>
+          <option value="dairy">🥛 Tejtermék</option>
+          <option value="produce">🧅 Zöldség / Gyümölcs</option>
+          <option value="grain">🌾 Gabona / Tészta</option>
+          <option value="spice">🌿 Fűszer</option>
+          <option value="oil">🫒 Olaj / Zsiradék</option>
+          <option value="pantry">🥫 Kamra / Konzervek</option>
+        </select>
         <button id="inv-add" class="btn primary">Hozzáadás</button>
       </div>
       <h4 class="muted" style="margin-top:14px">Helyettesítő hozzáadása</h4>
       <div class="inline-form">
         <select id="sub-for" class="grow" aria-label="melyik alapanyaghoz"></select>
-        <input id="sub-name" type="text" placeholder="helyettesítő neve" aria-label="helyettesítő neve" />
+        <input id="sub-name" type="text" placeholder="helyettesítő neve (pl. pulykamell)" aria-label="helyettesítő neve" />
         <button id="sub-add" class="btn">Hozzáadás</button>
       </div>
     </div>
 
     <div class="card">
-      <h3>A kamrád <span id="inv-count" class="pill"></span></h3>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+        <h3 style="margin:0;">A kamrád alapanyagai <span id="inv-count" class="pill"></span></h3>
+        <input id="inv-search" type="search" placeholder="Keresés magyar vagy angol név alapján…" style="max-width:280px; padding:6px 10px; font-size:13px; border:1px solid var(--line); border-radius:8px;" />
+      </div>
       <ul id="inv-list" class="inv-list"></ul>
     </div>
-    <p class="hint">A helyettesítők részleges egyezésként számítanak, amikor Solin ajánl, mit főzz.</p>
+    <p class="hint">A receptek mentésekor az új hozzávalók automatikusan bekerülnek a Kamrába. A termékcsatolással pedig a valós bolti árak és makrók is elérhetővé válnak.</p>
   </section>
 
   <!-- ================= MATCH ================= -->
