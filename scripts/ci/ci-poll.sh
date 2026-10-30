@@ -66,21 +66,21 @@ deploy() { # $1 branch  $2 env  $3 sha
   fi
 }
 
-# ---- dev / staging / prod / main --------------------------------------------------------
-for spec in "dev:dev" "staging:staging" "prod:prod" "main:prod"; do
+# ---- dev / staging / prod --------------------------------------------------------
+for spec in "dev:dev" "staging:staging" "prod:prod"; do
   br="${spec%%:*}"; ev="${spec##*:}"
-  sha="$(git rev-parse "origin/$br" 2>/dev/null || true)"
+  sha="$(git rev-parse --verify "origin/$br^{commit}" 2>/dev/null || true)"
   [ -n "$sha" ] || continue
   [ "$(cat "$ST/last-seen-$br" 2>/dev/null || echo none)" = "$sha" ] && continue
   deploy "$br" "$ev" "$sha"
 done
 
 # ---- feature/*: dev env unless promoted -------------------------------------------
-STG="$(git rev-parse origin/staging 2>/dev/null || true)"
-MNA="$(git rev-parse origin/main 2>/dev/null || true)"
+STG="$(git rev-parse --verify origin/staging^{commit} 2>/dev/null || true)"
+MNA="$(git rev-parse --verify origin/prod^{commit} 2>/dev/null || true)"
 for ref in $(git for-each-ref --format='%(refname)' 'refs/remotes/origin/feature/*'); do
   br="${ref#refs/remotes/origin/}"
-  sha="$(git rev-parse "$ref" 2>/dev/null || true)"
+  sha="$(git rev-parse --verify "$ref^{commit}" 2>/dev/null || true)"
   [ -n "$sha" ] || continue
   [ "$(cat "$ST/last-seen-$br" 2>/dev/null || echo none)" = "$sha" ] && continue
   promoted=0
