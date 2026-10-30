@@ -157,6 +157,7 @@ def extract_recipe_from_images(
         "model": model,
         "messages": [{"role": "user", "content": prompt, "images": b64_images}],
         "stream": True,
+        "think": False,
         "options": {"temperature": 0.1, "num_predict": 2500},
     }).encode("utf-8")
 
