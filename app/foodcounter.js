@@ -311,6 +311,7 @@ window.FoodCounter = (function () {
           : '<span class="fc-thumb-none">▣</span>'}</span>
         <span class="fc-main">
           <span class="fc-name">${esc(p.name)}${p.brand ? `<small> · ${esc(p.brand)}</small>` : ""}</span>
+          ${p.ingredients ? `<small class="fc-ingredients-preview" title="Összetevők: ${esc(p.ingredients)}">🌾 ${esc(p.ingredients)}</small>` : ""}
           ${macroVisualBars(p.macros_per_100, nPrices)}
         </span>
         <span class="fc-open" aria-hidden="true">›</span>
@@ -385,12 +386,15 @@ window.FoodCounter = (function () {
         <div><b>${fmt(m.sugar)}</b><small>cukor</small></div>
         <div><b>${fmt(m.sodium)}</b><small>nátrium</small></div>
       </div>
+      ${p.ingredients ? `<h4>Összetevők</h4>
+      <div class="fc-ingredients-box">${esc(p.ingredients)}</div>` : ""}
       <h4>Árak ${((p.prices||[]).length ? "(" + (p.prices||[]).length + ")" : "")}</h4>
       ${priceRows}
       <h4>Fotók <small class="hint">(koppints a nagyításhoz)</small></h4>
       <div class="fc-slots">
         ${slot("product_photo", "Termékfotó")}
-        ${slot("label_photo", "Címkefotó (a makrókkal)")}
+        ${slot("label_photo", "Címkefotó (tápértékek)")}
+        ${slot("ingredients_photo", "Összetevők fotó")}
       </div>`;
     const back = () => { panel.hidden = true; panel.innerHTML = ""; FC.detailId = null; };
     panel.querySelector("[data-fcback]").addEventListener("click", back);
@@ -494,13 +498,21 @@ window.FoodCounter = (function () {
           <button type="button" class="btn sm ghost" data-macroclear="1">üres</button>
         </div>
 
+        <h4>Összetevők</h4>
+        <label>
+          <textarea name="ingredients" id="fc-ingredients" rows="3"
+                    style="width:100%;box-sizing:border-box;font-family:inherit;padding:8px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;"
+                    placeholder="pl. 100% pörkölt pisztácia, vagy sertéshús (85%), víz, étkezési só…">${esc(p.ingredients || "")}</textarea>
+        </label>
+
         <h4>Árak (0..N — több ároptió is bejő)</h4>
         <div id="fc-prices">${priceRowsHtml}</div>
         <button type="button" class="btn sm ghost" data-addprice="1">+ ár sor</button>
 
         <h4>Fotók</h4>
         ${slotField("product_photo", "Termékfotó")}
-        ${slotField("label_photo", "Címkefotó (a makrókkal)")}
+        ${slotField("label_photo", "Címkefotó (tápértékek és összetevők)")}
+        ${slotField("ingredients_photo", "Összetevők fotó (külön kép esetén)")}
 
         <div class="fc-form-actions">
           <button type="submit" class="btn primary">Mentés</button>
@@ -565,12 +577,19 @@ window.FoodCounter = (function () {
           <label>Nátrium (mg)<input type="number" step="any" data-macro="sodium" /></label>
           <button type="button" class="btn sm ghost" data-macroclear="1">üres</button>
         </div>
+        <h4>Összetevők</h4>
+        <label>
+          <textarea name="ingredients" id="fc-ingredients" rows="3"
+                    style="width:100%;box-sizing:border-box;font-family:inherit;padding:8px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;"
+                    placeholder="pl. 100% pörkölt pisztácia, vagy sertéshús (85%), víz, étkezési só…"></textarea>
+        </label>
         <h4>Árak (0..N)</h4>
         <div id="fc-prices"></div>
         <button type="button" class="btn sm ghost" data-addprice="1">+ ár sor</button>
         <h4>Fotók</h4>
         ${slotFieldHtml("product_photo", "Termékfotó")}
-        ${slotFieldHtml("label_photo", "Címkefotó (a makrókkal)")}
+        ${slotFieldHtml("label_photo", "Címkefotó (tápértékek és összetevők)")}
+        ${slotFieldHtml("ingredients_photo", "Összetevők fotó (külön kép esetén)")}
         <div class="fc-form-actions">
           <button type="submit" class="btn primary">Mentés</button>
           <span class="hint" id="fc-form-err"></span>
@@ -869,8 +888,8 @@ window.FoodCounter = (function () {
             `;
           }
 
-          // If label_photo: open interactive crop tool first to focus OCR on the table
-          if (slot === "label_photo") {
+          // If label_photo or ingredients_photo: open interactive crop tool first to focus OCR
+          if (slot === "label_photo" || slot === "ingredients_photo") {
             openLabelCropModal(comp.dataUrl || file, (croppedCanvas) => {
               runLabelOcr(panel, comp, statusEl, croppedCanvas);
             }, () => {
@@ -899,7 +918,7 @@ window.FoodCounter = (function () {
     ocrBox.innerHTML = `
       <div class="fc-ocr-status">
         <span class="fc-ocr-spinner"></span>
-        <span class="fc-ocr-text">🔍 Címke olvasása (makrók kiolvasása)...</span>
+        <span class="fc-ocr-text">🔍 Fotó elemzése (tápértékek és összetevők kiolvasása)...</span>
       </div>
     `;
 
@@ -911,11 +930,12 @@ window.FoodCounter = (function () {
       });
 
       const macros = res && res.macros ? res.macros : {};
+      const ingredients = res && res.ingredients ? res.ingredients : null;
       const MACRO_KEYS = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium"];
       const detected = {};
       let count = 0;
       MACRO_KEYS.forEach((k) => {
-        if (macros[k] != null && !isNaN(macros[k])) {
+        if (macros[k] != null && !isNaN(macros[k]) && macros[k] > 0) {
           detected[k] = macros[k];
           count++;
         }
@@ -933,11 +953,11 @@ window.FoodCounter = (function () {
         });
       };
 
-      if (count === 0) {
+      if (count === 0 && !ingredients) {
         ocrBox.className = "fc-ocr-box";
         ocrBox.innerHTML = `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <span class="hint" style="margin:0;">ℹ️ Nem sikerült egyértelmű makrókat felismerni a képen.</span>
+            <span class="hint" style="margin:0;">ℹ️ Nem sikerült egyértelmű tápértékeket vagy összetevőket felismerni a képen.</span>
             <button type="button" class="btn sm ghost fc-recrop-btn" style="padding:2px 8px;font-size:12px;">✂️ Igazítás / Újravágás</button>
           </div>
         `;
@@ -949,15 +969,11 @@ window.FoodCounter = (function () {
       // Check if existing macro values exist in form
       const formEl = panel.querySelector("#fc-form");
       const existing = {};
-      let hasExisting = false;
       MACRO_KEYS.forEach((k) => {
         const inp = formEl.querySelector(`[data-macro="${k}"]`);
         if (inp && inp.value.trim() !== "") {
           const num = Number(inp.value.trim());
-          if (!isNaN(num)) {
-            existing[k] = num;
-            hasExisting = true;
-          }
+          if (!isNaN(num)) existing[k] = num;
         }
       });
 
@@ -971,33 +987,24 @@ window.FoodCounter = (function () {
         sodium: "Nátrium (mg)"
       };
 
-      if (hasExisting) {
-        showMacroCompareModal(existing, detected, labels, (editedMacros) => {
-          applyMacros(formEl, editedMacros || detected);
-          ocrBox.className = "fc-ocr-box fc-ocr-success";
-          ocrBox.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-              <span>✓ Makrók sikeresen frissítve a fotó alapján!</span>
-              <div style="display:flex;gap:6px;">
-                ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó</button>` : ""}
-                <button type="button" class="btn sm ghost fc-recrop-btn" style="padding:2px 8px;font-size:12px;">✂️ Igazítás</button>
-              </div>
-            </div>
-          `;
-          if (photoSrc) {
-            const btn = ocrBox.querySelector(".fc-zoom-label-btn");
-            if (btn) btn.addEventListener("click", () => openImageViewer(photoSrc, "Címkefotó"));
+      showMacroCompareModal(existing, detected, ingredients, labels, (editedMacros, editedIng) => {
+        applyMacros(formEl, editedMacros || detected);
+        if (editedIng != null) {
+          const ingArea = formEl.querySelector('[name="ingredients"]');
+          if (ingArea) {
+            ingArea.value = editedIng;
+            ingArea.classList.remove("macro-updated-flash");
+            void ingArea.offsetWidth;
+            ingArea.classList.add("macro-updated-flash");
           }
-          const recropBtn = ocrBox.querySelector(".fc-recrop-btn");
-          if (recropBtn) recropBtn.addEventListener("click", doRecrop);
-          toast("✓ Makrók frissítve a címkefotó alapján!");
-        }, photoSrc, doRecrop);
-      } else {
-        applyMacros(formEl, detected);
+        }
         ocrBox.className = "fc-ocr-box fc-ocr-success";
+        const msg = (count > 0 && editedIng)
+          ? `✓ Tápértékek (${count}) és összetevők beillesztve a fotóból!`
+          : (editedIng ? "✓ Összetevők beillesztve a fotóból!" : `✓ ${count} tápérték beillesztve a fotóból!`);
         ocrBox.innerHTML = `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <span>✓ ${count} makró automatikusan beillesztve a fotóból!</span>
+            <span>${msg}</span>
             <div style="display:flex;gap:6px;">
               ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó</button>` : ""}
               <button type="button" class="btn sm ghost fc-recrop-btn" style="padding:2px 8px;font-size:12px;">✂️ Igazítás</button>
@@ -1010,8 +1017,9 @@ window.FoodCounter = (function () {
         }
         const recropBtn = ocrBox.querySelector(".fc-recrop-btn");
         if (recropBtn) recropBtn.addEventListener("click", doRecrop);
-        toast("✓ Makrók automatikusan beillesztve a fotóból!");
-      }
+        toast(msg);
+      }, photoSrc, doRecrop);
+
     } catch (err) {
       console.warn("[FoodCounter] OCR extraction error:", err);
       ocrBox.className = "fc-ocr-box";
@@ -1036,7 +1044,7 @@ window.FoodCounter = (function () {
     }
   }
 
-  function showMacroCompareModal(current, detected, labels, onConfirm, photoSrc, onRecrop) {
+  function showMacroCompareModal(current, detected, ingredients, labels, onConfirm, photoSrc, onRecrop) {
     let overlay = document.querySelector("#fc-macro-modal");
     if (overlay) overlay.remove();
 
@@ -1077,20 +1085,31 @@ window.FoodCounter = (function () {
       </div>
     ` : "";
 
+    const ingSectionHtml = `
+      <div class="fc-modal-ingredients-section">
+        <label style="font-weight:700;font-size:12.5px;display:flex;align-items:center;gap:6px;margin-bottom:6px;color:var(--text);">
+          <span>🌾 Felismert összetevők (szerkeszthető):</span>
+          ${ingredients ? `<span style="color:var(--success);font-size:11px;font-weight:600;">(felismerve)</span>` : ""}
+        </label>
+        <textarea id="fc-modal-ingredients" class="fc-compare-textarea" rows="3"
+                  placeholder="Nem található összetevő a képen (itt manuálisan megadhatod)…">${esc(ingredients || "")}</textarea>
+      </div>
+    `;
+
     overlay.innerHTML = `
-      <div class="fc-modal-card" style="max-width:480px;">
+      <div class="fc-modal-card" style="max-width:500px;">
         <div class="fc-modal-header">
-          <h3>Frissíted a makrókat a fotó alapján?</h3>
+          <h3>Tápértékek és összetevők ellenőrzése</h3>
           <button type="button" class="btn sm ghost" id="fc-modal-close" style="font-size:16px;padding:2px 8px;">✕</button>
         </div>
         <p class="hint" style="margin:0 0 8px;">
-          A feltöltött címkefotóból az alábbi értékeket olvastuk ki. Szükség esetén az értékeket szerkesztheted is mentés előtt:
+          A fotóból az alábbi értékeket olvastuk ki. Mentés előtt tetszőlegesen módosíthatod őket:
         </p>
         ${photoCardHtml}
         <table class="fc-compare-table">
           <thead>
             <tr>
-              <th>Tápanyag</th>
+              <th>Tápanyag / 100g</th>
               <th>Jelenlegi</th>
               <th>Új érték (szerkeszthető)</th>
             </tr>
@@ -1099,8 +1118,9 @@ window.FoodCounter = (function () {
             ${rowsHtml}
           </tbody>
         </table>
+        ${ingSectionHtml}
         <div class="fc-modal-actions">
-          <button type="button" class="btn sm ghost" id="fc-modal-cancel">Megtartom a régit</button>
+          <button type="button" class="btn sm ghost" id="fc-modal-cancel">Mégse</button>
           <button type="button" class="btn sm primary" id="fc-modal-apply">Értékek alkalmazása</button>
         </div>
       </div>
@@ -1147,8 +1167,10 @@ window.FoodCounter = (function () {
           if (!isNaN(num)) edited[k] = num;
         }
       });
+      const ingInp = overlay.querySelector("#fc-modal-ingredients");
+      const finalIng = ingInp ? ingInp.value.trim() : null;
       close();
-      if (typeof onConfirm === "function") onConfirm(edited);
+      if (typeof onConfirm === "function") onConfirm(edited, finalIng);
     });
   }
 
@@ -1184,6 +1206,7 @@ window.FoodCounter = (function () {
     body.base_unit = g("base_unit") || "g";
     const ss = num(g("serving_size")); if (ss != null) body.serving_size = ss;
     const sl = g("serving_label"); if (sl) body.serving_label = sl;
+    const ing = g("ingredients"); body.ingredients = ing || null;
 
     const mac = {};
     let anyMac = false;

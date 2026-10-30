@@ -633,3 +633,56 @@ def test_cors_capacitor_and_localhost_allowed(client):
         assert res.status_code == 200, f"GET failed for {origin}: {res.status_code}"
         assert res.headers.get("access-control-allow-origin") == origin
 
+
+def test_create_and_update_with_ingredients(client):
+    """Product ingredients field can be created, retrieved and updated."""
+    p_body = {
+        "name": "Mendula Pisztáciakrém",
+        "base_unit": "g",
+        "macros_per_100": {
+            "calories": 567.0, "protein": 21.0, "fat": 59.0,
+            "carbs": 26.0, "fiber": 10.0, "sugar": 8.0, "sodium": 0.0,
+        },
+        "ingredients": "Pörkölt pisztácia (100%)",
+    }
+    r = client.post("/api/v1/inventory", json=p_body)
+    assert r.status_code == 201
+    created = r.json()
+    assert created["ingredients"] == "Pörkölt pisztácia (100%)"
+    pid = created["id"]
+
+    # Verify GET
+    r_get = client.get(f"/api/v1/inventory/{pid}")
+    assert r_get.status_code == 200
+    assert r_get.json()["ingredients"] == "Pörkölt pisztácia (100%)"
+
+    # Verify PUT update
+    r_put = client.put(f"/api/v1/inventory/{pid}", json={"ingredients": "100% pisztácia, tengeri só"})
+    assert r_put.status_code == 200
+    assert r_put.json()["ingredients"] == "100% pisztácia, tengeri só"
+
+
+def test_extract_label_endpoint(client):
+    """POST /api/v1/inventory/extract-label parses label image and returns macros + ingredients."""
+    import io
+    from PIL import Image
+
+    # Create dummy label image with Pillow
+    img = Image.new("RGB", (300, 150), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    raw_png = buf.getvalue()
+
+    # Multipart test
+    res = client.post(
+        "/api/v1/inventory/extract-label",
+        files={"file": ("label.png", raw_png, "image/png")},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "macros" in data
+    assert "ingredients" in data
+    assert "ingredients_list" in data
+    assert "raw_text" in data
+
+

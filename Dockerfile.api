@@ -24,6 +24,13 @@
 
 FROM python:3.11-slim
 
+# Install system dependencies: Tesseract OCR with Hungarian + English models
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-hun \
+    tesseract-ocr-eng \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /srv
 
 COPY requirements.txt .

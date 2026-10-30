@@ -596,6 +596,65 @@
    * Uses PSM 11 (Sparse text) to prevent tabular column dropouts.
    */
   async function extractNutrition(imageSource, onProgress) {
+    if (typeof onProgress === "function") {
+      onProgress({ status: "loading", progress: 0.1, message: "Kép előkészítése elemzéshez..." });
+    }
+
+    // 1. Try Backend API first (server-side Pillow + Tesseract hun+eng + ingredients extraction)
+    if (typeof fetch !== "undefined") {
+      try {
+        const apiBase = (typeof window !== "undefined" && window.SolinCfg && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+        const extractUrl = (apiBase + "/api/v1/inventory/extract-label").replace(/\/+$/, "");
+
+        if (typeof onProgress === "function") {
+          onProgress({ status: "processing", progress: 0.3, message: "Szerveroldali OCR és összetevő-elemzés..." });
+        }
+
+        let reqBody = null;
+        const headers = {};
+
+        if (typeof Blob !== "undefined" && (imageSource instanceof Blob || (typeof File !== "undefined" && imageSource instanceof File))) {
+          const formData = new FormData();
+          formData.append("file", imageSource, "label.jpg");
+          reqBody = formData;
+        } else {
+          let b64 = "";
+          if (typeof HTMLCanvasElement !== "undefined" && imageSource instanceof HTMLCanvasElement) {
+            b64 = imageSource.toDataURL("image/jpeg", 0.9);
+          } else if (typeof imageSource === "string") {
+            b64 = imageSource;
+          }
+          if (b64) {
+            headers["Content-Type"] = "application/json";
+            reqBody = JSON.stringify({ image_base64: b64, target: "all" });
+          }
+        }
+
+        if (reqBody) {
+          const resp = await fetch(extractUrl, {
+            method: "POST",
+            headers: headers,
+            body: reqBody,
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (typeof onProgress === "function") {
+              onProgress({ status: "done", progress: 1.0, message: "Sikeres elemzés!" });
+            }
+            return {
+              macros: data.macros || {},
+              ingredients: data.ingredients || null,
+              ingredients_list: data.ingredients_list || [],
+              rawText: data.raw_text || "",
+            };
+          }
+        }
+      } catch (netErr) {
+        console.warn("[SolinImg] Backend extract-label failed, falling back to local OCR:", netErr);
+      }
+    }
+
+    // 2. Fallback to client-side Tesseract.js if backend is offline or unavailable
     if (typeof Tesseract === "undefined") {
       throw new Error("A Tesseract OCR motor nem elérhető.");
     }

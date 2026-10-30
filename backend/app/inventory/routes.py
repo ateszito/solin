@@ -139,6 +139,54 @@ async def delete_product(product_id: str) -> Response:
     return Response(status_code=204)
 
 
+@router.post("/extract-label")
+async def extract_label(
+    request: Request,
+) -> dict:
+    """POST /inventory/extract-label — extract nutritional macros and ingredients.
+
+    Accepts either multipart form file ('file') or JSON body ({"image_base64": "..."}).
+    Returns {
+        "macros": {calories, protein, fat, carbs, fiber, sugar, sodium},
+        "ingredients": "...",
+        "ingredients_list": [...],
+        "raw_text": "..."
+    }
+    """
+    import base64
+    from .extractor import extract_from_image
+
+    data: bytes = b""
+    target: str = "all"
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        target = str(form.get("target") or "all")
+        upload = form.get("file")
+        if upload and hasattr(upload, "read"):
+            data = await upload.read()
+    else:
+        try:
+            body = await request.json()
+            target = str(body.get("target") or "all")
+            b64_str = body.get("image_base64") or body.get("image") or ""
+            if "," in b64_str:
+                b64_str = b64_str.split(",", 1)[1]
+            if b64_str:
+                data = base64.b64decode(b64_str)
+        except Exception:
+            pass
+
+    if not data:
+        raise InventoryError("VALIDATION_ERROR", 400, "Image file or image_base64 is required", fields=["file"])
+
+    if len(data) > settings.img_max_upload_bytes:
+        raise InventoryError("PAYLOAD_TOO_LARGE", 413, "Image exceeds maximum allowed size", fields=["file"])
+
+    return extract_from_image(data, target=target)
+
+
 @router.post("/{product_id}/images/{slot}")
 async def upload_image(product_id: str, slot: str,
                        file: UploadFile = File(...),
