@@ -4,3 +4,4 @@ python-multipart
 pytest
 httpx
 Pillow>=10.3
+yt-dlp
