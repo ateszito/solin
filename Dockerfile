@@ -92,13 +92,13 @@ RUN if [ "${SOLIN_ENV}" = "staging" ]; then \
   else \
     API_UPSTREAM='solin-dev-api:8000'; \
   fi && \
-  API_LOC="location /api/ { proxy_pass http://${API_UPSTREAM}; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_read_timeout 60s; }" && \
+  API_LOC="location /api/ { proxy_pass http://${API_UPSTREAM}; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_connect_timeout 30s; proxy_send_timeout 300s; proxy_read_timeout 300s; }" && \
   if [ "${SOLIN_ENV}" = "development" ]; then \
     CC='add_header Cache-Control "no-store" always;'; \
   else \
     CC=''; \
   fi && \
-  printf 'server {\n  listen 80;\n  client_max_body_size 25M;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
+  printf 'server {\n  listen 80;\n  client_max_body_size 50M;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
     > /etc/nginx/conf.d/default.conf \
     && echo "nginx config for env=${SOLIN_ENV} (proxy upstream=${API_UPSTREAM}, cache=${CC})"
 
