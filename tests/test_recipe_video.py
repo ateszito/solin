@@ -25,3 +25,31 @@ def test_video_upload_invalid_format():
     files = {"file": ("test.txt", io.BytesIO(dummy_txt), "text/plain")}
     resp = client.post("/api/v1/recipes/video/upload", files=files)
     assert resp.status_code == 400
+
+
+def test_video_download_endpoint(monkeypatch):
+    from backend.app.recipes import video_service
+
+    def fake_download(url, recipe_id=None):
+        return {
+            "video_url": "/api/v1/media/videos/rec_mock_123.mp4",
+            "filename": "rec_mock_123.mp4",
+            "thumbnail_url": "/api/v1/media/videos/rec_mock_123_thumb.jpg",
+            "title": "Creamy Garlic Chicken",
+            "duration": 45,
+            "creator": "aussiefitness",
+            "description": "549 Kcal | 74g Protein Creamy Garlic Chicken and Mashed Potatoes recipe",
+            "size_bytes": 10240,
+        }
+
+    monkeypatch.setattr(video_service, "download_video_from_url", fake_download)
+
+    payload = {"url": "https://www.tiktok.com/@aussiefitness/video/123456", "recipe_id": "r1"}
+    resp = client.post("/api/v1/recipes/video/download", json=payload)
+    assert resp.status_code == 200
+    res = resp.json()
+    assert res["video_url"] == "/api/v1/media/videos/rec_mock_123.mp4"
+    assert res["description"] == "549 Kcal | 74g Protein Creamy Garlic Chicken and Mashed Potatoes recipe"
+    assert res["creator"] == "aussiefitness"
+    assert res["title"] == "Creamy Garlic Chicken"
+

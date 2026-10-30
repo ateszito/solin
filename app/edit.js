@@ -22,9 +22,10 @@ window.Edit = (function () {
   }
 
   function buildPhotos(images) {
+    const resolve = Solin.resolveMediaUrl || ((u) => u);
     const listHtml = (images || []).map((src, idx) => `
       <div class="rec-photo-item" data-idx="${idx}">
-        <img src="${esc(src)}" alt="Recept fotó ${idx + 1}" />
+        <img src="${esc(resolve(src))}" alt="Recept fotó ${idx + 1}" />
         <button type="button" class="rec-photo-del" title="Fotó törlése" aria-label="Fotó törlése">×</button>
         <span class="rec-photo-badge">${idx === 0 ? "Fő kép" : (idx + 1) + ". kép"}</span>
       </div>`).join("");
@@ -42,34 +43,52 @@ window.Edit = (function () {
       </div>`;
   }
 
-  function buildVideoCard(videoSrc, defaultUrl) {
+  function buildVideoContent(videoSrc, defaultUrl) {
     const hasVideo = !!videoSrc;
     const initialUrl = defaultUrl || "";
+    const resolve = Solin.resolveMediaUrl || ((u) => u);
+
+    if (hasVideo) {
+      return `
+        <div style="margin-bottom:10px;">
+          <video id="ed-video-player" src="${esc(resolve(videoSrc))}" controls playsinline style="width:100%; max-height:240px; border-radius:8px; background:#000; display:block;"></video>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+          <input type="file" id="ed-video-file-input" accept="video/mp4,video/quicktime,video/webm" style="display:none;" />
+          <button type="button" class="btn sm" id="ed-change-video-btn">🔄 Videó cseréje galériából / fájlból</button>
+          <button type="button" class="btn sm danger" id="ed-remove-video-btn">🗑 Videó eltávolítása</button>
+        </div>
+        <div style="border-top:1px dashed var(--line); padding-top:10px; margin-top:8px;">
+          <label style="font-size:12px; font-weight:600; color:var(--muted); display:block; margin-bottom:6px;">Vagy videó cseréje TikTok / Instagram linkből:</label>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <input id="ed-video-url-input" type="url" value="${esc(initialUrl)}" placeholder="TikTok vagy Instagram Reel link..." style="flex:2 1 180px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px;" />
+            <button type="button" class="btn sm" id="ed-download-video-btn">🔗 Videó csere linkből</button>
+          </div>
+        </div>
+        <div id="ed-video-status"></div>
+      `;
+    }
+
+    return `
+      <p class="hint" style="margin-top:0; margin-bottom:10px;">Ehhez a recepthez még nincs videó. Feltölthetsz egy videót a galériádból, vagy megadhatsz egy TikTok / Instagram linket:</p>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <input type="file" id="ed-video-file-input" accept="video/mp4,video/quicktime,video/webm" style="display:none;" />
+        <button type="button" class="btn sm primary" id="ed-upload-video-btn">📤 Videó tallózása és feltöltése</button>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input id="ed-video-url-input" type="url" value="${esc(initialUrl)}" placeholder="TikTok vagy Instagram Reel link..." style="flex:2 1 180px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px;" />
+        <button type="button" class="btn sm" id="ed-download-video-btn">🔗 Videó letöltése linkből</button>
+      </div>
+      <div id="ed-video-status"></div>
+    `;
+  }
+
+  function buildVideoCard(videoSrc, defaultUrl) {
     return `
       <div class="field" style="margin-top:14px;">
         <label>Recept videó</label>
         <div id="ed-video-box" style="background:#f8fafc; border:1px solid var(--line); border-radius:12px; padding:14px;">
-          ${hasVideo ? `
-            <div style="margin-bottom:10px;">
-              <video id="ed-video-player" src="${esc(videoSrc)}" controls playsinline style="width:100%; max-height:240px; border-radius:8px; background:#000; display:block;"></video>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <input type="file" id="ed-video-file-input" accept="video/mp4,video/quicktime,video/webm" style="display:none;" />
-              <button type="button" class="btn sm" id="ed-change-video-btn">🔄 Videó cseréje fájlból</button>
-              <button type="button" class="btn sm danger" id="ed-remove-video-btn">Videó eltávolítása</button>
-            </div>
-          ` : `
-            <p class="hint" style="margin-top:0; margin-bottom:10px;">Ehhez a recepthez még nincs videó. Feltölthetsz egy videót a galériádból, vagy megadhatsz egy TikTok / Instagram linket:</p>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
-              <input type="file" id="ed-video-file-input" accept="video/mp4,video/quicktime,video/webm" style="display:none;" />
-              <button type="button" class="btn sm primary" id="ed-upload-video-btn">📤 Videó tallózása és feltöltése</button>
-            </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <input id="ed-video-url-input" type="url" value="${esc(initialUrl)}" placeholder="TikTok vagy Instagram Reel link..." style="flex:2 1 180px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px;" />
-              <button type="button" class="btn sm" id="ed-download-video-btn">🔗 Videó letöltése linkből</button>
-            </div>
-          `}
-          <div id="ed-video-status"></div>
+          ${buildVideoContent(videoSrc, defaultUrl)}
         </div>
       </div>`;
   }
@@ -198,9 +217,10 @@ window.Edit = (function () {
   function paintPhotos() {
     const grid = $("#rec-photos-grid");
     if (!grid) return;
+    const resolve = Solin.resolveMediaUrl || ((u) => u);
     grid.innerHTML = (editingImages || []).map((src, idx) => `
       <div class="rec-photo-item" data-idx="${idx}">
-        <img src="${esc(src)}" alt="Recept fotó ${idx + 1}" />
+        <img src="${esc(resolve(src))}" alt="Recept fotó ${idx + 1}" />
         <button type="button" class="rec-photo-del" title="Fotó törlése" aria-label="Fotó törlése">×</button>
         <span class="rec-photo-badge">${idx === 0 ? "Fő kép" : (idx + 1) + ". kép"}</span>
       </div>`).join("");
@@ -266,7 +286,7 @@ window.Edit = (function () {
     const box = $("#ed-video-box");
     if (!box) return;
     const r = S.getRecipe(state.activeRecipe) || {};
-    box.outerHTML = buildVideoCard(editingVideo, r.source || "");
+    box.innerHTML = buildVideoContent(editingVideo, r.source || "");
     wireVideoEvents();
   }
 
@@ -348,8 +368,66 @@ window.Edit = (function () {
           }
           const data = await resp.json();
           editingVideo = data.video_url;
-          toast("Videó sikeresen letöltve és csatolva! ✓");
+
+          // Auto-fill or prompt description
+          const descEl = $("#ed-description");
+          let descNotice = "";
+          let offerDesc = false;
+          if (data.description && descEl) {
+            if (!descEl.value.trim()) {
+              descEl.value = data.description;
+              descNotice = " és leírás";
+            } else if (descEl.value.trim() !== data.description.trim()) {
+              descNotice = " (leírás kinyerve)";
+              offerDesc = true;
+            }
+          }
+
+          // Auto-fill title if empty or default
+          const titleEl = $("#ed-title");
+          if (data.title && titleEl && (!titleEl.value.trim() || titleEl.value.trim() === "Új recept")) {
+            titleEl.value = data.title;
+          }
+
+          // Auto-fill creator if empty
+          const creatorEl = document.querySelector("#view-edit [name='creator']");
+          if (data.creator && creatorEl && (!creatorEl.value.trim() || creatorEl.value.trim() === "unknown")) {
+            creatorEl.value = data.creator;
+          }
+
+          toast(`Videó${descNotice} sikeresen letöltve! ✓`);
           paintVideo();
+
+          if (offerDesc && data.description && descEl) {
+            const currentStatusEl = $("#ed-video-status");
+            if (currentStatusEl) {
+              currentStatusEl.innerHTML = `
+                <div style="margin-top:10px; padding:10px 12px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px;">
+                  <p style="margin:0 0 6px; font-size:12px; font-weight:600; color:#1e40af;">📝 Kinyert leírás a videóból:</p>
+                  <p style="margin:0 0 8px; font-size:12px; color:#1e293b; max-height:80px; overflow-y:auto; white-space:pre-wrap;">${esc(data.description)}</p>
+                  <div style="display:flex; gap:6px;">
+                    <button type="button" class="btn sm" id="ed-apply-desc-btn">Beillesztés a leírás mezőbe</button>
+                    <button type="button" class="btn sm ghost" id="ed-append-desc-btn">Hozzáadás a jelenlegi végére</button>
+                  </div>
+                </div>`;
+              const applyBtn = $("#ed-apply-desc-btn");
+              const appendBtn = $("#ed-append-desc-btn");
+              if (applyBtn) {
+                applyBtn.onclick = () => {
+                  descEl.value = data.description;
+                  toast("Leírás beillesztve! ✓");
+                  currentStatusEl.innerHTML = "";
+                };
+              }
+              if (appendBtn) {
+                appendBtn.onclick = () => {
+                  descEl.value = (descEl.value ? descEl.value + "\n\n" : "") + data.description;
+                  toast("Leírás hozzáadva! ✓");
+                  currentStatusEl.innerHTML = "";
+                };
+              }
+            }
+          }
         } catch (err) {
           console.error("Video download error:", err);
           if (statusEl) {

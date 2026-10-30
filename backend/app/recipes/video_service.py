@@ -114,6 +114,7 @@ def save_uploaded_video(
         "video_url": f"/api/v1/media/videos/{final_mp4_name}",
         "filename": final_mp4_name,
         "thumbnail_url": f"/api/v1/media/videos/{thumb_name}" if has_thumb else None,
+        "description": None,
         "size_bytes": os.path.getsize(final_mp4_path),
     }
 
@@ -174,6 +175,7 @@ def download_video_from_url(
                 "title": info.get("title"),
                 "duration": info.get("duration"),
                 "creator": info.get("uploader") or info.get("channel"),
+                "description": (info.get("description") or info.get("title") or "").strip(),
                 "size_bytes": os.path.getsize(final_path) if os.path.exists(final_path) else None,
             }
     except Exception as e:

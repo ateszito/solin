@@ -179,20 +179,21 @@ window.Detail = (function () {
       : (r.image ? [r.image] : []);
     const hasMedia = !!(r.video || recipeImages.length > 0);
 
+    const resolve = Solin.resolveMediaUrl || ((u) => u);
     let mediaHtml = "";
     if (r.video) {
       mediaHtml = `<div class="detail-media">
-        <video id="det-video" src="${esc(r.video)}" controls playsinline loop preload="metadata"></video>
+        <video id="det-video" src="${esc(resolve(r.video))}" controls playsinline loop preload="metadata"></video>
       </div>`;
     } else if (recipeImages.length > 0) {
       const mainImg = recipeImages[0];
       const thumbsHtml = recipeImages.length > 1
         ? `<div class="detail-gallery">
-            ${recipeImages.map((src, idx) => `<img src="${esc(src)}" class="detail-gallery-thumb${idx === 0 ? " active" : ""}" data-idx="${idx}" alt="Fotó ${idx + 1}" />`).join("")}
+            ${recipeImages.map((src, idx) => `<img src="${esc(resolve(src))}" class="detail-gallery-thumb${idx === 0 ? " active" : ""}" data-idx="${idx}" alt="Fotó ${idx + 1}" />`).join("")}
           </div>`
         : "";
       mediaHtml = `<div class="detail-media detail-media-photo">
-        <img id="det-img" class="detail-img" src="${esc(mainImg)}" alt="${esc(r.title)}" />
+        <img id="det-img" class="detail-img" src="${esc(resolve(mainImg))}" alt="${esc(r.title)}" />
         <span class="detail-img-hint">🔍 Koppints a nagyításhoz</span>
         ${thumbsHtml}
       </div>`;
