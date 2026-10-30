@@ -11,7 +11,8 @@
   const start = (location.hash ? location.hash.replace(/^#\/?/, "") : (ui.tab || "browse"));
   if (/^recipe\/(.+)$/.test(start)) {
     S.state.activeRecipe = start.split("/")[1]; S.tab("recipe");
-  } else if (start === "inventory") S.tab("inventory");
+  } else if (start === "add") S.tab("add");
+  else if (start === "inventory") S.tab("inventory");
   else if (start === "match") S.tab("match");
   else if (start === "foodcounter") S.tab("foodcounter");
   else S.tab("browse");
