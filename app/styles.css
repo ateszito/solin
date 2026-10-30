@@ -39,7 +39,7 @@ body {
 .app-header {
   position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
   background: rgba(255,255,255,.92);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
@@ -65,7 +65,53 @@ body {
   display: inline-block; padding: 3px 10px; border-radius: 999px;
   font-size: 11px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .04em; margin-right: 8px;
+  cursor: pointer; user-select: none;
+  transition: transform .1s, opacity .15s;
 }
+#env-badge:active { transform: scale(0.95); opacity: 0.85; }
+
+/* ---------- environment switcher modal ---------- */
+.env-modal-overlay {
+  position: fixed; inset: 0; z-index: 999;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.env-modal-card {
+  background: #FFFFFF; border-radius: var(--radius);
+  max-width: 440px; width: 100%;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.2);
+  padding: 22px; max-height: 90vh; overflow-y: auto;
+  border: 1px solid var(--line);
+}
+.env-modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.env-modal-header h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.env-option-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.env-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 10px;
+  cursor: pointer; transition: border-color .15s, background .15s;
+}
+.env-option:has(input:checked) {
+  border-color: var(--primary);
+  background: #FFF8F8;
+}
+.env-option input { width: auto; margin: 0; }
+.env-option-label { font-weight: 600; font-size: 13px; }
+.env-option-url { font-size: 11px; color: var(--text-2); font-family: monospace; }
+.env-field-group { margin-bottom: 14px; }
+.env-field-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+.env-field-group input { font-size: 12px; font-family: monospace; }
+.env-status-msg {
+  padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 14px; display: none;
+}
+.env-status-msg.ok { display: block; background: #E6F7E6; color: #1E7D33; }
+.env-status-msg.err { display: block; background: #FDECEC; color: #C62828; }
+.env-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
 /* ---------- buttons & inputs ---------- */
 .btn {
