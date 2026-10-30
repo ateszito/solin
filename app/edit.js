@@ -7,15 +7,15 @@
 window.Edit = (function () {
   const { $, $$, S, state, esc, toast, go } = window.Solin;
 
-  function row(label, name, val) { return `<div class="field"><label>${label}</label><input name="${name}" value="${esc(val)}" /></div>`; }
+  function row(label, name, val) { return `<div class="field"><label for="ed-${name}">${label}</label><input id="ed-${name}" name="${name}" value="${esc(val)}" /></div>`; }
 
   function buildIngredients(r) {
     const rows = (r.ingredients || []).map(ing => `
       <li>
-        <input name="ing-name" placeholder="name" value="${esc(ing.name)}"/>
-        <input name="ing-qty" placeholder="qty" value="${esc(ing.qty ?? "")}"/>
-        <input name="ing-note" placeholder="note" value="${esc(ing.note ?? "")}"/>
-        <button type="button" class="rm" aria-label="remove">×</button>
+        <input name="ing-name" placeholder="név" aria-label="hozzávaló neve" value="${esc(ing.name)}"/>
+        <input name="ing-qty" placeholder="mennyiség" aria-label="mennyiség" value="${esc(ing.qty ?? "")}"/>
+        <input name="ing-note" placeholder="megjegyzés" aria-label="megjegyzés" value="${esc(ing.note ?? "")}"/>
+        <button type="button" class="rm" aria-label="sor törlése">×</button>
       </li>`).join("");
     return `
       <div class="field">
@@ -28,9 +28,9 @@ window.Edit = (function () {
   function buildSteps(r) {
     const rows = (r.steps || []).map((s, i) => `
       <li>
-        <input name="st-t" placeholder="sec" value="${esc(s.t ?? "")}" style="max-width:90px"/>
-        <input name="st-text" placeholder="step" value="${esc(s.text)}" style="flex:2 1 200px"/>
-        <button type="button" class="rm" aria-label="remove">×</button>
+        <input name="st-t" placeholder="mp" inputmode="decimal" aria-label="videó időpont (mp)" value="${esc(s.t ?? "")}" style="max-width:90px"/>
+        <input name="st-text" placeholder="lépés leírása" aria-label="lépés" value="${esc(s.text)}" style="flex:2 1 200px"/>
+        <button type="button" class="rm" aria-label="sor törlése">×</button>
       </li>`).join("");
     return `
       <div class="field">
@@ -49,9 +49,24 @@ window.Edit = (function () {
   function render() {
     const r = S.getRecipe(state.activeRecipe);
     if (!r) { go("browse"); return; }
+    editingId = r.id;
+    const isNew = !!r._blank;
+    // Same form serves "edit an existing recipe" and "fill in a new one".
+    $("#view-edit .view-title").textContent = isNew ? "Új recept" : "Recept szerkesztése";
+    $("#edit-back").textContent = isNew ? "← Mégse" : "← Vissza a recepthez";
+    $("#edit-reset").hidden = isNew;
+    $("#edit-save").textContent = isNew ? "Recept mentése" : "Mentés";
+    const introHint = $("#view-edit > .hint");
+    if (introHint) introHint.textContent = isNew
+      ? "Add meg a recept adatait. A recept ezen a készüléken mentődik; ha mentés nélkül lépsz ki, nem jön létre."
+      : "A javításaid ezen a készüléken mentődnek, az eredeti recept fölé rétegezve. A „Visszaállítás” visszaállítja az eredetit.";
     const patched = S.editFields(r.id);
+    // a new recipe starts with one empty ingredient + step row to type into
+    const rows = isNew && !(r.ingredients || []).length
+      ? Object.assign({}, r, { ingredients: [{ name: "", qty: "" }], steps: [{ t: "", text: "" }] })
+      : r;
     $("#edit-form").innerHTML = `
-      ${row("Cím", "title", r.title)}
+      <div class="field"><label for="ed-title">Cím${isNew ? " *" : ""}</label><input id="ed-title" name="title" value="${esc(r.title)}" ${isNew ? 'placeholder="pl. Csirkés tészta" required' : ""}/></div>
       <div class="grid2">${row("Szerző", "creator", r.creator)}${row("Konyha", "cuisine", r.cuisine)}</div>
       <div class="grid3">
         <div class="field"><label>Adag</label><input name="servings" type="number" value="${esc(r.servings)}"/></div>
@@ -63,31 +78,54 @@ window.Edit = (function () {
         <div class="field"><label>Zsír (g)</label><input name="fat" type="number" step="0.1" value="${esc((r.macrosPerServing||{}).fat)}"/></div>
         <div class="field"><label>Összes idő (perc)</label><input name="totalMin" type="number" value="${esc(r.totalMin)}"/></div>
       </div>
-      <div class="field"><label>Leírás</label><textarea name="description" rows="3">${esc(r.description)}</textarea></div>
-      <div class="field"><label>Ccimkék (vesszővel)</label><input name="tags" value="${esc((r.tags||[]).join(", "))}"/></div>
-      ${buildIngredients(r)}
-      ${buildSteps(r)}
-      <p class="hint">A szerkesztett mezők: <b>${patched.length ? esc(patched.join(", ")) : "nincs szerkesztés még"}</b> — ezek a korrekciók maradnak meg ezen a készüléken és visszajátsszák a receptnél.</p>
+      <div class="field"><label for="ed-description">Leírás</label><textarea id="ed-description" name="description" rows="3">${esc(r.description)}</textarea></div>
+      <div class="field"><label for="ed-tags">Címkék (vesszővel elválasztva)</label><input id="ed-tags" name="tags" value="${esc((r.tags||[]).join(", "))}"/></div>
+      ${buildIngredients(rows)}
+      ${buildSteps(rows)}
+      ${isNew ? "" : `<p class="hint">A szerkesztett mezők: <b>${patched.length ? esc(patched.join(", ")) : "nincs szerkesztés még"}</b> — ezek a korrekciók ezen a készüléken maradnak, és a receptnél megjelennek.</p>`}
     `;
+    if (isNew) setTimeout(() => { const t = $("#ed-title"); if (t) t.focus(); }, 0);
 
     // dynamic row adders
     $("#ing-add").addEventListener("click", () => {
       const li = document.createElement("li");
-      li.innerHTML = `<input name="ing-name" placeholder="name"/><input name="ing-qty" placeholder="qty"/><input name="ing-note" placeholder="note"/><button type="button" class="rm">×</button>`;
+      li.innerHTML = `<input name="ing-name" placeholder="név" aria-label="hozzávaló neve"/><input name="ing-qty" placeholder="mennyiség" aria-label="mennyiség"/><input name="ing-note" placeholder="megjegyzés" aria-label="megjegyzés"/><button type="button" class="rm" aria-label="sor törlése">×</button>`;
       $("#ing-dyn").appendChild(li); wireRm(li);
+      li.querySelector("input").focus();
     });
     $("#step-add").addEventListener("click", () => {
       const li = document.createElement("li");
-      li.innerHTML = `<input name="st-t" placeholder="sec" style="max-width:90px"/><input name="st-text" placeholder="step" style="flex:2 1 200px"/><button type="button" class="rm">×</button>`;
+      li.innerHTML = `<input name="st-t" placeholder="mp" inputmode="decimal" aria-label="videó időpont (mp)" style="max-width:90px"/><input name="st-text" placeholder="lépés leírása" aria-label="lépés" style="flex:2 1 200px"/><button type="button" class="rm" aria-label="sor törlése">×</button>`;
       $("#step-dyn").appendChild(li); wireRm(li);
+      li.querySelector("[name=st-text]").focus();
     });
     const wireRm = (scope) => scope.querySelectorAll(".rm").forEach((b) =>
       b.addEventListener("click", () => b.closest("li").remove())
     );
     wireRm($("#edit-form"));
+  }
 
-    $("#edit-save").addEventListener("click", () => save(r));
+  // Bind the static Save / Reset buttons ONCE and resolve the recipe at
+  // click time. (Previously every render() added another listener that
+  // closed over *that* render's recipe — after editing recipe A then B,
+  // "Mentés" also wrote B's form values into A.)
+  let _bound = false;
+  function init() {
+    if (_bound) return;
+    _bound = true;
+    $("#edit-save").addEventListener("click", () => {
+      const r = S.getRecipe(state.activeRecipe);
+      if (r) save(r);
+    });
+    $("#edit-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const r = S.getRecipe(state.activeRecipe);
+      if (r) save(r);
+    });
     $("#edit-reset").addEventListener("click", () => {
+      const r = S.getRecipe(state.activeRecipe);
+      if (!r) return;
+      if (!S.hasEdits(r.id)) { toast("Nincs helyi módosítás ezen a recepten."); return; }
       if (confirm("Visszaállítod az eredeti receptre? A helyi korrekcióid törölődnek.")) {
         S.resetEdits(r.id); toast("Eredeti állapot visszaállítva"); go("recipe");
       }
@@ -143,6 +181,18 @@ window.Edit = (function () {
     }
 
     if (Object.keys(macros).length) patch.macrosPerServing = Object.assign({}, r.macrosPerServing || {}, macros);
+    if (r._blank) {
+      if (!v("title").trim()) {
+        toast("Adj címet a receptnek");
+        const t = f.querySelector("[name=title]"); if (t) t.focus();
+        return;
+      }
+      if (Object.keys(patch).length) S.saveEdit(r.id, patch);
+      S.finalizeCustomRecipe(r.id);
+      toast("Recept létrehozva ✓");
+      go("recipe");
+      return;
+    }
     if (!Object.keys(patch).length) { toast("Nincs változtatás elmenteni."); return; }
 
     S.saveEdit(r.id, patch);
@@ -150,5 +200,17 @@ window.Edit = (function () {
     go("recipe");
   }
 
-  return { render };
+  // Called by the router when the edit view is left. An untouched new
+  // recipe draft is discarded so "Üres recept indítása" + back never
+  // leaves an empty "(új recept)" behind. Returns true if it was dropped.
+  let editingId = null;
+  function leave() {
+    const id = editingId;
+    editingId = null;
+    const r = id && S.getRecipe(id);
+    if (r && r._blank) { S.deleteCustomRecipe(id); return true; }
+    return false;
+  }
+
+  return { init, render, leave };
 })();
