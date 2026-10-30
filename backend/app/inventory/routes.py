@@ -113,32 +113,6 @@ async def count_macros(body: dict) -> dict:
     return svc.macro_count(items, portions=portions)
 
 
-@router.get("")
-async def list_products(limit: int = 50, offset: int = 0,
-                        search: Optional[str] = None) -> dict:
-    """GET /inventory — paginated list (contract §3.2)."""
-    return svc.list(limit=limit, offset=offset, search=search or "")
-
-
-@router.get("/{product_id}")
-async def get_product(product_id: str) -> dict:
-    """GET /inventory/{id} — full product incl. resolvable image URLs (C7)."""
-    return svc.get(product_id)
-
-
-@router.put("/{product_id}")
-async def update_product(product_id: str, body: dict) -> dict:
-    """PUT /inventory/{id} — independent partial fields (contract §3.4)."""
-    return svc.update(product_id, body)
-
-
-@router.delete("/{product_id}", status_code=204)
-async def delete_product(product_id: str) -> Response:
-    """DELETE /inventory/{id} — row + media removal (contract §3.5). 204."""
-    svc.delete(product_id)
-    return Response(status_code=204)
-
-
 @router.post("/extract-label")
 async def extract_label(
     request: Request,
@@ -185,6 +159,32 @@ async def extract_label(
         raise InventoryError("PAYLOAD_TOO_LARGE", 413, "Image exceeds maximum allowed size", fields=["file"])
 
     return extract_from_image(data, target=target)
+
+
+@router.get("")
+async def list_products(limit: int = 50, offset: int = 0,
+                        search: Optional[str] = None) -> dict:
+    """GET /inventory — paginated list (contract §3.2)."""
+    return svc.list(limit=limit, offset=offset, search=search or "")
+
+
+@router.get("/{product_id}")
+async def get_product(product_id: str) -> dict:
+    """GET /inventory/{id} — full product incl. resolvable image URLs (C7)."""
+    return svc.get(product_id)
+
+
+@router.put("/{product_id}")
+async def update_product(product_id: str, body: dict) -> dict:
+    """PUT /inventory/{id} — independent partial fields (contract §3.4)."""
+    return svc.update(product_id, body)
+
+
+@router.delete("/{product_id}", status_code=204)
+async def delete_product(product_id: str) -> Response:
+    """DELETE /inventory/{id} — row + media removal (contract §3.5). 204."""
+    svc.delete(product_id)
+    return Response(status_code=204)
 
 
 @router.post("/{product_id}/images/{slot}")
