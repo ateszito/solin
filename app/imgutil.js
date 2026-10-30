@@ -3,7 +3,7 @@
    Client-side image processing & nutrition OCR module.
    - Image downscaling and compression before upload (prevents HTTP 413).
    - Multi-language nutrition label text parser (Hungarian / English / German).
-   - In-browser OCR extraction using Tesseract.js.
+   - In-browser OCR extraction using Tesseract.js with tabular support.
    ============================================================ */
 
 (function (root, factory) {
@@ -14,6 +14,117 @@
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
+
+  /**
+   * Normalize and parse a single macro number string extracted from OCR.
+   * Handles OCR quirks like:
+   *  - "g" misread as trailing "9" (e.g. "45,09", "1809", "099", "029", "09", "4009")
+   *  - Missing decimal commas in tight font (e.g. "450g" or "450" -> 45.0)
+   *  - Accidental non-numeric noise
+   *  - Salt (g) -> Sodium (mg) conversion (1g salt ≈ 400mg sodium)
+   */
+  function cleanMacroNumber(str, key) {
+    if (!str) return null;
+    let s = String(str).trim().toLowerCase().replace(/,/g, ".");
+
+    if (key === "calories") {
+      const kcalMatch = s.match(/(\d+(?:\.\d+)?)\s*kcal/i);
+      if (kcalMatch) return Math.round(parseFloat(kcalMatch[1]));
+      const kjMatch = s.match(/(\d+(?:\.\d+)?)\s*k[j3]/i);
+      if (kjMatch) return Math.round(parseFloat(kjMatch[1]) / 4.184);
+      const anyNum = s.match(/(\d+)/);
+      return anyNum ? parseInt(anyNum[1], 10) : null;
+    }
+
+    // Strip leading / trailing OCR symbols
+    s = s.replace(/^[|:;=\-—~_\])}]+/, "").replace(/[|:;=\-—~_{([]+$/, "").trim();
+
+    const isMg = /mg\b/i.test(s);
+    const isG = /g\b/i.test(s);
+    let numPart = s.replace(/[^\d.]/g, "").trim();
+
+    if (!numPart) return null;
+
+    if (!isMg) {
+      // Case 1: Trailing 9 on decimal (e.g. "0.99" where original was "0.9 g" and "g" became 9)
+      if (/^\d+\.\d9$/.test(numPart) && key !== "sodium") {
+        numPart = numPart.slice(0, -1);
+      }
+      // Case 2: Multi-digit integer without dot (e.g. "4509", "1809", "099", "029", "09", "4009")
+      else if (/^\d{2,4}$/.test(numPart) && !numPart.includes(".")) {
+        if (numPart.endsWith("9") && numPart.length > 1 && !isG) {
+          numPart = numPart.slice(0, -1); // strip trailing "9" representing unit "g"
+        }
+
+        if (key === "sodium" || key === "salt") {
+          // Salt in grams: "400" -> 4.00g, "40" -> 0.40g
+          if (numPart.length === 3) {
+            numPart = (parseFloat(numPart) / 100).toFixed(2);
+          } else if (numPart.length === 2) {
+            numPart = (parseFloat(numPart) / 10).toFixed(1);
+          }
+        } else if (numPart.length === 3 && (key === "fat" || key === "protein" || key === "carbs" || key === "sugar")) {
+          // Macro > 100g per 100g is impossible; e.g. "450" -> 45.0, "180" -> 18.0
+          if (parseFloat(numPart) > 100) {
+            numPart = (parseFloat(numPart) / 10).toFixed(1);
+          }
+        } else if (numPart.length === 2 && numPart.startsWith("0")) {
+          // e.g. "09" -> 0.9, "02" -> 0.2
+          numPart = "0." + numPart[1];
+        }
+      } else if (isG && /^\d{3,}$/.test(numPart) && !numPart.includes(".")) {
+        if (key === "sodium" || key === "salt") {
+          numPart = (parseFloat(numPart) / 100).toFixed(2);
+        } else if (parseFloat(numPart) > 100) {
+          numPart = (parseFloat(numPart) / 10).toFixed(1);
+        }
+      }
+    }
+
+    const val = parseFloat(numPart);
+    if (isNaN(val)) return null;
+
+    if (key === "sodium" || key === "salt") {
+      if (isMg) return Math.round(val);
+      // Convert salt in grams to sodium in mg (1g salt ≈ 400mg sodium)
+      return Math.round(val * 400);
+    }
+
+    return Math.round(val * 100) / 100;
+  }
+
+  // Lookahead boundary safe for Hungarian accents (JS \b only matches ASCII)
+  const W = "(?![a-záéíóöőúüű])";
+
+  const labelPatterns = {
+    calories: [
+      new RegExp("(?:energia|energy|energie|kal[oó]ria|calories?|brennwert)" + W, "i"),
+      new RegExp("(\\d+(?:\\.\\d+)?)\\s*kcal" + W, "i")
+    ],
+    fat: [
+      new RegExp("(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|total\\s*fat|fat|fett)" + W, "i")
+    ],
+    carbs: [
+      new RegExp("(?:sz[eé]nhidr[aá]t|carbohydrate|total\\s*carb(?:ohydrate)?|carbs|kohlenhydrate)" + W, "i")
+    ],
+    sugar: [
+      new RegExp("(?:amelyb[oöőeé06d][l1]?\\s*(?:cukr|cukt|cukor|cukrok)|cukrok?|cukor|of\\s*which\\s*sugars?|total\\s*sugars?|sugars?|davon\\s*zucker|zucker)" + W, "i")
+    ],
+    fiber: [
+      new RegExp("(?:[eé]lelmi\\s*rost|rost|dietary\\s*fiber|fiber|fibre|ballaststoffe)" + W, "i")
+    ],
+    protein: [
+      new RegExp("(?:feh[eé]rje|feh[eé]r]e|feherje|protein|eiwei[sß])" + W, "i")
+    ],
+    sodium: [
+      new RegExp("(?:n[aá]trium|sodium)" + W, "i"),
+      new RegExp("(?:^|[^a-záéíóöőúüű])(?:s[oó0$]|salt|salz)" + W, "i")
+    ]
+  };
+
+  function isSaturatedLine(line) {
+    return /tel[ií]tett|saturated|ges[aä]ttigt/i.test(line);
+  }
 
   /**
    * Parse raw text from a nutrition facts table into canonical Solin macros:
@@ -27,92 +138,113 @@
       return { rawText: "" };
     }
 
-    // Normalize commas to dots, keep original structure
-    const norm = rawText.replace(/,/g, ".").toLowerCase();
-    const lines = norm.split(/[\r\n]+/).map((s) => s.trim()).filter(Boolean);
+    const lines = rawText
+      .split(/[\r\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     const result = {};
 
-    const patterns = {
-      calories: [
-        /(?:energia|energy|energie|kalória|calories|brennwert)[^\d]*?(\d+(?:\.\d+)?)\s*kcal/i,
-        /(\d+(?:\.\d+)?)\s*kcal/i,
-        /(?:energia|energy|energie).*?(\d+(?:\.\d+)?)\s*kj.*?(\d+(?:\.\d+)?)\s*kcal/i,
-        /(?:calories|kalória)\s*[:=]?\s*(\d+(?:\.\d+)?)/i
-      ],
-      protein: [
-        /(?:fehérje|protein|eiweiß|eiweiss)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g?/i
-      ],
-      fat: [
-        /(?:^|[^a-záéíóöőúüű])(?:zsír|fat|fett|total fat)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g?/i
-      ],
-      carbs: [
-        /(?:^|[^a-záéíóöőúüű])(?:szénhidrát|carbohydrate|carbs|kohlenhydrate|total carb(?:ohydrate)?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g?/i
-      ],
-      sugar: [
-        /(?:amelyből cukrok?|amelybol cukrok?|of which sugars?|davon zucker|cukor|cukrok|sugars?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g?/i
-      ],
-      fiber: [
-        /(?:élelmi rost|élelmirost|rost|fiber|dietary fiber|ballaststoffe)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g?/i
-      ],
-      sodium: [
-        /(?:nátrium|sodium)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(?:mg|g)?/i,
-        /(?:só|salt|salz)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g/i
-      ]
-    };
-
-    // Pass 1: match within single lines
+    // Pass 1: Match within a single line (key and value on same row)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      for (const [key, regexList] of Object.entries(patterns)) {
-        if (result[key] != null) continue;
-        if (key === "fat" && (line.includes("telített") || line.includes("saturated") || line.includes("gesättigt"))) {
-          continue;
-        }
 
-        for (const rx of regexList) {
-          const m = line.match(rx);
-          if (m) {
-            let val = parseFloat(m[1] || m[m.length - 1]);
-            if (!isNaN(val)) {
-              const matchedStr = m[0];
-              if (key === "sodium") {
-                if (/só|salt|salz/i.test(matchedStr) || /só|salt|salz/i.test(line)) {
-                  val = Math.round(val * 400); // 1g salt ≈ 400mg sodium
-                } else if (/g\b/i.test(matchedStr) && !/mg/i.test(matchedStr) && val < 50) {
-                  val = Math.round(val * 1000);
-                }
+      // Calories priority check (handles "1986 kJ/481 kcal" or "481 kcal")
+      if (result.calories == null) {
+        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,]\d+)?)\s*k[j3]\s*[/|]\s*(\d+(?:[.,]\d+)?)\s*kcal/i)
+          || line.match(/(\d+(?:[.,]\d+)?)\s*kcal/i)
+          || line.match(/(?:calories|kal[oó]ria)\s*[:=]?\s*(\d+)/i);
+        if (kcalM) {
+          result.calories = cleanMacroNumber(kcalM[2] || kcalM[1], "calories");
+        }
+      }
+
+      for (const [key, patterns] of Object.entries(labelPatterns)) {
+        if (result[key] != null) continue;
+        if (key === "fat" && isSaturatedLine(line)) continue;
+
+        for (const rx of patterns) {
+          const match = line.match(rx);
+          if (match) {
+            const after = line.slice(match.index + match[0].length);
+            const numM = after.match(/[:=]?\s*([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)/i);
+            if (numM && /\d/.test(numM[1])) {
+              const val = cleanMacroNumber(numM[1], key);
+              if (val != null) {
+                result[key] = val;
+                break;
               }
-              result[key] = Math.round(val * 100) / 100;
-              break;
             }
           }
         }
       }
     }
 
-    // Pass 2: check adjacent multi-line pairs for table formats (e.g. key on line i, value on line i+1)
-    for (let i = 0; i < lines.length - 1; i++) {
-      const pair = lines[i] + " " + lines[i + 1];
-      for (const [key, regexList] of Object.entries(patterns)) {
-        if (result[key] != null) continue;
-        if (key === "fat" && (pair.includes("telített") || pair.includes("saturated") || pair.includes("gesättigt"))) {
-          continue;
-        }
+    // Pass 2: Check subsequent lines (table formats where value is on line i+1 or i+2)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-        for (const rx of regexList) {
-          const m = pair.match(rx);
-          if (m) {
-            let val = parseFloat(m[1] || m[m.length - 1]);
-            if (!isNaN(val)) {
-              const matchedStr = m[0];
-              if (key === "sodium") {
-                if (/só|salt|salz/i.test(matchedStr) || /só|salt|salz/i.test(pair)) {
-                  val = Math.round(val * 400);
-                } else if (/g\b/i.test(matchedStr) && !/mg/i.test(matchedStr) && val < 50) {
-                  val = Math.round(val * 1000);
+      // If line is calories header and next line has kJ/kcal
+      if (result.calories == null && /energia|energy|energie|kal[oó]ria|calories?/i.test(line)) {
+        for (let off = 1; off <= 2 && i + off < lines.length; off++) {
+          const nxt = lines[i + off];
+          const kcalM = nxt.match(/(\d+(?:[.,]\d+)?)\s*kcal/i)
+            || nxt.match(/(\d+(?:[.,]\d+)?)\s*k[j3]/i);
+          if (kcalM) {
+            result.calories = cleanMacroNumber(kcalM[1], "calories");
+            break;
+          }
+        }
+      }
+
+      for (const [key, patterns] of Object.entries(labelPatterns)) {
+        if (result[key] != null) continue;
+        if (key === "fat" && isSaturatedLine(line)) continue;
+
+        for (const rx of patterns) {
+          if (rx.test(line)) {
+            for (let offset = 1; offset <= 2 && i + offset < lines.length; offset++) {
+              const nextL = lines[i + offset];
+              if (key === "fat" && isSaturatedLine(nextL)) break;
+
+              // If nextL is another macro label, do not consume it as value
+              const isOtherLabel = Object.keys(labelPatterns).some((k) =>
+                k !== key && labelPatterns[k].some((p) => p.test(nextL))
+              );
+              if (isOtherLabel && !/^\d/.test(nextL)) break;
+
+              const numM = nextL.match(/^[^a-záéíóöőúüű\d]*([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)/i)
+                || nextL.match(/([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)$/i);
+
+              if (numM && /\d/.test(numM[1])) {
+                const val = cleanMacroNumber(numM[1], key);
+                if (val != null) {
+                  result[key] = val;
+                  break;
                 }
               }
-              result[key] = Math.round(val * 100) / 100;
+            }
+            if (result[key] != null) break;
+          }
+        }
+      }
+    }
+
+    // Pass 3: Fallback for "Só" (Salt)
+    // In low-resolution OCR, "Só" is very short and often read as "6", "$6", "SA8", or "S6"
+    if (result.sodium == null) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/^(?:6|\$6|sa8|s6|so)\b/i.test(line)) {
+          const m = line.match(/(?:6|\$6|sa8|s6|so)[^\d]*?(\d+(?:[.,]\d+)?\s*(?:g|9)?)/i);
+          if (m && /\d/.test(m[1])) {
+            result.sodium = cleanMacroNumber(m[1], "sodium");
+            break;
+          } else if (i + 1 < lines.length) {
+            const nextL = lines[i + 1];
+            const nextM = nextL.match(/^(\d+(?:[.,]\d+)?\s*(?:g|9)?)/i);
+            if (nextM && /\d/.test(nextM[1])) {
+              result.sodium = cleanMacroNumber(nextM[1], "sodium");
               break;
             }
           }
@@ -122,6 +254,91 @@
 
     result.rawText = rawText;
     return result;
+  }
+
+  /**
+   * Preprocess image for OCR using canvas:
+   *  - Grayscale conversion
+   *  - Contrast enhancement (removes colored table-stripes and background tint)
+   */
+  function preprocessForOcr(source) {
+    if (typeof document === "undefined" || !document.createElement) {
+      return Promise.resolve(source); // Node test environment
+    }
+
+    return new Promise(function (resolve) {
+      function processElement(img) {
+        try {
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          const maxDim = 2000;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const d = imgData.data;
+          const contrast = 40;
+          const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+          for (let i = 0; i < d.length; i += 4) {
+            const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            const boosted = Math.min(255, Math.max(0, factor * (gray - 128) + 128));
+            d[i] = boosted;
+            d[i + 1] = boosted;
+            d[i + 2] = boosted;
+          }
+          ctx.putImageData(imgData, 0, 0);
+          resolve(canvas);
+        } catch (err) {
+          resolve(source);
+        }
+      }
+
+      if (typeof HTMLCanvasElement !== "undefined" && source instanceof HTMLCanvasElement) {
+        return resolve(source);
+      }
+
+      if (typeof HTMLImageElement !== "undefined" && source instanceof HTMLImageElement && source.complete && source.naturalWidth) {
+        return processElement(source);
+      }
+
+      if (typeof Blob !== "undefined" && (source instanceof Blob || source instanceof File)) {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const img = new Image();
+          img.onload = () => processElement(img);
+          img.onerror = () => resolve(source);
+          img.src = e.target.result;
+        };
+        reader.onerror = () => resolve(source);
+        reader.readAsDataURL(source);
+        return;
+      }
+
+      if (typeof source === "string") {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => processElement(img);
+        img.onerror = () => resolve(source);
+        img.src = source;
+        return;
+      }
+
+      resolve(source);
+    });
   }
 
   /**
@@ -255,6 +472,7 @@
 
   /**
    * Run OCR on an image source (Blob / Canvas / DataURL) using Tesseract.js.
+   * Uses PSM 11 (Sparse text) to prevent tabular column dropouts.
    */
   async function extractNutrition(imageSource, onProgress) {
     if (typeof Tesseract === "undefined") {
@@ -262,42 +480,75 @@
     }
 
     if (typeof onProgress === "function") {
-      onProgress({ status: "loading", progress: 0.1, message: "OCR motor inicializálása..." });
+      onProgress({ status: "loading", progress: 0.1, message: "Kép előkészítése OCR elemzéshez..." });
+    }
+
+    // Preprocess image (grayscale + contrast boost)
+    const processedSource = await preprocessForOcr(imageSource);
+
+    if (typeof onProgress === "function") {
+      onProgress({ status: "loading", progress: 0.25, message: "OCR motor betöltése (hun+eng)..." });
+    }
+
+    const workerLogger = function (m) {
+      if (typeof onProgress === "function" && m) {
+        onProgress({
+          status: m.status || "processing",
+          progress: m.progress != null ? 0.3 + m.progress * 0.7 : 0.5,
+          message: m.status === "recognizing text"
+            ? `Szöveg felismerése: ${Math.round((m.progress || 0) * 100)}%`
+            : (m.status || "Feldolgozás...")
+        });
+      }
+    };
+
+    let worker;
+    try {
+      worker = await Tesseract.createWorker("hun+eng", 1, { logger: workerLogger });
+    } catch (e) {
+      // Fallback: try English only
+      worker = await Tesseract.createWorker("eng", 1, { logger: workerLogger });
     }
 
     try {
-      const worker = await Tesseract.createWorker("hun+eng", 1, {
-        logger: function (m) {
-          if (typeof onProgress === "function" && m) {
-            onProgress({
-              status: m.status || "processing",
-              progress: m.progress != null ? m.progress : 0.5,
-              message: m.status === "recognizing text"
-                ? `Szöveg felismerése: ${Math.round((m.progress || 0) * 100)}%`
-                : (m.status || "Feldolgozás...")
-            });
-          }
-        }
-      });
-
-      const ret = await worker.recognize(imageSource);
-      await worker.terminate();
-
-      const text = ret && ret.data && ret.data.text ? ret.data.text : "";
-      const macros = parseNutrition(text);
-      return { text: text, macros: macros };
-    } catch (e) {
-      // Fallback: try English only if hun+eng fails
+      // PSM 11: Find sparse text - crucial for nutrition tables where right column would be dropped
       try {
-        const worker = await Tesseract.createWorker("eng", 1);
-        const ret = await worker.recognize(imageSource);
-        await worker.terminate();
-        const text = ret && ret.data && ret.data.text ? ret.data.text : "";
-        const macros = parseNutrition(text);
-        return { text: text, macros: macros };
-      } catch (err2) {
-        throw new Error("Nem sikerült beolvasni a címkét: " + (e.message || String(e)));
+        await worker.setParameters({
+          tessedit_pageseg_mode: "11"
+        });
+      } catch (paramErr) {
+        console.warn("[OCR] Could not set PSM 11, continuing with default:", paramErr);
       }
+
+      let ret = await worker.recognize(processedSource);
+      let text = ret && ret.data && ret.data.text ? ret.data.text : "";
+      let macros = parseNutrition(text);
+
+      // If fewer than 3 macros detected, try fallback with PSM 6 (single uniform block)
+      const count = Object.keys(macros).filter((k) => k !== "rawText" && macros[k] != null).length;
+      if (count < 3) {
+        try {
+          await worker.setParameters({ tessedit_pageseg_mode: "6" });
+          const ret2 = await worker.recognize(processedSource);
+          const text2 = ret2 && ret2.data && ret2.data.text ? ret2.data.text : "";
+          const combined = parseNutrition(text + "\n" + text2);
+          const count2 = Object.keys(combined).filter((k) => k !== "rawText" && combined[k] != null).length;
+          if (count2 > count) {
+            text = text + "\n---\n" + text2;
+            macros = combined;
+          }
+        } catch (fallbackErr) {
+          console.warn("[OCR] PSM 6 fallback failed:", fallbackErr);
+        }
+      }
+
+      await worker.terminate();
+      return { text: text, macros: macros };
+    } catch (err) {
+      if (worker) {
+        try { await worker.terminate(); } catch (ignore) {}
+      }
+      throw new Error("Nem sikerült beolvasni a címkét: " + (err.message || String(err)));
     }
   }
 
@@ -315,3 +566,4 @@
     formatBytes: formatBytes
   };
 });
+

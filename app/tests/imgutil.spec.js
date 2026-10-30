@@ -88,7 +88,76 @@ assert.strictEqual(resMulti.protein, 18.5);
 assert.strictEqual(resMulti.sodium, 120);
 console.log("  ✓ Multi-line table layout passed");
 
-// 4. Format bytes helper
+// 4. Hungarian Lidl product label (from real photo OCR output)
+const lidlHuPhotoOcr = `
+készült. Bontatlan csomagolásban, száraz, hűvös helyen, +
+minőségét megőtzi (nap/hónap/év): a csomagolás hátolda
+Átlagos
+Nettó tömeg;
+tápértéktartalom
+0/100 g
+Energia
+. 1986 k3/481 kcal
+Zsír
+4509
+amelyből telített
+zsírsavak
+1809
+Szénhidrát.
+099
+amelyből cukr
+029
+Rost
+09
+Fehérje
+1809
+6
+4009
+`;
+
+const resLidlHu = SolinImg.parseNutrition(lidlHuPhotoOcr);
+assert.strictEqual(resLidlHu.calories, 481, "Lidl calories should be 481");
+assert.strictEqual(resLidlHu.fat, 45, "Lidl fat should be 45 (from 4509 -> 45.0g)");
+assert.strictEqual(resLidlHu.carbs, 0.9, "Lidl carbs should be 0.9 (from 099 -> 0.9g)");
+assert.strictEqual(resLidlHu.sugar, 0.2, "Lidl sugar should be 0.2 (from 029 -> 0.2g)");
+assert.strictEqual(resLidlHu.fiber, 0, "Lidl fiber should be 0 (from 09 -> 0g)");
+assert.strictEqual(resLidlHu.protein, 18, "Lidl protein should be 18 (from 1809 -> 18.0g)");
+assert.strictEqual(resLidlHu.sodium, 1600, "Lidl sodium should be 1600 (4.00g salt * 400 = 1600mg)");
+console.log("  ✓ Real Hungarian Lidl photo OCR passed (all 7 macros)");
+
+// 5. English OCR variant of Lidl photo
+const lidlEngPhotoOcr = `
+Energia
+- 1986 k3/481 kcal
+Isit
+450g
+amelybdl telitett
+zsitsavak
+18,09
+cyuy
+Szénhidrat
+0,99
+amelyb6l cukr
+0,29
+Rost
+09
+Fehérje
+18,09
+6
+400g
+`;
+
+const resLidlEng = SolinImg.parseNutrition(lidlEngPhotoOcr);
+assert.strictEqual(resLidlEng.calories, 481);
+assert.strictEqual(resLidlEng.fat, 45);
+assert.strictEqual(resLidlEng.carbs, 0.9);
+assert.strictEqual(resLidlEng.sugar, 0.2);
+assert.strictEqual(resLidlEng.fiber, 0);
+assert.strictEqual(resLidlEng.protein, 18);
+assert.strictEqual(resLidlEng.sodium, 1600);
+console.log("  ✓ English OCR variant of Lidl photo passed");
+
+// 6. Format bytes helper
 assert.strictEqual(SolinImg.formatBytes(500), "500 B");
 assert.strictEqual(SolinImg.formatBytes(1500), "1.5 KB");
 assert.strictEqual(SolinImg.formatBytes(5 * 1024 * 1024), "5.0 MB");
