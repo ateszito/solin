@@ -19,3 +19,6 @@ expose_local.sh
 README.md
 docker-compose.yml
 Dockerfile
+node_modules/
+ios/
+android/
