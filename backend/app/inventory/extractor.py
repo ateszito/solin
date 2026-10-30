@@ -388,6 +388,7 @@ def extract_via_ollama(img_bytes: bytes, target: str = "all") -> Optional[Dict[s
             "model": model,
             "messages": [{"role": "user", "content": prompt, "images": [b64_img]}],
             "stream": False,
+            "think": False,
             "options": {"temperature": 0.1},
         }).encode("utf-8")
 

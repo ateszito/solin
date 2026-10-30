@@ -200,6 +200,35 @@
     openEdit(doc.id);             /* straight into the editor */
   }
 
+  function startFromExtracted(data) {
+    var doc = toLocalDoc(data, "");
+    doc.title = data.title || "";
+    doc.description = data.description || "";
+    doc.servings = data.servings || 1;
+    doc.totalMin = data.total_time_min || data.totalMin || null;
+    doc.cuisine = data.cuisine || "";
+    doc.macrosPerServing = data.macrosPerServing || {};
+    doc.ingredients = (data.ingredients || []).map(function (i) {
+      return {
+        name: i.name || "",
+        qty: i.qty || (i.amount ? (i.amount + " " + (i.unit || "")) : ""),
+        note: i.note || ""
+      };
+    });
+    doc.steps = (data.steps || []).map(function (s) {
+      return { t: s.t != null ? s.t : 0, text: s.instruction || s.text || "" };
+    });
+    doc.image = data.image || (data.images && data.images[0] ? (data.images[0].url || data.images[0].data_url || data.images[0]) : null);
+    doc.images = (data.images || []).map(function (im) {
+      return typeof im === "string" ? im : (im.data_url || im.url);
+    });
+    doc._blank = true;
+    memSave(doc);
+    stopUiTimer();
+    cancel(F);
+    openEdit(doc.id);
+  }
+
   function chainSeed() { return (F.session && F.session.seed) || ""; }
 
   /* ---- branch renderers (HTML strings; esc() everything user-made) ---- */
@@ -209,10 +238,20 @@
       ? "Illeszd be a videó linkjét — a háttérben kinyerjük a receptet (kb. 1 perc), közben nyugodtan használhatod az appot."
       : "Az automatikus link-feldolgozás még nem érhető el. Indíts egy üres receptet, és töltsd ki a hozzávalókat és lépéseket kézzel.";
     return '<div class="card add-card">'
+      + '<div class="add-option" style="border: 2px dashed var(--primary); padding: 14px; border-radius: var(--radius); background: var(--card-bg); margin-bottom: 16px;">'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<span style="font-size:22px;">📷</span>'
+      + '<h3 style="margin:0;">Recept fotó(k)ból (Vision AI)</h3>'
+      + '</div>'
+      + '<p class="hint" style="margin:8px 0 12px;">Fotózd le a szakácskönyv oldalát vagy tölts fel egy vagy több képet! A helyi mesterséges intelligencia felismeri az összes adatot, és megnyitja a szerkesztőben ellenőrzésre.</p>'
+      + '<input type="file" id="add-photo-file" accept="image/*" multiple style="display:none;" />'
+      + '<button type="button" class="btn primary" id="add-photo-btn">📷 Fotó(k) kiválasztása vagy készítése</button>'
+      + '<div id="add-photo-status"></div>'
+      + '</div>'
       + '<div class="add-option">'
       + '<h3>Kézi felvitel</h3>'
       + '<p class="hint">Cím, hozzávalók, lépések — a szerkesztőben bármikor módosíthatod.</p>'
-      + '<button type="button" class="btn primary" id="add-blank">Üres recept indítása</button>'
+      + '<button type="button" class="btn" id="add-blank">Üres recept indítása</button>'
       + '</div>'
       + '<div class="add-divider"><span>vagy</span></div>'
       + '<div class="add-option' + (open ? "" : " is-disabled") + '">'
@@ -366,6 +405,74 @@
       if (el) { el.onclick = fn; }
     };
     on("add-back", function () { cancel(F); if (Solin.back) Solin.back("browse"); else go("browse"); });
+
+    var photoBtn = document.querySelector("#add-photo-btn");
+    var photoInput = document.querySelector("#add-photo-file");
+    var photoStatus = document.querySelector("#add-photo-status");
+    if (photoBtn && photoInput) {
+      photoBtn.onclick = function () { photoInput.click(); };
+      photoInput.onchange = async function (e) {
+        var files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        photoBtn.disabled = true;
+        if (photoStatus) {
+          photoStatus.innerHTML = '<p class="add-progress" style="margin-top:10px;"><span class="spinner" aria-hidden="true"></span> '
+            + 'Fotó(k) elemzése helyi Vision AI-val… (kb. 30–60 mp)</p>';
+        }
+        try {
+          var imagesBase64 = [];
+          for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            if (window.SolinImg && SolinImg.compress) {
+              var comp = await SolinImg.compress(f, { maxWidth: 1200, maxHeight: 1200, quality: 0.8 });
+              if (comp && comp.dataUrl) imagesBase64.push(comp.dataUrl);
+            } else {
+              var reader = new FileReader();
+              var durl = await new Promise(function (res, rej) {
+                reader.onload = function () { res(reader.result); };
+                reader.onerror = rej;
+                reader.readAsDataURL(f);
+              });
+              imagesBase64.push(durl);
+            }
+          }
+
+          var apiBase = (window.SolinCfg && SolinCfg.apiBase && SolinCfg.apiBase()) || "";
+          var endpoint = "/api/v1/recipes/extract-image";
+          if (apiBase && (typeof window !== "undefined" && window.location && window.location.origin && !apiBase.startsWith(window.location.origin))) {
+            endpoint = apiBase.replace(/\/+$/, "") + "/api/v1/recipes/extract-image";
+          }
+
+          var resp = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ images: imagesBase64, target_lang: "auto" })
+          });
+
+          if (!resp.ok) {
+            var errData = {};
+            try { errData = await resp.json(); } catch (e) {}
+            throw new Error(errData.detail || ("Hiba a szervertől: HTTP " + resp.status));
+          }
+
+          var extracted = await resp.json();
+          toast("Recept sikeresen felismerve! ✓");
+          startFromExtracted(extracted);
+        } catch (err) {
+          console.error("Recipe photo extraction error:", err);
+          photoBtn.disabled = false;
+          var msg = (err && err.message) || String(err);
+          if (msg.includes("Load failed") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+            msg = "A kérés időtúllépés vagy hálózati megszakadás miatt nem sikerült. Kérlek próbáld újra!";
+          }
+          if (photoStatus) {
+            photoStatus.innerHTML = '<p class="hint" style="color:#ef4444;margin-top:8px;"><b>Hiba történt:</b> ' + esc(msg) + '<br/><button type="button" class="btn sm" id="add-photo-retry" style="margin-top:6px;">Újrapróbálás</button></p>';
+            var retry = document.querySelector("#add-photo-retry");
+            if (retry) retry.onclick = function () { photoInput.click(); };
+          }
+        }
+      };
+    }
     on("add-submit", function () {
       var el = document.querySelector("#add-url");
       var v = el ? el.value : "";

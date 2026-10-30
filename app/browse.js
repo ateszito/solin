@@ -35,10 +35,15 @@ window.Browse = (function () {
     // card always opens the recipe; the full player lives in the detail view.
     // The source is attached lazily (data-src) only when the card scrolls
     // near the viewport — a long list no longer opens N video requests.
+    const firstImg = r.image || (Array.isArray(r.images) && r.images.length > 0
+      ? (typeof r.images[0] === "string" ? r.images[0] : (r.images[0].url || r.images[0].data_url))
+      : null);
     const media = r.video
       ? `<video data-src="${esc(r.video)}#t=0.1" preload="none" playsinline muted loop
           class="rec-video" aria-hidden="true" tabindex="-1"></video>`
-      : `<div class="rec-placeholder" aria-hidden="true">🍳</div>`;
+      : (firstImg
+          ? `<img src="${esc(firstImg)}" class="rec-img" alt="${esc(r.title)}" loading="lazy" />`
+          : `<div class="rec-placeholder" aria-hidden="true">🍳</div>`);
     const meta = [
       r.creator ? `<span>👤 ${esc(r.creator)}</span>` : "",
       r.totalMin ? `<span>⏱ ${esc(r.totalMin)} perc</span>` : "",
