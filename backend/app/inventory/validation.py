@@ -43,8 +43,8 @@ ALLOWED_IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
 #: constant alive for the kill-switch path only.
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
-#: The two image slots (product photo + label photo), in canonical order.
-IMAGE_SLOTS = ("product_photo", "label_photo")
+#: The image slots (product photo + label photo + ingredients photo), in canonical order.
+IMAGE_SLOTS = ("product_photo", "label_photo", "ingredients_photo")
 
 #: §7 / PORTIONS.md §5 — single source of the ``portions`` upper bound.
 #: A request-time sanity bound (not a hard data cap): it keeps per-portion
