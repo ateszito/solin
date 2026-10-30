@@ -173,11 +173,34 @@ window.Detail = (function () {
       r.totalMin ? `⏱ ${esc(r.totalMin)} perc` : "",
       r.servings ? `🍽 ${esc(r.servings)} adag` : ""
     ].filter(Boolean).join(" · ");
-    box.innerHTML = `
-      <div class="detail-wrap${r.video ? "" : " no-media"}">
-      ${r.video ? `<div class="detail-media">
+
+    const recipeImages = (Array.isArray(r.images) && r.images.length > 0)
+      ? r.images.map((img) => (typeof img === "string" ? img : (img.url || img.data_url))).filter(Boolean)
+      : (r.image ? [r.image] : []);
+    const hasMedia = !!(r.video || recipeImages.length > 0);
+
+    let mediaHtml = "";
+    if (r.video) {
+      mediaHtml = `<div class="detail-media">
         <video id="det-video" src="${esc(r.video)}" controls playsinline loop preload="metadata"></video>
-      </div>` : ""}
+      </div>`;
+    } else if (recipeImages.length > 0) {
+      const mainImg = recipeImages[0];
+      const thumbsHtml = recipeImages.length > 1
+        ? `<div class="detail-gallery">
+            ${recipeImages.map((src, idx) => `<img src="${esc(src)}" class="detail-gallery-thumb${idx === 0 ? " active" : ""}" data-idx="${idx}" alt="Fotó ${idx + 1}" />`).join("")}
+          </div>`
+        : "";
+      mediaHtml = `<div class="detail-media detail-media-photo">
+        <img id="det-img" class="detail-img" src="${esc(mainImg)}" alt="${esc(r.title)}" />
+        <span class="detail-img-hint">🔍 Koppints a nagyításhoz</span>
+        ${thumbsHtml}
+      </div>`;
+    }
+
+    box.innerHTML = `
+      <div class="detail-wrap${hasMedia ? "" : " no-media"}">
+      ${mediaHtml}
       <div class="detail-main">
       <div class="detail-head">
         <h2 class="detail-title">${esc(r.title)}</h2>
@@ -212,6 +235,25 @@ window.Detail = (function () {
     // wire interactions
     const editBtn = $("#edit-open");
     if (editBtn) editBtn.addEventListener("click", () => openEdit(r.id));
+
+    // Wire recipe photo lightbox zoom & gallery switcher
+    const detImg = box.querySelector("#det-img");
+    if (detImg) {
+      detImg.addEventListener("click", () => {
+        const lb = window.Solin.openLightbox || (window.FoodCounter && FoodCounter.openLightbox);
+        if (lb) lb(detImg.src, r.title);
+      });
+    }
+    const thumbs = box.querySelectorAll(".detail-gallery-thumb");
+    thumbs.forEach((th) => {
+      th.addEventListener("click", (e) => {
+        e.stopPropagation();
+        thumbs.forEach((t) => t.classList.remove("active"));
+        th.classList.add("active");
+        if (detImg) detImg.src = th.src;
+      });
+    });
+
     const delBtn = $("#recipe-delete");
     if (delBtn) delBtn.addEventListener("click", () => {
       if (!confirm("Törlöd ezt a receptet? Ez nem vonható vissza.")) return;

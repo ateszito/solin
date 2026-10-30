@@ -213,6 +213,10 @@ window.FoodCounter = (function () {
     }, { passive: true });
   }
 
+  if (window.Solin) {
+    window.Solin.openLightbox = openImageViewer;
+  }
+
   /* ---- list rendering with macro progress bars ------------------- */
   function macroVisualBars(m, nPrices) {
     if (!m) return "";
@@ -1617,6 +1621,7 @@ window.FoodCounter = (function () {
      ============================================================ */
   return {
     render,
+    openLightbox: openImageViewer,
     products: FC.products,
     // expose a couple of helpers for browser-level testing / QA hooks
     addRow, doCount, batchCanonical: loadCanonical,
