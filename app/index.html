@@ -18,6 +18,7 @@
   <div class="header-right">
     <span id="env-badge" title="environment (SOLIN_ENV)">—</span>
     <span id="recipe-count" class="pill">0 recipes</span>
+    <a class="btn sm ghost" id="add-open" href="#add" style="margin-left:8px">+ Add recipe</a>
   </div>
 </header>
 
@@ -32,6 +33,13 @@
     </div>
     <div class="recipe-grid" id="recipe-grid"></div>
     <p id="browse-empty" class="empty hidden">No recipes match your search.</p>
+  </section>
+
+  <!-- ================= ADD RECIPE (ingestion flow, S16) ================== -->
+  <section class="view hidden" id="view-add">
+    <button class="back-btn" id="add-back">&larr; Back to recipes</button>
+    <h2 class="view-title">Add a recipe</h2>
+    <div id="add-inner"></div>
   </section>
 
   <!-- ================= RECIPE DETAIL ================= -->
@@ -167,7 +175,10 @@
 <script src="inventory.js"></script>
 <script src="match.js"></script>
 <script src="foodcounter.js"></script>
+<script src="ingest.js"></script>
+<script src="add.js"></script>
 <script src="pairing.js"></script>
+
 <script src="app.js"></script>
 </body>
 </html>

@@ -26,7 +26,8 @@ window.SolinStore = (function () {
   /* ---- recipes: merge seed data with user edits ---- */
   function getRecipes() {
     const edits = load(K.edits, {});
-    return window.SOLIN_DATA.recipes.map((r) => {
+    const custom = load("solin.custom.recipes.v1", []);
+    return custom.concat(window.SOLIN_DATA.recipes).map((r) => {
       const patch = edits[r.id] || {};
       const out = Object.assign({}, r);
       Object.keys(patch).forEach((f) => { out[f] = patch[f]; });

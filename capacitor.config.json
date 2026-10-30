@@ -1,0 +1,17 @@
+{
+  "appId": "com.ateszito.solin.dev",
+  "appName": "Solin (Dev)",
+  "webDir": "app",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "capacitor"
+  },
+  "plugins": {
+    "StatusBar": {
+      "style": "DARK"
+    },
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

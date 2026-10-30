@@ -133,6 +133,8 @@ services:
   solin-dev-api:
     image: solin:dev-api
     container_name: solin-dev-api
+    environment:
+      SOLIN_INGEST_ENABLED: "true"
     networks: [solin_net]
     volumes:
       - vol_solin_dev_data:/srv/data
