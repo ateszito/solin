@@ -215,6 +215,7 @@ window.FoodCounter = (function () {
      SECTION 2/4 — product create/edit form + photo upload
      ============================================================ */
   function openForm(idOrNull) {
+    FC.stagedSlots = {};
     const panel = $("#fc-detail");
     const isEdit = !!idOrNull;
     panel.hidden = false;
@@ -254,7 +255,8 @@ window.FoodCounter = (function () {
         <input type="file" accept="image/jpeg,image/png,image/webp"
                data-slot-file="${slot}"
                aria-label="${label} feltöltése" />
-        <small class="hint">JPG / PNG / WebP, max. 10 MB — új feltöltés felülírja</small>
+        <div data-slot-status="${slot}"></div>
+        <small class="hint">JPG / PNG / WebP — automatikusan optimalizálva a feltöltéshez</small>
       </div>`;
     };
 
@@ -312,11 +314,13 @@ window.FoodCounter = (function () {
       panel.querySelector("#fc-prices").insertAdjacentHTML("beforeend", priceRowHtml("", "", "", ""));
     });
     panel.querySelector("#fc-form").addEventListener("submit", (e) => { e.preventDefault(); submitForm(p.id); });
+    bindSlotUploads(panel);
   }
 
   function resetForm() {
     const panel = $("#fc-detail");
     FC.editingId = null;
+    FC.stagedSlots = {};
     panel.innerHTML = `
       <div class="fc-detail-head">
         <button class="fc-back" data-fcback="1">← Vissza a listához</button>
@@ -367,6 +371,7 @@ window.FoodCounter = (function () {
       panel.querySelector("#fc-prices").insertAdjacentHTML("beforeend", priceRowHtml("", "", "", ""));
     });
     panel.querySelector("#fc-form").addEventListener("submit", (e) => { e.preventDefault(); submitForm(null); });
+    bindSlotUploads(panel);
   }
 
   // slotField without needing a product doc (new-product form)
@@ -375,8 +380,239 @@ window.FoodCounter = (function () {
       <span class="fc-slot-label">${label}</span>
       <input type="file" accept="image/jpeg,image/png,image/webp"
              data-slot-file="${slot}" aria-label="${label} feltöltése" />
-      <small class="hint">JPG / PNG / WebP, max. 10 MB — új feltöltés felülírja</small>
+      <div data-slot-status="${slot}"></div>
+      <small class="hint">JPG / PNG / WebP — automatikusan optimalizálva a feltöltéshez</small>
     </div>`;
+  }
+
+  /* ---- Image Compression & OCR Binding ---- */
+  function bindSlotUploads(panel) {
+    FC.stagedSlots = FC.stagedSlots || {};
+    panel.querySelectorAll("[data-slot-file]").forEach((input) => {
+      const slot = input.dataset.slotFile;
+      const statusEl = panel.querySelector(`[data-slot-status="${slot}"]`);
+
+      input.addEventListener("change", async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+
+        if (statusEl) {
+          statusEl.innerHTML = `<span class="hint" style="color:var(--text-2);">📷 Kép tömörítése és optimalizálása...</span>`;
+        }
+
+        try {
+          const comp = await (window.SolinImg
+            ? SolinImg.compress(file)
+            : Promise.resolve({ file: file, blob: file, compressedSize: file.size, originalSize: file.size }));
+          FC.stagedSlots[slot] = comp;
+
+          // Render / update preview thumbnail
+          let previewEl = panel.querySelector(`[data-slot-preview="${slot}"]`);
+          if (previewEl && comp.dataUrl) {
+            previewEl.src = comp.dataUrl;
+          } else if (comp.dataUrl) {
+            const wrap = input.closest(".fc-slot-upload");
+            if (wrap && !wrap.querySelector(`img[data-slot-preview="${slot}"]`)) {
+              const img = document.createElement("img");
+              img.src = comp.dataUrl;
+              img.dataset.slotPreview = slot;
+              input.insertAdjacentElement("beforebegin", img);
+            }
+          }
+
+          const ratioText = comp.ratio ? ` (-${comp.ratio}%)` : "";
+          const origText = window.SolinImg ? SolinImg.formatBytes(file.size) : `${Math.round(file.size / 1024)} KB`;
+          const compText = window.SolinImg ? SolinImg.formatBytes(comp.compressedSize) : `${Math.round(comp.compressedSize / 1024)} KB`;
+
+          if (statusEl) {
+            statusEl.innerHTML = `
+              <div class="fc-slot-preview-wrap">
+                <span class="fc-compress-badge">✓ Optimalizálva: ${origText} → ${compText}${ratioText}</span>
+              </div>
+            `;
+          }
+
+          // If label_photo: run OCR to extract nutrition data
+          if (slot === "label_photo") {
+            runLabelOcr(panel, comp, statusEl);
+          }
+        } catch (err) {
+          console.error("Compression error:", err);
+          if (statusEl) {
+            statusEl.innerHTML = `<span class="hint err">Hiba az optimalizálás során: ${esc(err.message)}</span>`;
+          }
+        }
+      });
+    });
+  }
+
+  async function runLabelOcr(panel, comp, statusEl) {
+    if (!window.SolinImg || !SolinImg.extractNutrition) return;
+
+    let ocrBox = statusEl.querySelector(".fc-ocr-box");
+    if (!ocrBox) {
+      ocrBox = document.createElement("div");
+      ocrBox.className = "fc-ocr-box";
+      statusEl.appendChild(ocrBox);
+    }
+    ocrBox.innerHTML = `
+      <div class="fc-ocr-status">
+        <span class="fc-ocr-spinner"></span>
+        <span class="fc-ocr-text">🔍 Címke olvasása (makrók kiolvasása)...</span>
+      </div>
+    `;
+
+    try {
+      const imgSource = comp.canvas || comp.dataUrl || comp.blob;
+      const res = await SolinImg.extractNutrition(imgSource, (prog) => {
+        const textEl = ocrBox.querySelector(".fc-ocr-text");
+        if (textEl && prog.message) textEl.textContent = prog.message;
+      });
+
+      const macros = res && res.macros ? res.macros : {};
+      const MACRO_KEYS = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium"];
+      const detected = {};
+      let count = 0;
+      MACRO_KEYS.forEach((k) => {
+        if (macros[k] != null && !isNaN(macros[k])) {
+          detected[k] = macros[k];
+          count++;
+        }
+      });
+
+      if (count === 0) {
+        ocrBox.className = "fc-ocr-box";
+        ocrBox.innerHTML = `
+          <div class="hint" style="margin:0;">
+            ℹ️ Nem sikerült egyértelmű makrókat felismerni a képen. A mezők manuálisan kitölthetők.
+          </div>
+        `;
+        return;
+      }
+
+      // Check if existing macro values exist in form
+      const formEl = panel.querySelector("#fc-form");
+      const existing = {};
+      let hasExisting = false;
+      MACRO_KEYS.forEach((k) => {
+        const inp = formEl.querySelector(`[data-macro="${k}"]`);
+        if (inp && inp.value.trim() !== "") {
+          const num = Number(inp.value.trim());
+          if (!isNaN(num)) {
+            existing[k] = num;
+            hasExisting = true;
+          }
+        }
+      });
+
+      const labels = {
+        calories: "Kalória (kcal)",
+        protein: "Fehérje (g)",
+        carbs: "Szénhidrát (g)",
+        fat: "Zsír (g)",
+        fiber: "Rost (g)",
+        sugar: "Cukor (g)",
+        sodium: "Nátrium (mg)"
+      };
+
+      if (hasExisting) {
+        showMacroCompareModal(existing, detected, labels, () => {
+          applyMacros(formEl, detected);
+          ocrBox.className = "fc-ocr-box fc-ocr-success";
+          ocrBox.innerHTML = `✓ ${count} makró sikeresen felülírva a fotóból!`;
+          toast("✓ Makrók frissítve a címkefotó alapján!");
+        });
+      } else {
+        applyMacros(formEl, detected);
+        ocrBox.className = "fc-ocr-box fc-ocr-success";
+        ocrBox.innerHTML = `✓ ${count} makró automatikusan beillesztve a fotóból!`;
+        toast("✓ Makrók automatikusan beillesztve a fotóból!");
+      }
+    } catch (err) {
+      console.warn("[FoodCounter] OCR extraction error:", err);
+      ocrBox.className = "fc-ocr-box";
+      ocrBox.innerHTML = `
+        <div class="hint" style="margin:0;">
+          ℹ️ Címkeolvasás: ${esc(err.message || "nem sikerült automatikusan")}
+        </div>
+      `;
+    }
+  }
+
+  function applyMacros(formEl, macros) {
+    for (const [k, v] of Object.entries(macros)) {
+      if (v == null) continue;
+      const inp = formEl.querySelector(`[data-macro="${k}"]`);
+      if (inp) {
+        inp.value = v;
+        inp.classList.remove("macro-updated-flash");
+        void inp.offsetWidth; // trigger reflow for smooth re-trigger
+        inp.classList.add("macro-updated-flash");
+      }
+    }
+  }
+
+  function showMacroCompareModal(current, detected, labels, onConfirm) {
+    let overlay = document.querySelector("#fc-macro-modal");
+    if (overlay) overlay.remove();
+
+    overlay = document.createElement("div");
+    overlay.id = "fc-macro-modal";
+    overlay.className = "fc-modal-overlay";
+
+    const keys = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium"];
+    const rowsHtml = keys.map((k) => {
+      const curVal = current[k] != null ? current[k] : "—";
+      const newVal = detected[k] != null ? detected[k] : "—";
+      const isDiff = detected[k] != null && current[k] !== detected[k];
+      return `
+        <tr>
+          <td><b>${labels[k] || k}</b></td>
+          <td>${curVal}</td>
+          <td class="${isDiff ? "fc-compare-new" : ""}">${newVal}${isDiff ? " ★" : ""}</td>
+        </tr>
+      `;
+    }).join("");
+
+    overlay.innerHTML = `
+      <div class="fc-modal-card">
+        <div class="fc-modal-header">
+          <h3>Frissíted a makrókat a fotó alapján?</h3>
+          <button type="button" class="btn sm ghost" id="fc-modal-close" style="font-size:16px;padding:2px 8px;">✕</button>
+        </div>
+        <p class="hint" style="margin:0 0 10px;">
+          A feltöltött címkefotóból új tápérték adatokat olvastunk ki. Szeretnéd felülírni a jelenlegi értékeket?
+        </p>
+        <table class="fc-compare-table">
+          <thead>
+            <tr>
+              <th>Tápanyag</th>
+              <th>Jelenlegi</th>
+              <th>Fotóból olvasott</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+        <div class="fc-modal-actions">
+          <button type="button" class="btn sm ghost" id="fc-modal-cancel">Megtartom a régit</button>
+          <button type="button" class="btn sm primary" id="fc-modal-apply">Frissítés a fotó alapján</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.querySelector("#fc-modal-close").addEventListener("click", close);
+    overlay.querySelector("#fc-modal-cancel").addEventListener("click", close);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+    overlay.querySelector("#fc-modal-apply").addEventListener("click", () => {
+      close();
+      if (typeof onConfirm === "function") onConfirm();
+    });
   }
 
   function priceRowHtml(amount, currency, pack, source) {
@@ -471,16 +707,34 @@ window.FoodCounter = (function () {
       });
       const newId = doc && doc.id ? doc.id : null;
 
-      // upload any chosen photos (multipart), one slot at a time
+      // upload any chosen photos (multipart), one slot at a time with client-side compression
       for (const slot of ["product_photo", "label_photo"]) {
-        const fi = formEl.querySelector(`[data-slot-file="${slot}"]`);
-        if (!fi || !fi.files || !fi.files[0]) continue;
-        const f = fi.files[0];
-        if (f.size > 10 * 1024 * 1024) { toast(`Túl nagy: ${f.name} (max 10 MB)`); continue; }
+        let fileToUpload = null;
+        if (FC.stagedSlots && FC.stagedSlots[slot]) {
+          fileToUpload = FC.stagedSlots[slot].file || FC.stagedSlots[slot].blob;
+        } else {
+          const fi = formEl.querySelector(`[data-slot-file="${slot}"]`);
+          if (fi && fi.files && fi.files[0]) {
+            fileToUpload = fi.files[0];
+          }
+        }
+        if (!fileToUpload) continue;
+
+        // Ensure compression before wire transfer (guarantees <1MB)
+        if (window.SolinImg && (!FC.stagedSlots || !FC.stagedSlots[slot])) {
+          try {
+            const comp = await SolinImg.compress(fileToUpload);
+            fileToUpload = comp.file || comp.blob;
+          } catch (e) {
+            console.warn("Fallback to raw file on compression failure:", e);
+          }
+        }
+
         const fd = new FormData();
-        fd.append("file", f);
+        fd.append("file", fileToUpload);
         await api(`/${encodeURIComponent(newId)}/images/${slot}`, { method: "POST", body: fd });
       }
+      FC.stagedSlots = {};
 
       toast("Mentve: " + (body.name || doc.name));
       renderList();

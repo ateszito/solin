@@ -109,9 +109,9 @@
 
     <div id="match-results"></div>
   </section>
-  <!-- ================= FOOD COUNTER (real macros + price) ================= -->
+  <!-- ================= PRODUCT INVENTORY (products, macros, real-cost) ================= -->
   <section class="view hidden" id="view-foodcounter">
-    <h2 class="view-title">Food &amp; Macro Counter</h2>
+    <h2 class="view-title">Product Inventory</h2>
     <p class="hint">Raktári termékek az API-ból, real makrókkal és ároptiókkal. Adj hozzá terméket, majd párosítsd egy étel alapanyagaival, és a számoló a tényleges makrókat + az elhasznált portiók árát adja. A mentett étel a localhoston (localStorage) marad a készüléken.</p>
 
     <div class="card fc-product-card">
@@ -155,12 +155,14 @@
   <button data-nav="browse" class="active"><span class="nav-ic">▤</span><span>Browse</span></button>
   <button data-nav="inventory"><span class="nav-ic">▣</span><span>Inventory</span></button>
   <button data-nav="match"><span class="nav-ic">◎</span><span>What&nbsp;I&nbsp;have</span></button>
-  <button data-nav="foodcounter"><span class="nav-ic">⌬</span><span>Food&nbsp;Counter</span></button>
+  <button data-nav="foodcounter"><span class="nav-ic">⌬</span><span>Product&nbsp;Inventory</span></button>
 </nav>
 
 <div id="toast" class="toast hidden"></div>
 <script src="_solin.env.js"></script>
 <script src="config.js"></script>
+<script src="vendor/tesseract.min.js"></script>
+<script src="imgutil.js"></script>
 <script src="data.js"></script>
 <script src="state.js"></script>
 <script src="core.js"></script>

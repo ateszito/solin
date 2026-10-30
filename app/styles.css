@@ -569,6 +569,55 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
 }
 .fc-slot-upload img { max-width: 150px; max-height: 150px; border-radius: 8px; }
+.fc-slot-preview-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+.fc-compress-badge {
+  display: inline-block; padding: 3px 8px; border-radius: 6px;
+  background: #E8F5E9; color: #2E7D32; font-size: 11px; font-weight: 600;
+}
+.fc-ocr-box {
+  width: 100%; padding: 10px 12px; border-radius: 8px;
+  background: #FFF8E1; border: 1px solid #FFE082; font-size: 12px;
+  margin-top: 6px; display: flex; flex-direction: column; gap: 6px;
+}
+.fc-ocr-status {
+  display: flex; align-items: center; gap: 8px; font-weight: 600; color: #795548;
+}
+.fc-ocr-spinner {
+  width: 14px; height: 14px; border: 2px solid #FFB300; border-top-color: transparent;
+  border-radius: 50%; animation: fc-spin .8s linear infinite; display: inline-block;
+}
+@keyframes fc-spin { to { transform: rotate(360deg); } }
+.fc-ocr-success { background: #E8F5E9; border-color: #A5D6A7; color: #1B5E20; }
+.fc-ocr-btn { margin-top: 4px; align-self: flex-start; }
+
+@keyframes macro-flash {
+  0% { background-color: #C8E6C9; border-color: #4CAF50; }
+  100% { background-color: #fff; }
+}
+.macro-updated-flash { animation: macro-flash 1.5s ease-out; }
+
+/* Macro Compare Modal */
+.fc-modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.fc-modal-card {
+  background: #FFFFFF; border-radius: var(--radius);
+  max-width: 420px; width: 100%;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.22);
+  padding: 20px; max-height: 90vh; overflow-y: auto;
+  border: 1px solid var(--line);
+}
+.fc-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.fc-modal-header h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text); }
+.fc-compare-table { width: 100%; border-collapse: collapse; margin: 12px 0 16px; font-size: 13px; }
+.fc-compare-table th, .fc-compare-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.fc-compare-table th { background: var(--secondary-bg); font-size: 11px; text-transform: uppercase; color: var(--text-2); }
+.fc-compare-new { color: var(--success); font-weight: 700; }
+.fc-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .fc-form-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 
 /* ---- counter rows ---- */
