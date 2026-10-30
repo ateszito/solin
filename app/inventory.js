@@ -25,17 +25,28 @@ window.Inventory = (function () {
       return `<li>
         <span class="inv-name">${esc(i.name)}${i.qty ? `<small>${esc(i.qty)} ${esc(i.unit || "")}</small>` : ""}</span>
         ${subs}
-        <button class="rm" data-rm="${esc(i.name)}" aria-label="töröl">×</button>
+        <button class="rm" data-rm="${esc(i.name)}" aria-label="${esc(i.name)} törlése" title="Törlés">×</button>
       </li>`;
     }).join("") : `<li class="hint">Még üres — add hozzá valamit felül.</li>`;
+  }
 
+  // Bind static controls ONCE. (Previously render() re-attached these on
+  // every tab visit, so one tap on "Hozzáadás" fired N handlers: the first
+  // added the item, the rest toasted "Írd be az alapanyag nevét".)
+  let _bound = false;
+  function init() {
+    if (_bound) return;
+    _bound = true;
     $("#inv-add").addEventListener("click", addBase);
     $("#sub-add").addEventListener("click", addSub);
-    $("#inv-name").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addBase(); } });
-    $("#sub-name").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSub(); } });
-    $("#inv-list").querySelectorAll("[data-rm]").forEach((b) =>
-      b.addEventListener("click", () => removeBase(b.dataset.rm))
+    ["#inv-name", "#inv-qty", "#inv-unit"].forEach((sel) =>
+      $(sel).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addBase(); } })
     );
+    $("#sub-name").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSub(); } });
+    $("#inv-list").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-rm]");
+      if (b) removeBase(b.dataset.rm);
+    });
   }
 
   function addBase() {
@@ -66,6 +77,7 @@ window.Inventory = (function () {
     const inv = S.getInventory();
     const target = inv.find((i) => S.similar(i.name, base));
     if (!target) { toast("Az alapanyag nem a listádon"); return; }
+    target.subs = target.subs || [];
     if (target.subs.every((s) => !S.similar(s, sub))) target.subs.push(sub);
     S.setInventory(inv);
     $("#sub-name").value = "";
@@ -75,12 +87,22 @@ window.Inventory = (function () {
   }
 
   function removeBase(name) {
-    const inv = S.getInventory().filter((i) => !S.similar(i.name, name));
+    const before = S.getInventory();
+    // exact (normalized) match only — similar() would also delete e.g.
+    // "csirkemell" when the user removes "csirke".
+    const inv = before.filter((i) => S.norm(i.name) !== S.norm(name));
     S.setInventory(inv);
-    toast("Törölve: " + name);
     if (inventoryChangedCallback) inventoryChangedCallback();
     render();
+    toast("Törölve: " + name, null, {
+      label: "Visszavonás",
+      onClick: () => {
+        S.setInventory(before);
+        if (inventoryChangedCallback) inventoryChangedCallback();
+        render();
+      }
+    });
   }
 
-  return { render, onInventoryChanged };
+  return { init, render, onInventoryChanged };
 })();

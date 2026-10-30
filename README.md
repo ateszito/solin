@@ -4,39 +4,42 @@ Solin — Recipe Platform
 
 ## Overview
 
-Solin is a recipe platform designed around video-first cooking tutorials. Every recipe has structured ingredients, macros (calories, protein, carbs, fat), step-by-step instructions synced to video timestamps, and an interactive mobile-first UI.
+Solin is a Hungarian, video-first recipe app built around TikTok cooking videos. Every recipe has structured ingredients, macros (calories, protein, carbs, fat), and step-by-step instructions synced to video timestamps.
+
+### Features
+
+- **Browse & search** — recipe cards with lazy-loaded video previews, full-text search, tag filters; scroll position is kept when returning from a recipe.
+- **Recipe detail** — video player with timestamped steps, ingredient checklist (persisted per recipe, with "Pipák törlése" + undo), substitutes from pantry and seed suggestions.
+- **Cooking mode** — follow-along steps, keeps the screen awake (Wake Lock) while cooking.
+- **Portion scaling** — client + `/api/v1/recipes/{id}/scale` with HALF_UP rounding.
+- **Pantry matching** — "mit főzzek?" scoring of recipes against what you have at home.
+- **Product pairing & macros** — pair ingredients with real inventory products, count real macros, per-portion values and total cost; quick-select and custom ("egyéb hozzávaló") items.
+- **Food counter** — product inventory with nutrition details.
+- **Add / edit recipes** — from a TikTok/Instagram link (ingestion pipeline, feature-flagged) or from scratch; unsaved new drafts are discarded automatically.
+- **Light / dark theme** — follows the system setting; WCAG AA contrast palette.
+- **Environments** — dev / staging / prod, Cloudflare Access credentials kept in session storage on the web unless "Megjegyzés ezen az eszközön" is ticked.
 
 ## Project Structure
 
 ```
-Solin/
-├── README.md              ← you are here
-├── .gitignore
-├── docs/
-│   ├── ARCHITECTURE_PLAN.md
-│   ├── use-cases/
-│   │   └── TIKTOK_STUDIO_RECIPES.md
-│   ├── ENVIRONMENTS.md
-│   └── DEV_ENVIRONMENT.md
-├── schemas/
-│   ├── recipe.schema.json (full JSON Schema)
-│   └── database.sql (PostgreSQL + seed data)
-├── design/
-│   ├── ui_design_specs.md (mobile-first design system)
-│   └── prototypes/
-│       └── mobile-recipe-ui.html (interactive prototype)
-├── components/
-│   ├── VideoPlayer/
-│   │   ├── VideoPlayer.jsx (React component)
-│   │   └── VideoPlayer.css
-│   └── index.js
-├── tests/
-├── backend/
-├── frontend/
-├── database/
-├── notebooks/
-├── scripts/
-└── config/
+solin/
+├── app/                  ← the shipped frontend (vanilla JS SPA, no build step)
+│   ├── index.html, styles.css
+│   ├── core.js           routing (hash), tabs, history/back, toasts
+│   ├── state.js          localStorage store (recipes, pantry, checks…)
+│   ├── data.js           seed recipes
+│   ├── browse.js, detail.js, edit.js, add.js, ingest.js, match.js
+│   ├── pairing.js, pairing_ui.js, quickpick.js, fcapi.js, invsync.js
+│   ├── foodcounter.js, inventory.js, scale.js, config.js
+│   └── tests/            Node specs (npm run test:frontend)
+├── backend/app/          FastAPI (recipes, scale, ingestion, inventory)
+├── ios/                  Capacitor iOS shell
+├── schemas/              recipe.schema.json, database.sql
+├── seed/                 SQL seeds per environment
+├── design/, docs/        design specs, architecture & environment docs
+├── components/           legacy React VideoPlayer prototype (unused by app/)
+├── scripts/              dev server, mobile env switch, CI/deploy
+└── tests/                pytest suites for the backend
 ```
 
 ## Key Files (quick links)
@@ -73,18 +76,22 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 3. Frontend
-cd ~/Documents/Solin/frontend
-npm init
-npm install react react-dom
-npm run dev
+The app is plain HTML/CSS/JS — no build step:
+
+```bash
+cd app && python3 -m http.server 8765
+# open http://127.0.0.1:8765
+npm run test:frontend      # Node specs
+```
+
+iOS (Capacitor): `npm run cap:dev` (or `cap:staging` / `cap:prod`), then `npm run cap:sync && npm run cap:open`.
 
 ### 4. Prototype
-bash
-open design/prototypes/mobile-recipe-ui.html
-
-## Architecture
-
-- Frontend: React Native (Expo) + Next.js
+bashvanilla JS single-page app (`app/`), hash routing, localStorage persistence
+- Mobile: Capacitor 8 (iOS) wrapping the same `app/` bundle
+- Backend: FastAPI (+ PostgreSQL schema in `schemas/database.sql`)
+- Edge: Cloudflare (Access service tokens, `*.ateszito.com`)
+- Deploy: Docker (`Dockerfile`, `Dockerfile.api`, `docker-compose.yml`), see DEPLOY.mdt.js
 - Backend: FastAPI + PostgreSQL
 - CDN: Cloudflare R2 for video
 - Search: PostgreSQL GIN indexes
@@ -107,7 +114,8 @@ For the full production template (R2, Redis), see `docs/ENVIRONMENTS.md`.
 ## Design System
 
 - Primary: #FF6B6B
-- Secondary: #2D3436
+- Secondary`#D63A3A` (text/buttons, AA contrast), accent `#FF6B6B`
+- Dark mode via `prefers-color-scheme` (tokens in `app/styles.css`)
 - Mobile-first: 320px+
 - Responsive: mobile → tablet → desktop
 
@@ -116,7 +124,16 @@ For the full production template (R2, Redis), see `docs/ENVIRONMENTS.md`.
 | Method | Endpoint | Description |
 |--------|--|--|
 | GET | /api/v1/recipes | List recipes |
+| GET | /api/v1/recipes/search?q=QUERY | Search recipes |
+| GET | /api/v1/recipes/trending | Trending recipes |
 | GET | /api/v1/recipes/{id} | Get recipe |
 | POST | /api/v1/recipes | Create recipe |
-| GET | /api/v1/search?q=QUERY | Search recipes |
+| DELETE | /api/v1/recipes/{id} | Delete recipe |
+| POST | /api/v1/recipes/{id}/scale | Scale portions |
 | POST | /api/v1/videos/upload | Upload video |
+| POST | /api/v1/ingest | Submit a TikTok/IG link for ingestion (flagged) |
+| GET | /api/v1/ingest/{id} | Poll ingestion status / draft |
+| GET/POST | /api/v1/inventory | List / create products |
+| GET/PUT | /api/v1/inventory/{product_id} | Get / update product |
+| POST | /api/v1/inventory/macros/count | Count real macros + cost |
+| GET | /api/env, /healthz | Environment info, health

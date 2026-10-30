@@ -5,15 +5,22 @@
    ============================================================ */
 
 :root {
+  color-scheme: light dark;
   --bg: #FFFFFF;
+  --surface: #FFFFFF;
   --card-bg: #FFF3E0;
-  --primary: #FF6B6B;
-  --primary-dark: #E85A5A;
+  /* WCAG AA: white text on the old #FF6B6B was ~2.8:1. #D63A3A gives
+     4.6:1 for white-on-primary and primary-on-white text. The light
+     brand coral stays available for decorative fills (--primary-soft). */
+  --primary: #D63A3A;
+  --primary-dark: #B52C2C;
+  --primary-soft: #FF6B6B;
   --secondary-bg: #F5F5F5;
-  --success: #4CAF50;
+  --success: #2E8B3A;
   --warn: #FF9F43;
   --text: #2D2D2D;
-  --text-2: #8E8E93;
+  /* was #8E8E93 (3.3:1 on white) — #6B6B70 is 5.3:1 */
+  --text-2: #6B6B70;
   --line: #ECECEC;
   --radius: 14px;
   --shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 14px rgba(0,0,0,.06);
@@ -62,8 +69,8 @@ body {
 /* env badge — text color/background set inline by config.js per env
    (production red / staging amber / development green) */
 #env-badge {
-  display: inline-block; padding: 3px 10px; border-radius: 999px;
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  display: inline-block; padding: 3px 10px; border-radius: 999px; border: none;
+  font: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .04em; margin-right: 8px;
   cursor: pointer; user-select: none;
   transition: transform .1s, opacity .15s;
@@ -254,6 +261,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   font-size: 15px; font-weight: 700; color: var(--text);
 }
 .sec-body { padding: 0 16px 14px; }
+.sec-body:not(.open) { display: none; }
+.detail-section > button.sec-head::after {
+  content: ""; width: 8px; height: 8px; margin-left: 10px; flex: 0 0 auto;
+  border-right: 2px solid var(--text-2); border-bottom: 2px solid var(--text-2);
+  transform: rotate(45deg) translateY(-2px); transition: transform .15s;
+}
+.detail-section > button.sec-head[aria-expanded="false"]::after { transform: rotate(-45deg); }
+.detail-section > button.sec-head > span { margin-left: auto; }
+.detail-section > button.sec-head > span:not(.pg-badge) { font-size: 12.5px; color: var(--text-2); font-weight: 700; }
 
 .ing-list { list-style: none; margin: 0; padding: 0; }
 .ing-list li {
@@ -381,10 +397,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   .app-main { padding: 22px 24px 40px; }
   .recipe-grid { grid-template-columns: repeat(2, 1fr); }
   .macro-cards { grid-template-columns: repeat(4, 1fr); }
-  .detail-wrap { display: grid; grid-template-columns: minmax(0, 640px) 320px; gap: 22px; align-items: start; justify-content: center; }
+  /* Source videos are portrait (TikTok 9:16): give the player the NARROW
+     column and the ingredient / pairing content the wide one. */
+  .detail-wrap { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 720px); gap: 24px; align-items: start; justify-content: center; }
+  .detail-wrap.no-media { grid-template-columns: minmax(0, 760px); }
   .detail-media { margin-bottom: 0; position: sticky; top: 76px; }
-  .detail-media video { max-height: 70vh; }
-  .detail-main { max-width: 640px; }
+  .detail-media video { max-height: calc(100vh - 160px); object-fit: contain; }
+  .detail-main { max-width: 720px; }
   /* t_1fbc1ef4 / contract §14.2-C5: "display:none" hid the ONLY Edit
      button (rendered inside .detail-actions, detail.js render()); the
      "inline on head" fallback it references was never implemented.
@@ -569,6 +588,55 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
 }
 .fc-slot-upload img { max-width: 150px; max-height: 150px; border-radius: 8px; }
+.fc-slot-preview-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+.fc-compress-badge {
+  display: inline-block; padding: 3px 8px; border-radius: 6px;
+  background: #E8F5E9; color: #2E7D32; font-size: 11px; font-weight: 600;
+}
+.fc-ocr-box {
+  width: 100%; padding: 10px 12px; border-radius: 8px;
+  background: #FFF8E1; border: 1px solid #FFE082; font-size: 12px;
+  margin-top: 6px; display: flex; flex-direction: column; gap: 6px;
+}
+.fc-ocr-status {
+  display: flex; align-items: center; gap: 8px; font-weight: 600; color: #795548;
+}
+.fc-ocr-spinner {
+  width: 14px; height: 14px; border: 2px solid #FFB300; border-top-color: transparent;
+  border-radius: 50%; animation: fc-spin .8s linear infinite; display: inline-block;
+}
+@keyframes fc-spin { to { transform: rotate(360deg); } }
+.fc-ocr-success { background: #E8F5E9; border-color: #A5D6A7; color: #1B5E20; }
+.fc-ocr-btn { margin-top: 4px; align-self: flex-start; }
+
+@keyframes macro-flash {
+  0% { background-color: #C8E6C9; border-color: #4CAF50; }
+  100% { background-color: #fff; }
+}
+.macro-updated-flash { animation: macro-flash 1.5s ease-out; }
+
+/* Macro Compare Modal */
+.fc-modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.fc-modal-card {
+  background: #FFFFFF; border-radius: var(--radius);
+  max-width: 420px; width: 100%;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.22);
+  padding: 20px; max-height: 90vh; overflow-y: auto;
+  border: 1px solid var(--line);
+}
+.fc-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.fc-modal-header h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--text); }
+.fc-compare-table { width: 100%; border-collapse: collapse; margin: 12px 0 16px; font-size: 13px; }
+.fc-compare-table th, .fc-compare-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.fc-compare-table th { background: var(--secondary-bg); font-size: 11px; text-transform: uppercase; color: var(--text-2); }
+.fc-compare-new { color: var(--success); font-weight: 700; }
+.fc-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .fc-form-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 
 /* ---- counter rows ---- */
@@ -749,4 +817,207 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   /* custom rows stay in one column flow — NO horizontal scroll (§11.6 A4) */
   .pg-cust-cell { flex: 1 1 46%; }
   .pg-cust-grid input { padding: 6px 7px; }
+}
+
+/* ============================================================
+   UI/UX polish layer — accessibility, touch, feedback
+   ============================================================ */
+
+/* utility: visually hidden but available to screen readers */
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* visible keyboard focus everywhere (mouse/touch clicks stay clean) */
+:where(button, a, [tabindex], summary):focus-visible {
+  outline: 3px solid rgba(255, 107, 107, .55); outline-offset: 2px; border-radius: 10px;
+}
+
+/* iOS Safari zooms the page when focusing a field < 16px — stop that on phones */
+@media (max-width: 699px) {
+  input, select, textarea { font-size: 16px; }
+}
+
+/* disabled state */
+.btn:disabled, .btn[disabled] { opacity: .5; cursor: not-allowed; transform: none; }
+.btn.danger:hover { background: #FDECEC; }
+
+/* header */
+.header-home { display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; }
+.header-right { display: flex; align-items: center; gap: 6px; }
+.header-right .btn { margin: 0; }
+@media (max-width: 420px) {
+  #recipe-count, .version { display: none; }
+}
+
+/* bottom nav — SVG icons */
+.bottom-nav svg.nav-ic {
+  width: 22px; height: 22px; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+.bottom-nav button { min-height: 44px; }
+@media (min-width: 1080px) {
+  .bottom-nav svg.nav-ic { width: 18px; height: 18px; }
+}
+
+/* toast with action (undo) */
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast-action {
+  background: none; border: none; color: #FFD166; font: inherit; font-weight: 800;
+  cursor: pointer; padding: 4px 2px; text-transform: uppercase; letter-spacing: .03em; font-size: 12px;
+}
+
+/* bigger touch targets for remove buttons (WCAG 2.5.8 ≥ 24px) */
+.chip button { width: 24px; height: 24px; font-size: 13px; }
+.inv-list .rm, .dyn-list .rm { min-width: 36px; min-height: 36px; border-radius: 8px; }
+.inv-list .rm:hover, .dyn-list .rm:hover { background: #FDECEC; }
+
+/* browse: tag bar & cards */
+.tagbar { scrollbar-width: none; scroll-snap-type: x proximity; }
+.tagbar::-webkit-scrollbar { display: none; }
+.tagbar button { scroll-snap-align: start; min-height: 32px; }
+.rec-placeholder {
+  width: 100%; height: 100%; display: grid; place-items: center;
+  font-size: 44px; background: linear-gradient(135deg, #FFE3D3, #FFF3E0);
+}
+.rec-play {
+  position: absolute; left: 10px; bottom: 10px; width: 34px; height: 34px; border-radius: 50%;
+  background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center;
+  font-size: 13px; pointer-events: none; transition: opacity .15s;
+}
+.macro-chip.muted { color: var(--text-2); font-weight: 600; }
+@media (hover: hover) {
+  .recipe-card { transition: transform .15s, box-shadow .15s; }
+  .recipe-card:hover { transform: translateY(-2px); box-shadow: 0 2px 6px rgba(0,0,0,.08), 0 10px 24px rgba(0,0,0,.10); }
+  .recipe-card:hover .rec-play { opacity: 0; }
+}
+.empty .btn { font-size: 13px; }
+
+/* detail */
+.pill-ok { background: #E6F7E6; color: #1E7D33; }
+.detail-section > button.sec-head:hover { background: #FAFAFA; }
+.ing-list li:focus-visible, .step-list li:focus-visible { outline-offset: -2px; }
+.step-list li.active .step-no { box-shadow: 0 0 0 4px rgba(255,107,107,.25); }
+
+/* edit: keep Save reachable on long forms (above the bottom nav) */
+.sticky-actions {
+  position: sticky; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  background: rgba(255,255,255,.95); backdrop-filter: blur(6px);
+  padding: 10px 0; margin-bottom: 0; z-index: 5; border-top: 1px solid var(--line);
+}
+
+/* add recipe */
+.add-card { background: #fff; }
+.add-option h3 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.add-option.is-disabled { opacity: .6; }
+.add-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; color: var(--text-2); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.add-divider::before, .add-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.add-progress { display: flex; align-items: center; gap: 10px; font-weight: 700; margin: 0 0 6px; }
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2.5px solid var(--line); border-top-color: var(--primary);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* match: "everything at home" line */
+.mr-allset { color: #1E7D33; font-weight: 700; }
+
+/* detail: ingredient progress row + "clear checks" */
+.ing-progress .btn { flex: 0 0 auto; padding: 3px 8px; font-size: 12px; }
+
+/* detail: unavailable video */
+.media-missing {
+  display: grid; place-items: center; text-align: center; gap: 6px;
+  min-height: 140px; padding: 20px; color: #ddd; font-size: 13.5px;
+}
+.media-missing a { color: #FFB3B3; font-weight: 700; }
+
+/* cooking mode — bigger, easier-to-read steps from arm's length */
+body.cooking .step-list li { font-size: 16px; padding-top: 14px; padding-bottom: 14px; }
+body.cooking .step-t .t { font-size: 13px; }
+#cook-listen[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
+
+/* settings modal: "remember secret" */
+.env-remember { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: -4px 0 12px; cursor: pointer; }
+.env-remember input { width: auto; margin-top: 2px; }
+
+/* skeleton loaders */
+.skeleton { display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+li.fc-product.skeleton { flex-direction: row; cursor: default; }
+.sk-line, .sk-block {
+  display: block; height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--secondary-bg) 25%, var(--line) 50%, var(--secondary-bg) 75%);
+  background-size: 200% 100%; animation: shimmer 1.2s ease-in-out infinite;
+}
+.sk-block { height: 48px; border-radius: 10px; }
+.fc-thumb-none.sk-block { width: 48px; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ============================================================
+   Dark mode (follows the OS setting)
+   Light-only literal colours above are re-pointed to the surface
+   tokens here; pastel status chips keep their (readable) light
+   backgrounds with dark text.
+   ============================================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121214;
+    --surface: #1C1C1F;
+    --card-bg: #24211F;
+    /* on dark backgrounds the bright coral reads well as TEXT (6.6:1);
+       filled primary buttons switch to dark text (see below) */
+    --primary: #FF6B6B;
+    --primary-dark: #FF8A8A;
+    --secondary-bg: #2A2A2E;
+    --success: #3FA34D;
+    --text: #EDEDED;
+    --text-2: #A1A1A8;
+    --line: #333338;
+    --shadow: 0 1px 3px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.35);
+  }
+
+  .btn, input, select, textarea, .bottom-nav, .tagbar button, .recipe-card,
+  .detail-section, .detail-section > button.sec-head, .edit-form, .ing-ck,
+  .chip-input, .chip-presets button, .match-result, .add-card, .env-modal-card,
+  .scale-controls select, .scale-controls input[type="number"],
+  .fc-products li.fc-product, .fc-macro-grid > div, .fc-price, .fc-slot, .fc-slot-upload,
+  .fc-table, .fc-total-cost, .fc-meal, .pg-portions, .pg-row, .pg-controls select,
+  .pg-controls input, .pg-result-card, .pg-cust-del, .pg-cust-grid input,
+  .pg-custom.bad input, .pg-macro, .pg-custom {
+    background: var(--surface);
+  }
+  .btn.ghost, .back-btn { background: transparent; }
+  .chip-input input { background: transparent; }
+
+  /* filled coral → dark text keeps AA contrast */
+  .btn.primary, .btn.primary:hover, .tagbar button.active, .logo, .step-list li .step-no {
+    color: #1B0B0B;
+  }
+  .btn.primary:hover { background: #FF8585; border-color: #FF8585; }
+
+  .app-header { background: rgba(18,18,20,.9); }
+  .sticky-actions { background: rgba(18,18,20,.94); }
+  .toast { background: #2C2C30; color: #fff; border: 1px solid var(--line); }
+  .env-option:has(input:checked) { background: rgba(255,107,107,.12); }
+  .chip button { background: rgba(255,255,255,.15); }
+  .detail-section > button.sec-head:hover { background: #232326; }
+  .inv-list .rm:hover, .dyn-list .rm:hover, .btn.danger:hover, .pg-cust-del:active { background: rgba(255,107,107,.15); }
+  .btn.danger { border-color: rgba(255,107,107,.4); }
+  .hashtag { background: rgba(255,107,107,.15); }
+  .step-list li.active { background: rgba(255,107,107,.12); }
+  .prog-bar { background: #333338; }
+  .rec-placeholder { background: linear-gradient(135deg, #3A2A24, #2A2420); }
+  .pg-row.paired { background: rgba(63,163,77,.12); border-color: rgba(63,163,77,.45); }
+  .pg-custom.bad { background: rgba(217,83,74,.15); }
+  .scale-factor, .scale-badge.manual { background: var(--secondary-bg); }
+  .score-high { color: #FFB088; }
+  .ing-list li.scaled { background: rgba(63,163,77,.10); }
+  .ing-list li.scaled .ing-text b, .scale-status.ok, .mr-allset { color: #6FD37F; }
+  .scale-status.err { color: #FF8A8A; }
+  .fc-total-cost .val, .pg-totalprice .val { color: var(--primary); }
+  .env-status-msg.ok { background: rgba(63,163,77,.15); color: #6FD37F; }
+  .env-status-msg.err { background: rgba(255,107,107,.15); color: #FF8A8A; }
+  #cook-listen[aria-pressed="true"] { color: var(--bg); }
 }

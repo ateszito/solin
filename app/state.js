@@ -10,6 +10,7 @@ window.SolinStore = (function () {
     inventory:  "solin.inventory.v1", // [{name, qty, unit, subs: [..]}]
     have:       "solin.have.v1",      // [string] — "what I have at home"
     ui:         "solin.ui.v1",       // last active tab, filters
+    checks:     "solin.checks.v1",   // { recipeId: [ingredient name, ...] } — checked-off ingredients
     meals:      "solin.foodcounter.meals.v1" // [{id, name, items, totals, total_cost, saved_at}] — saved macro-count sessions
   };
 
@@ -23,11 +24,16 @@ window.SolinStore = (function () {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
   }
 
-  /* ---- recipes: merge seed data with user edits ---- */
-  function getRecipes() {
+  /* ---- recipes: merge seed data with user edits ----
+     Custom recipes flagged `_blank` are drafts that were started with
+     "Üres recept indítása" but never saved — they are hidden from every
+     list (only getRecipe(id) resolves them, for the editor). */
+  const CUSTOM_KEY = "solin.custom.recipes.v1";
+  function getRecipes(opts) {
     const edits = load(K.edits, {});
-    const custom = load("solin.custom.recipes.v1", []);
-    return custom.concat(window.SOLIN_DATA.recipes).map((r) => {
+    const custom = load(CUSTOM_KEY, []);
+    const withDrafts = !!(opts && opts.includeDrafts);
+    return custom.filter((r) => withDrafts || !r._blank).concat(window.SOLIN_DATA.recipes).map((r) => {
       const patch = edits[r.id] || {};
       const out = Object.assign({}, r);
       Object.keys(patch).forEach((f) => { out[f] = patch[f]; });
@@ -35,7 +41,24 @@ window.SolinStore = (function () {
     });
   }
   function getRecipe(id) {
-    return getRecipes().find((r) => r.id === id) || null;
+    return getRecipes({ includeDrafts: true }).find((r) => r.id === id) || null;
+  }
+  // First successful save turns a draft into a real recipe.
+  function finalizeCustomRecipe(id) {
+    save(CUSTOM_KEY, load(CUSTOM_KEY, []).map((r) => {
+      if (r.id !== id || !r._blank) return r;
+      const o = Object.assign({}, r); delete o._blank; return o;
+    }));
+  }
+  // Drop abandoned drafts (e.g. the tab was closed mid-edit), except
+  // the one currently open in the editor.
+  function purgeBlankRecipes(exceptId) {
+    const list = load(CUSTOM_KEY, []);
+    const keep = list.filter((r) => !r._blank || r.id === exceptId);
+    if (keep.length !== list.length) {
+      list.filter((r) => r._blank && r.id !== exceptId).forEach((r) => resetEdits(r.id));
+      save(CUSTOM_KEY, keep);
+    }
   }
   function saveEdit(id, patch) {
     const edits = load(K.edits, {});
@@ -53,6 +76,12 @@ window.SolinStore = (function () {
   }
   function editFields(id) {
     return Object.keys(load(K.edits, {})[id] || {});
+  }
+  // User-created (u-*) recipes only — seed recipes are immutable.
+  function deleteCustomRecipe(id) {
+    save(CUSTOM_KEY, load(CUSTOM_KEY, []).filter((r) => r.id !== id));
+    resetEdits(id);
+    setChecks(id, []);
   }
 
   /* ---- inventory ---- */
@@ -75,6 +104,34 @@ window.SolinStore = (function () {
   function findByBase(name) {
     const n = norm(name);
     return getInventory().find((i) => norm(i.name) === n) || null;
+  }
+
+  // Known substitutes for an ingredient: the user's pantry entry first,
+  // then the seed suggestions — de-duplicated (similar() equality).
+  // Shared by the recipe detail view and the "Mit főzzek?" matcher.
+  function subsFor(name) {
+    const inv = findByBase(name);
+    const fromInv = inv ? inv.subs || [] : [];
+    const seed = (window.SOLIN_DATA && window.SOLIN_DATA.suggestedSubs) || {};
+    const baseKey = Object.keys(seed).find((k) => similar(k, name));
+    const fromSeed = baseKey ? seed[baseKey] : [];
+    const out = [];
+    fromInv.concat(fromSeed).forEach((s) => {
+      if (!out.some((o) => similar(o, s))) out.push(s);
+    });
+    return out;
+  }
+
+  /* ---- ingredient check-off (survives reloads — you can leave the
+         app mid-cook and come back to the same state) ---- */
+  function getChecks(id) {
+    const all = load(K.checks, {});
+    return Array.isArray(all[id]) ? all[id] : [];
+  }
+  function setChecks(id, names) {
+    const all = load(K.checks, {});
+    if (names && names.length) all[id] = names; else delete all[id];
+    save(K.checks, all);
   }
 
   /* ---- what I have ---- */
@@ -113,8 +170,10 @@ window.SolinStore = (function () {
 
   return {
     K, load, save,
-    getRecipes, getRecipe, saveEdit, resetEdits, hasEdits, editFields,
-    getInventory, setInventory, findByBase,
+    getRecipes, getRecipe, saveEdit, resetEdits, hasEdits, editFields, deleteCustomRecipe,
+    finalizeCustomRecipe, purgeBlankRecipes,
+    getInventory, setInventory, findByBase, subsFor,
+    getChecks, setChecks,
     getHave, setHave,
     getUI, setUI,
     getMeals, saveMeals,
