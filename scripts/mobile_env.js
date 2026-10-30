@@ -97,9 +97,6 @@ const capConfig = {
   plugins: {
     StatusBar: {
       style: "DARK"
-    },
-    CapacitorHttp: {
-      enabled: true
     }
   }
 };

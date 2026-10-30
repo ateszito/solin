@@ -287,7 +287,7 @@ def main():
              '--build-arg', 'APP_VERSION=%s' % version,
              '--build-arg', 'API_BASE_URL=https://%s' % d['sub'],
              '--build-arg', 'PUBLIC_BASE_URL=https://%s' % d['sub'],
-             '--build-arg', 'CORS_ORIGINS=https://%s' % d['sub'],
+             '--build-arg', 'CORS_ORIGINS=https://%s,capacitor://localhost,http://localhost' % d['sub'],
              '--build-arg', 'JWT_SECRET_KEY=solin-%s-jwt-%s' % (env, version),
              '--build-arg', 'DATABASE_URL=postgresql://solin:solin@%s:5432/%s' % (d['db'], d['db_name']),
              '-t', api_image, '-t', 'solin-deploy-%s-api-%s' % (env, sha7),

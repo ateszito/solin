@@ -36,6 +36,11 @@ services:
   solin-prod-api:
     image: solin:prod-api
     container_name: solin-prod-api
+    environment:
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_VISION_MODEL: "qwen3.5:9b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [solin_net]
     volumes:
       - vol_solin_prod_data:/srv/data
@@ -57,7 +62,7 @@ services:
       APP_VERSION: ${PROD_APP_VERSION:-v0.1.0+placeholder}
       API_BASE_URL: https://solin.ateszito.com
       PUBLIC_BASE_URL: https://solin.ateszito.com
-      CORS_ORIGINS: https://solin.ateszito.com
+      CORS_ORIGINS: https://solin.ateszito.com,capacitor://localhost,http://localhost
       FEATURE_ALLOW_EDIT: "true"
       FEATURE_INVISIBILITY: "true"
       DEBUG: "false"
@@ -82,6 +87,11 @@ services:
   solin-staging-api:
     image: solin:staging-api
     container_name: solin-staging-api
+    environment:
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_VISION_MODEL: "qwen3.5:9b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [solin_net]
     volumes:
       - vol_solin_staging_data:/srv/data
@@ -103,7 +113,7 @@ services:
       APP_VERSION: ${STAGING_APP_VERSION:-v0.1.0-rc1+placeholder}
       API_BASE_URL: https://solin-staging.ateszito.com
       PUBLIC_BASE_URL: https://solin-staging.ateszito.com
-      CORS_ORIGINS: https://solin-staging.ateszito.com
+      CORS_ORIGINS: https://solin-staging.ateszito.com,capacitor://localhost,http://localhost
       FEATURE_ALLOW_EDIT: "true"
       FEATURE_INVISIBILITY: "true"
       DEBUG: "false"
@@ -135,6 +145,10 @@ services:
     container_name: solin-dev-api
     environment:
       SOLIN_INGEST_ENABLED: "true"
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_VISION_MODEL: "qwen3.5:9b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [solin_net]
     volumes:
       - vol_solin_dev_data:/srv/data
@@ -159,7 +173,7 @@ services:
       APP_VERSION: ${DEV_APP_VERSION:-v0.1.0-dev+placeholder}
       API_BASE_URL: https://solin-dev.ateszito.com
       PUBLIC_BASE_URL: https://solin-dev.ateszito.com
-      CORS_ORIGINS: https://solin-dev.ateszito.com
+      CORS_ORIGINS: https://solin-dev.ateszito.com,capacitor://localhost,http://localhost
       FEATURE_ALLOW_EDIT: "true"
       FEATURE_INVISIBILITY: "true"
       DEBUG: "true"
