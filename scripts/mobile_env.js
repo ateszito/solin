@@ -107,7 +107,7 @@ const capConfig = {
 fs.writeFileSync(capConfigPath, JSON.stringify(capConfig, null, 2) + "\n", "utf8");
 console.log(`[mobile_env] Updated capacitor.config.json (appId=${target.appId}, appName="${target.appName}")`);
 
-// 4. Update iOS Info.plist (CFBundleDisplayName)
+// 4. Update iOS Info.plist (CFBundleDisplayName & Permissions)
 const infoPlistPath = path.join(IOS_DIR, "App", "App", "Info.plist");
 if (fs.existsSync(infoPlistPath)) {
   let plist = fs.readFileSync(infoPlistPath, "utf8");
@@ -115,8 +115,12 @@ if (fs.existsSync(infoPlistPath)) {
     /(<key>CFBundleDisplayName<\/key>\s*<string>)(.*?)(<\/string>)/,
     `$1${target.appName}$3`
   );
+  if (!plist.includes("NSCameraUsageDescription")) {
+    const permString = `\t<key>NSCameraUsageDescription</key>\n\t<string>A Solin hozzáférést kér a kamerához a termékfotók készítéséhez és a tápérték címkék beolvasásához.</string>\n\t<key>NSPhotoLibraryUsageDescription</key>\n\t<string>A Solin hozzáférést kér a fotótárhoz a termékfotók és címkék kiválasztásához.</string>\n\t<key>NSPhotoLibraryAddUsageDescription</key>\n\t<string>A Solin hozzáférést kér a fotók mentéséhez.</string>\n</dict>`;
+    plist = plist.replace("</dict>", permString);
+  }
   fs.writeFileSync(infoPlistPath, plist, "utf8");
-  console.log(`[mobile_env] Updated iOS Info.plist CFBundleDisplayName -> "${target.appName}"`);
+  console.log(`[mobile_env] Updated iOS Info.plist CFBundleDisplayName -> "${target.appName}" and ensured Camera/Photo permissions`);
 }
 
 // 5. Update iOS project.pbxproj (PRODUCT_BUNDLE_IDENTIFIER)

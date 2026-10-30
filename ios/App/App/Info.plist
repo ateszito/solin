@@ -66,5 +66,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>A Solin hozzáférést kér a kamerához a termékfotók készítéséhez és a tápérték címkék beolvasásához.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>A Solin hozzáférést kér a fotótárhoz a termékfotók és címkék kiválasztásához.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>A Solin hozzáférést kér a fotók mentéséhez.</string>
 </dict>
 </plist>

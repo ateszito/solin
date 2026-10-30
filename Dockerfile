@@ -98,7 +98,7 @@ RUN if [ "${SOLIN_ENV}" = "staging" ]; then \
   else \
     CC=''; \
   fi && \
-  printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
+  printf 'server {\n  listen 80;\n  client_max_body_size 25M;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
     > /etc/nginx/conf.d/default.conf \
     && echo "nginx config for env=${SOLIN_ENV} (proxy upstream=${API_UPSTREAM}, cache=${CC})"
 

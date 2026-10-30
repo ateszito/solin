@@ -11,16 +11,8 @@
 window.Match = (function () {
   const { $, $$, S, state, esc, toast, openRecipe } = window.Solin;
 
-  function subsFor(base) {
-    const inv = S.findByBase(base);
-    const seed = (window.SOLIN_DATA.suggestedSubs || {});
-    const baseKey = Object.keys(seed).find((k) => S.similar(k, base));
-    const fromInv = inv ? inv.subs || [] : [];
-    const fromSeed = baseKey ? seed[baseKey] : [];
-    const out = [];
-    fromInv.concat(fromSeed).forEach((s) => { if (!out.some((o) => S.similar(o, s))) out.push(s); });
-    return out;
-  }
+  // pantry subs first, then seed suggestions — shared with the detail view
+  const subsFor = (base) => S.subsFor(base);
 
   function evaluateRecipe(r, have) {
     const direct = [], substitute = [], missing = [];
@@ -65,7 +57,7 @@ window.Match = (function () {
     const have = S.getHave();
     const box = $("#match-results");
     if (!have.length) {
-      box.innerHTML = `<p class="empty">Adj hozzá néhány alapanyagot fentebb, majd nyomd a <b>Match recipes now</b> gombot.</p>`;
+      box.innerHTML = `<p class="empty">Adj hozzá néhány alapanyagot fentebb — az eredmények azonnal megjelennek.</p>`;
       return;
     }
     const results = S.getRecipes()
@@ -76,10 +68,10 @@ window.Match = (function () {
     results.forEach((r) => counts[r.tier]++);
     const summary = `
       <div class="match-summary">
-        <span class="sum-pill" style="background:#E6F7E6;color:#1E7D33">${counts.full} készíthető</span>
-        <span class="sum-pill" style="background:var(--card-bg);color:#B4552D">${counts.almost} kis hiánnyal</span>
-        <span class="sum-pill" style="background:#FFF4DE;color:#A8731C">${counts.partial} alternatívával</span>
-        <span class="sum-pill" style="background:var(--secondary-bg);color:var(--text-2)">${counts.weak} gyenge</span>
+        <span class="sum-pill score-full">${counts.full} készíthető</span>
+        <span class="sum-pill score-high">${counts.almost} kis hiánnyal</span>
+        <span class="sum-pill score-mid">${counts.partial} alternatívával</span>
+        <span class="sum-pill score-low">${counts.weak} gyenge</span>
       </div>`;
 
     const cards = results.map((m) => {
@@ -94,7 +86,7 @@ window.Match = (function () {
         : "";
       const missLine = m.missing.length
         ? `<div class="mr-line"><span class="muted">Hiányzik:</span> ${missed}</div>`
-        : `<div class="mr-line" style="color:#1E7D33;font-weight:700">Minden hozzávaló megvan — süthetsz!</div>`;
+        : `<div class="mr-line mr-allset">Minden hozzávaló megvan — süthetsz!</div>`;
       return `<div class="match-result">
         <div class="mr-head">
           <h3 class="mr-title">${esc(m.title)}</h3>
@@ -122,15 +114,29 @@ window.Match = (function () {
     have.forEach((h) => {
       const chip = document.createElement("span");
       chip.className = "chip";
-      chip.innerHTML = `${esc(h)} <button data-rm="${esc(h)}" aria-label="töröl">×</button>`;
+      chip.innerHTML = `${esc(h)} <button type="button" data-rm="${esc(h)}" aria-label="${esc(h)} eltávolítása">×</button>`;
       chip.querySelector("button").addEventListener("click", () => {
-        S.setHave(have.filter((x) => x !== h));
+        S.setHave(S.getHave().filter((x) => x !== h));
         state.have = S.getHave();
         renderChipInput();
+        renderPresets();
+        liveRefresh();
       });
       wrap.insertBefore(chip, input);
     });
     $("#match-count").textContent = have.length + " alapanyag";
+  }
+
+  // Results follow the chip list live — no need to hunt for the button
+  // after every change.
+  function liveRefresh() {
+    if (S.getHave().length) runMatch();
+    else showEmptyHint();
+  }
+
+  function showEmptyHint() {
+    $("#match-results").innerHTML =
+      `<p class="hint" style="margin-top:12px">💡 Tipp: írd be, ami most otthon van (pl. «vöröshagyma», «csirkeemlő», «tejszín»), vagy koppints a gyors gombokra — az eredmények azonnal frissülnek.</p>`;
   }
 
   function addChip(text) {
@@ -142,47 +148,67 @@ window.Match = (function () {
       S.setHave(have);
       state.have = have;
       renderChipInput();
+      liveRefresh();
+    } else {
+      toast("Már a listán van: " + v);
     }
     $("#match-item").value = "";
   }
 
-  function render() {
-    renderChipInput();
-
-    // preset buttons
+  function renderPresets() {
     const presets = $("#chip-presets");
     presets.querySelectorAll("button").forEach((b) => b.remove());
+    const have = S.getHave();
     (window.SOLIN_PRESETS || []).forEach((p) => {
+      if (have.some((h) => S.norm(h) === S.norm(p))) return; // already added
       const b = document.createElement("button");
-      b.textContent = p;
-      b.addEventListener("click", () => addChip(p));
+      b.type = "button";
+      b.textContent = "+ " + p;
+      b.dataset.preset = p;
       presets.appendChild(b);
     });
-
-    // input + enter
-    $("#match-item").onkeydown = (e) => {
-      if (e.key === "Enter") { e.preventDefault(); addChip(e.target.value); }
-      if (e.key === ",") { e.preventDefault(); addChip(e.target.value); }
-    };
-    // click outside input to add
-    $("#match-item").onblur = () => { if ($("#match-item").value.trim()) addChip($("#match-item").value); };
-    $("#chip-input").addEventListener("mousedown", (e) => {
-      if (e.target === e.currentTarget) $("#match-item").focus();
-    });
-
-    $("#match-clear").addEventListener("click", () => {
-      S.setHave([]); state.have = []; renderChipInput();
-      $("#match-results").innerHTML = `<p class="empty">Mindent töröltem. Adj hozzá újakat fentebb.</p>`;
-    });
-    $("#match-run").addEventListener("click", runMatch);
-
-    // show last result if have list already present
-    if (S.getHave().length) runMatch();
-    else {
-      $("#match-results").innerHTML =
-        `<p class="hint" style="margin-top:12px">💡 Tipp: add hozzá a hozzávalókat amit most rendelkezed (pl. «vöröshagyma», «csirkeemlő», «tejszín») — a Presets gombok gyorsítanak.</p>`;
-    }
   }
 
-  return { render, runMatch, addChip };
+  // Bind static controls ONCE (render() runs on every tab visit).
+  let _bound = false;
+  function init() {
+    if (_bound) return;
+    _bound = true;
+    const input = $("#match-item");
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addChip(e.target.value); renderPresets(); }
+      // Backspace on an empty field removes the last chip (standard chip-input UX)
+      if (e.key === "Backspace" && !input.value) {
+        const have = S.getHave();
+        if (have.length) { S.setHave(have.slice(0, -1)); state.have = S.getHave(); renderChipInput(); renderPresets(); liveRefresh(); }
+      }
+    });
+    input.addEventListener("blur", () => { if (input.value.trim()) { addChip(input.value); renderPresets(); } });
+    $("#chip-input").addEventListener("mousedown", (e) => {
+      if (e.target === e.currentTarget) { e.preventDefault(); input.focus(); }
+    });
+    $("#chip-presets").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-preset]");
+      if (b) { addChip(b.dataset.preset); renderPresets(); }
+    });
+    $("#match-clear").addEventListener("click", () => {
+      const before = S.getHave();
+      if (!before.length) return;
+      S.setHave([]); state.have = []; renderChipInput(); renderPresets(); showEmptyHint();
+      toast("Lista törölve", null, {
+        label: "Visszavonás",
+        onClick: () => { S.setHave(before); state.have = before; renderChipInput(); renderPresets(); liveRefresh(); }
+      });
+    });
+    $("#match-run").addEventListener("click", runMatch);
+  }
+
+  function render() {
+    init();
+    renderChipInput();
+    renderPresets();
+    liveRefresh();
+  }
+
+  return { init, render, runMatch, addChip };
 })();

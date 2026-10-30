@@ -6,30 +6,88 @@
 
 window.Detail = (function () {
   const { $, $$, S, state, esc, openEdit, go, toast } = window.Solin;
-  const checked = {};          // per-session check state {recipeId: Set}
+  const checked = {};          // {recipeId: Set} — cache, backed by SolinStore
 
   function getChecked(id) {
-    if (!checked[id]) checked[id] = new Set();
+    if (!checked[id]) checked[id] = new Set(S.getChecks(id));
     return checked[id];
   }
+  function persistChecked(id) {
+    S.setChecks(id, Array.from(getChecked(id)));
+  }
 
-  function subsFor(ingName) {
-    // 1) inventory (user-curated) 2) recipe note 3) suggestedSubs
-    const inv = S.findByBase(ingName);
-    const fromInv = inv ? inv.subs || [] : [];
-    const fromSeed = S.norm ? null : null;
-    const seed = (window.SOLIN_DATA.suggestedSubs || {});
-    const baseKey = Object.keys(seed).find((k) => S.similar(k, ingName));
-    const fromSeedList = baseKey ? seed[baseKey] : [];
-    const merged = [];
-    fromInv.concat(fromSeedList).forEach((s) => {
-      if (!merged.some((m) => S.similar(m, s))) merged.push(s);
-    });
-    return merged;
+  /* ---- cooking mode: keep the screen awake while cooking ---- */
+  let wakeLock = null;
+  let cooking = false;
+  async function acquireWakeLock() {
+    try {
+      if (navigator.wakeLock && document.visibilityState === "visible") {
+        wakeLock = await navigator.wakeLock.request("screen");
+      }
+    } catch (e) { wakeLock = null; }
+  }
+  function releaseWakeLock() {
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+  // The browser drops the lock when the tab is hidden — take it back.
+  document.addEventListener("visibilitychange", () => {
+    if (cooking && document.visibilityState === "visible") acquireWakeLock();
+  });
+  function leave() {
+    cooking = false;
+    releaseWakeLock();
+    document.body.classList.remove("cooking");
+  }
+
+  /* ---- ingredient rows (ONE renderer for base + scaled mode) ----
+     scaleRes = null → seed quantities; otherwise a SolinScale result
+     (scaled amount + unit, anchor/manual badges, changed values
+     highlighted). The <li data-idx=…> shape is identical in both modes so
+     the delegated check-off handler keeps working. Seed data is never
+     mutated — scaled values live only in the render layer. */
+  function rowsHTML(r, scaleRes) {
+    const set = getChecked(r.id);
+    const Scaler = window.SolinScale;
+    const baseMap = {};
+    (r.ingredients || []).forEach((i) => { baseMap[i.name] = i; });
+    const list = scaleRes ? scaleRes.items : (r.ingredients || []);
+    return list.map((it) => {
+      const seed = baseMap[it.name] || {};
+      const on = set.has(it.name);
+      const subs = S.subsFor(it.name);
+      const subLine = subs.length ? `<span class="ing-alt">↳ alternatíva: ${esc(subs.join(" · "))}</span>` : "";
+      let qtyHtml, extraCls = "", badge = "";
+      if (scaleRes) {
+        if (it.manual) {
+          qtyHtml = `<b class="ing-manual-base" title="Nem skálázható — az alap marad">${esc(seed.qty || it.baseQty || "")}</b>`;
+          badge = `<span class="scale-badge manual">manuális</span>`;
+        } else {
+          const txt = Scaler.fmtAmount(it.amount, it.unit);
+          qtyHtml = it.scaled ? `<b class="ing-scaled">${esc(txt)}</b>` : `<b>${esc(txt)}</b>`;
+          if (it.scaled) extraCls = " scaled";
+        }
+        if (scaleRes.anchor && scaleRes.anchor.name === it.name) {
+          badge = `<span class="scale-badge anchor" title="Választott horgony — a megadott mennyiség">★ horgony</span>`;
+        }
+      } else {
+        qtyHtml = `<b>${esc(seed.qty || "")}</b>`;
+      }
+      return `<li class="${on ? "done" : ""}${extraCls}" data-idx="${esc(it.name)}" role="checkbox" tabindex="0" aria-checked="${on}">
+            <span class="ing-ck">${on ? "✓" : ""}</span>
+            <span class="ing-text">${qtyHtml} ${esc(it.name)}${seed.note ? ` <span class="muted">(${esc(seed.note)})</span>` : ""}${badge}${subLine}</span>
+          </li>`;
+    }).join("");
+  }
+
+  function hintHTML(scaleRes) {
+    return scaleRes
+      ? `Skálázva: <b>${esc(window.SolinScale.fmtFactor(scaleRes.factor))}</b> · horgony: ${esc(scaleRes.anchor ? scaleRes.anchor.name : "—")} — a kiemelt értékek változtak. <button class="btn sm ghost" id="scale-reset-inline" type="button">↺ Alap mennyiségek</button>`
+      : `Koppints a hozzávalóra, ha már előkészítetted — zöld ✓ jelzi. A pipák megmaradnak, ha később visszajössz.`;
   }
 
   function macroCards(r) {
     const m = r.macrosPerServing || {};
+    if (m.kcal == null && m.protein == null && m.carbs == null && m.fat == null) return "";
     const items = [
       [m.kcal, "kcal / adag"],
       [m.protein, "g fehérje"],
@@ -41,67 +99,10 @@ window.Detail = (function () {
       .join("")}</div>`;
   }
 
-  function ingredientSection(r, scaleRes) {
+  function ingredientSection(r) {
     const id = getChecked(r.id);
     const total = (r.ingredients || []).length;
     const done = (r.ingredients || []).filter((i) => id.has(i.name)).length;
-
-    // Build rows — either from the ORIGINAL seed data (default) or from
-    // a scaleResult (spec §6.2: scaled amount + unit, anchor/manual badges,
-    // changed values highlighted).  The DOM structure (<li data-idx=…>)
-    // is IDENTICAL in both modes so the check-off handler, which keys on
-    // data-idx, works unchanged (see acceptance 5: seed not mutated).
-    function renderRows(list, getAmount) {
-      return list
-        .map((ing) => {
-          const name = ing.name;
-          const checkedCls = id.has(name) ? " done" : "";
-          const subs = subsFor(name);
-          const subLine = subs.length
-            ? `<span class="ing-alt">↳ alternatíva: ${esc(subs.join(" · "))}</span>` : "";
-          // Default mode: raw seed qty string. Scaled mode: computed.
-          const scaledMode = getAmount != null;
-          let qtyLabel, clsExtra = "", badge = "";
-          if (scaledMode) {
-            const v = getAmount(ing);
-            if (ing.manual) {
-              qtyLabel = `<b class="ing-manual-base">${esc(ing.baseQty || "")}</b>`;
-              badge = `<span class="scale-badge manual" title="Nem skálázható — az alap marad (spec §4)">manuális</span>`;
-            } else if (v.scaled) {
-              qtyLabel = `<b class="ing-scaled">${esc(v.text)}</b>`;
-              clsExtra = " scaled";
-            } else {
-              qtyLabel = `<b>${esc(v.text)}</b>`;
-            }
-            if (ing.isAnchor) badge = `<span class="scale-badge anchor" title="Választott horgony — a megadott mennyiség">★ horgony</span>`;
-          } else {
-            qtyLabel = `<b>${esc(ing.qty || "")}</b>`;
-          }
-          return `<li class="${checkedCls.trim()}${clsExtra}" data-idx="${esc(name)}">
-            <span class="ing-ck">${checkedCls ? "✓" : ""}</span>
-            <span class="ing-text">${qtyLabel} ${esc(ing.name)}${ing.note ? ` <span class="muted">(${esc(ing.note)})</span>` : ""}${badge}${subLine}</span>
-          </li>`;
-        })
-        .join("");
-    }
-
-    let rows, hint;
-    if (scaleRes && scaleRes.items) {
-      const mapped = scaleRes.items.map((it) => ({
-        name: it.name, qty: it.amount != null ? `${it.amount} ${it.unit}` : it.baseQty,
-        note: it.note, manual: it.manual, baseQty: it.baseQty,
-        isAnchor: scaleRes.anchor && scaleRes.anchor.name === it.name,
-      }));
-      const lookup = Object.fromEntries(scaleRes.items.map((it) => [it.name, it]));
-      rows = renderRows(mapped, (ing) => {
-        const it = lookup[ing.name];
-        return it.manual ? null : { text: window.SolinScale.fmtAmount(it.amount, it.unit), scaled: it.scaled && it.amount != null };
-      });
-      hint = `Skálázva: <b>${esc(window.SolinScale.fmtFactor(scaleRes.factor))}</b> (horgony: ${esc(scaleRes.anchor ? scaleRes.anchor.name : "—")}). A kiemelt értékek változtak. <button class="btn sm ghost scale-reset-inline" id="scale-reset-inline">↺ Alap mennyiségek</button>`;
-    } else {
-      rows = renderRows(r.ingredients || [], null);
-      hint = `Tapintsd meg a hozzávalót, ha felhasználtad. Zöld ✓-t kapsz.`;
-    }
 
     return `<div class="detail-section">
       <div class="scale-panel" id="scale-panel">
@@ -118,27 +119,28 @@ window.Detail = (function () {
         </form>
         <div class="scale-status hidden" id="scale-status" role="status"></div>
       </div>
-      <button class="sec-head" data-toggle="ing">Hozzávalók <span>${done}/${total}</span></button>
+      <button class="sec-head" data-toggle="ing" aria-expanded="true">Hozzávalók <span>${done}/${total}</span></button>
       <div class="sec-body open">
-        <div class="ing-progress"><span>${done} / ${total} kijelölve</span><div class="prog-bar"><i style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div></div>
-        <ul class="ing-list" id="ing-list">${rows}</ul>
-        <p class="hint" style="margin-top:10px" id="ing-hint">${hint}</p>
+        <div class="ing-progress"><span>${done} / ${total} kijelölve</span><div class="prog-bar"><i style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div>
+          <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="ing-clear">Pipák törlése</button></div>
+        <ul class="ing-list" id="ing-list">${rowsHTML(r, null)}</ul>
+        <p class="hint" style="margin-top:10px" id="ing-hint">${hintHTML(null)}</p>
       </div>
     </div>`;
   }
 
   function stepsSection(r) {
     const rows = (r.steps || [])
-      .map((s, i) => `<li data-step="${i}" data-t="${s.t || 0}">
+      .map((s, i) => `<li data-step="${i}" data-t="${s.t || 0}" tabindex="0" role="button" aria-label="${i + 1}. lépés — ugrás a videóban ide: ${esc(fmt(s.t))}">
         <span class="step-no"></span>
         <div class="step-t"><span class="t">${fmt(s.t)}</span> ${esc(s.text)}</div>
       </li>`)
       .join("");
     return `<div class="detail-section">
-      <button class="sec-head" data-toggle="steps">Elkészítés (videó-szinkron)</button>
+      <button class="sec-head" data-toggle="steps" aria-expanded="true">Elkészítés ${r.video ? "(videó-szinkron)" : ""}</button>
       <div class="sec-body open">
-        <ol class="step-list" id="step-list">${rows}</ol>
-        <p class="hint" style="margin-top:10px">A videó lejátszása közben a megfelelő lépés kiemelten jelenik meg. Egyik lépésre tapintva átugor a videón.</p>
+        <ol class="step-list" id="step-list">${rows || `<li class="hint">Még nincsenek lépések.</li>`}</ol>
+        ${r.video ? `<p class="hint" style="margin-top:10px">Lejátszás közben az aktuális lépés kiemelődik. Egy lépésre koppintva oda ugrik a videó.</p>` : ""}
       </div>
     </div>`;
   }
@@ -152,6 +154,7 @@ window.Detail = (function () {
   function render(id) {
     const r = S.getRecipe(id);
     const box = $("#recipe-detail");
+    leave();   // a fresh recipe page never starts in cooking mode
     if (!r) { box.innerHTML = `<p class="empty">Nincs ilyen recept.</p>`; return; }
     const hasEdits = S.hasEdits(r.id);
     // t_1fbc1ef4 (contract §14.2-C3): the ≥700px two-column CSS (.detail-wrap
@@ -163,26 +166,34 @@ window.Detail = (function () {
     // no inner scroller, no overflow wrappers. Below 700px .detail-wrap is
     // plain block flow, so the mobile stack (media → head → content) is
     // byte-identical in behaviour to the old flat layout.
+    const isCustom = String(r.id).startsWith("u-");
+    const meta = [
+      r.creator ? `👤 ${esc(r.creator)}` : "",
+      r.cuisine && r.cuisine !== "unknown" ? esc(r.cuisine) : "",
+      r.totalMin ? `⏱ ${esc(r.totalMin)} perc` : "",
+      r.servings ? `🍽 ${esc(r.servings)} adag` : ""
+    ].filter(Boolean).join(" · ");
     box.innerHTML = `
-      <div class="detail-wrap">
-      <div class="detail-media">
-        <video id="det-video" src="${esc(r.video)}" controls playsinline loop playsinline></video>
-      </div>
+      <div class="detail-wrap${r.video ? "" : " no-media"}">
+      ${r.video ? `<div class="detail-media">
+        <video id="det-video" src="${esc(r.video)}" controls playsinline loop preload="metadata"></video>
+      </div>` : ""}
       <div class="detail-main">
       <div class="detail-head">
         <h2 class="detail-title">${esc(r.title)}</h2>
-        <p class="detail-sub">👤 ${esc(r.creator)} · ${esc(r.cuisine)} · ⏱ ${esc(r.totalMin)} perc · 🍽 ${esc(r.servings)} adag${hasEdits ? ' <span class="pill" style="background:#E6F7E6;color:#1E7D33">✎ szerkesztve</span>' : ""}</p>
-        <p class="detail-sub">${(r.dietary || []).map((d) => `<span class="hashtag">${esc(d)}</span>`).join("")}</p>
+        <p class="detail-sub">${meta}${hasEdits ? ' <span class="pill pill-ok">✎ szerkesztve</span>' : ""}</p>
+        ${(r.dietary || []).length ? `<p class="detail-sub">${r.dietary.map((d) => `<span class="hashtag">${esc(d)}</span>`).join("")}</p>` : ""}
         <div class="detail-actions">
-          ${window.SolinCfg && window.SolinCfg.flag("edit") ? `<button class="btn primary" id="edit-open">✎ Szerkesztés</button>` : ""}
-          <a class="btn" href="${esc(r.source)}" target="_blank" rel="noopener">Forrás: TikTok ↗</a>
-          <button class="btn" id="cook-listen">▶ Főzéskezdéshez</button>
+          ${(r.steps || []).length ? `<button class="btn primary" id="cook-listen" aria-pressed="false">▶ Főzés indítása</button>` : ""}
+          ${window.SolinCfg && window.SolinCfg.flag("edit") ? `<button class="btn" id="edit-open">✎ Szerkesztés</button>` : ""}
+          ${r.source ? `<a class="btn ghost" href="${esc(r.source)}" target="_blank" rel="noopener">Forrás ↗</a>` : ""}
+          ${isCustom ? `<button class="btn ghost danger" id="recipe-delete">Törlés</button>` : ""}
         </div>
       </div>
-      ${hasEdits ? `<p class="hint">Szerkesztéseid beépítve: ${esc(S.editFields(r.id).join(", "))}. A szerkesztés lapnál törölheted.</p>` : ""}
-      ${esc(r.description)}
+      ${hasEdits ? `<p class="hint">Szerkesztéseid beépítve: ${esc(S.editFields(r.id).join(", "))}. A szerkesztés lapon visszaállíthatod.</p>` : ""}
+      ${r.description ? `<p class="detail-desc">${esc(r.description)}</p>` : ""}
       ${macroCards(r)}
-      ${ingredientSection(r, null)}
+      ${ingredientSection(r)}
       ${stepsSection(r)}
       <!-- t_a411a23e (spec §11.5): pairing card (incl. #pg-result + portion
            selector) is the LAST block; instructions sit above it.
@@ -201,18 +212,47 @@ window.Detail = (function () {
     // wire interactions
     const editBtn = $("#edit-open");
     if (editBtn) editBtn.addEventListener("click", () => openEdit(r.id));
+    const delBtn = $("#recipe-delete");
+    if (delBtn) delBtn.addEventListener("click", () => {
+      if (!confirm("Törlöd ezt a receptet? Ez nem vonható vissza.")) return;
+      S.deleteCustomRecipe(r.id);
+      toast("Recept törölve");
+      go("browse");
+    });
     const video = $("#det-video");
-    $("#cook-listen").addEventListener("click", () => {
-      video.currentTime = (r.steps && r.steps[0] ? r.steps[0].t : 0);
-      video.play().catch(() => {});
+    // Missing / unplayable video file → collapse to the no-media layout
+    // instead of showing an empty black box.
+    if (video) video.addEventListener("error", () => {
+      const media = box.querySelector(".detail-media");
+      if (media) media.innerHTML = `<div class="media-missing">🎬 A videó most nem érhető el.${r.source ? ` <a href="${esc(r.source)}" target="_blank" rel="noopener">Megnézem az eredetit ↗</a>` : ""}</div>`;
+    }, { once: true });
+    const cookBtn = $("#cook-listen");
+    // Cooking mode: keeps the screen on (Wake Lock API where supported),
+    // starts the video at step 1, and toggles back off on second tap.
+    if (cookBtn) cookBtn.addEventListener("click", () => {
+      cooking = !cooking;
+      cookBtn.setAttribute("aria-pressed", String(cooking));
+      cookBtn.textContent = cooking ? "■ Főzés befejezése" : "▶ Főzés indítása";
+      document.body.classList.toggle("cooking", cooking);
+      if (!cooking) { releaseWakeLock(); if (video) video.pause(); return; }
+      acquireWakeLock();
+      toast(navigator.wakeLock ? "Főzés mód — a képernyő ébren marad" : "Főzés mód bekapcsolva");
+      if (video) {
+        video.currentTime = (r.steps && r.steps[0] ? r.steps[0].t : 0);
+        video.play().catch(() => {});
+        video.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        const steps = box.querySelector("#step-list");
+        if (steps) steps.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     });
 
-    // collapsible sections
+    // collapsible sections (CSS hides .sec-body:not(.open))
     box.querySelectorAll(".sec-head").forEach((h) =>
       h.addEventListener("click", () => {
         const body = h.parentElement.querySelector(".sec-body");
-        body.classList.toggle("open");
-        h.style.background = body.classList.contains("open") ? "#fff" : "#F5F5F5";
+        const open = body.classList.toggle("open");
+        h.setAttribute("aria-expanded", open ? "true" : "false");
       })
     );
 
@@ -242,10 +282,11 @@ window.Detail = (function () {
     //   "the checkbox was inside something that submits / navigates"
     //   bugs by construction).
     //
-    //   Data model: unchanged.  The per-session in-memory `checked` map
-    //   is the source of truth (refresh resets — same as the old code).
+    //   Data model: the checked set is cached in memory and persisted
+    //   per recipe via SolinStore.setChecks (survives reloads).
     // ============================================================
     const ingListEl = box.querySelector("#ing-list");
+    const ingClearBtn = box.querySelector("#ing-clear");
 
     // Recompute just the progress line + bar; touch nothing else.
     const recomputeIngredientProgress = () => {
@@ -261,7 +302,23 @@ window.Detail = (function () {
       if (cnt)  cnt.textContent = `${done} / ${total} kijelölve`;
       const bar = section.querySelector(".prog-bar i");
       if (bar)  bar.style.width = `${pct}%`;
+      if (ingClearBtn) ingClearBtn.classList.toggle("hidden", done === 0);
     };
+
+    if (ingClearBtn) ingClearBtn.addEventListener("click", () => {
+      const before = Array.from(getChecked(r.id));
+      getChecked(r.id).clear();
+      persistChecked(r.id);
+      paintIngredientList(lastScaleResult);
+      toast("Pipák törölve", null, {
+        label: "Visszavonás",
+        onClick: () => {
+          before.forEach((n) => getChecked(r.id).add(n));
+          persistChecked(r.id);
+          paintIngredientList(lastScaleResult);
+        }
+      });
+    });
 
     if (ingListEl) {
       ingListEl.addEventListener("click", (e) => {
@@ -275,9 +332,11 @@ window.Detail = (function () {
         const set = getChecked(r.id);
         const doneBefore = set.size;
         if (set.has(name)) set.delete(name); else set.add(name);
+        persistChecked(r.id);
 
         // 2) reflect it on the DOM in place (no innerHTML rewrite)
         li.classList.toggle("done", set.has(name));
+        li.setAttribute("aria-checked", set.has(name) ? "true" : "false");
         const ck = li.querySelector(".ing-ck");
         if (ck) ck.textContent = set.has(name) ? "✓" : "";
 
@@ -286,8 +345,16 @@ window.Detail = (function () {
 
         // 4) celebration toast — only on an UPWARD transition to "all done"
         if (set.size === (r.ingredients || []).length && set.size > doneBefore) {
-          toast("Minden hozzávaló felhasznált! 🧑‍🍳");
+          toast("Minden hozzávaló készen áll! 🧑‍🍳");
         }
+      });
+      // keyboard: Space / Enter toggles the focused ingredient
+      ingListEl.addEventListener("keydown", (e) => {
+        if (e.key !== " " && e.key !== "Enter") return;
+        const li = e.target.closest && e.target.closest("li[data-idx]");
+        if (!li) return;
+        e.preventDefault();
+        li.click();
       });
     }
 
@@ -354,49 +421,9 @@ window.Detail = (function () {
     // check-off state (which keys off data-idx / name).
     function paintIngredientList(scaleRes) {
       if (!ingListEl2) return;
-      const set = getChecked(r.id);
-      const list = scaleRes
-        ? scaleRes.items
-        : (r.ingredients || []).map((i) => ({ name: i.name, baseQty: i.qty, unit: "", note: i.note, manual: false, scaled: false, amount: null }));
-
-      const baseMap = {};
-      (r.ingredients || []).forEach((i) => { baseMap[i.name] = i; });
-
-      ingListEl2.innerHTML = list
-        .map((it) => {
-          const seed = baseMap[it.name] || {};
-          const done = set.has(it.name) ? " done" : "";
-          const subs = subsFor(it.name);
-          const subLine = subs.length ? `<span class="ing-alt">↳ alternatíva: ${esc(subs.join(" · "))}</span>` : "";
-          let qtyHtml, extraCls = "", badge = "";
-          if (scaleRes) {
-            if (it.manual) {
-              qtyHtml = `<b class="ing-manual-base" title="Nem skálázható (spec §4)">${esc(seed.qty || it.baseQty || "")}</b>`;
-              badge = `<span class="scale-badge manual">manuális</span>`;
-            } else {
-              const txt = Scaler.fmtAmount(it.amount, it.unit);
-              qtyHtml = it.scaled ? `<b class="ing-scaled">${esc(txt)}</b>` : `<b>${esc(txt)}</b>`;
-              if (it.scaled) extraCls = " scaled";
-            }
-            if (scaleRes.anchor && scaleRes.anchor.name === it.name) {
-              badge = `<span class="scale-badge anchor">★ horgony</span>`;
-            }
-          } else {
-            qtyHtml = `<b>${esc(seed.qty || "")}</b>`;
-          }
-          return `<li class="${done.trim()}${extraCls}" data-idx="${esc(it.name)}">
-            <span class="ing-ck">${set.has(it.name) ? "✓" : ""}</span>
-            <span class="ing-text">${qtyHtml} ${esc(it.name)}${seed.note ? ` <span class="muted">(${esc(seed.note)})</span>` : ""}${badge}${subLine}</span>
-          </li>`;
-        })
-        .join("");
-
+      ingListEl2.innerHTML = rowsHTML(r, scaleRes);
       if (ingHintEl) {
-        if (scaleRes) {
-          ingHintEl.innerHTML = `Skálázva: <b>${esc(Scaler.fmtFactor(scaleRes.factor))}</b> · horgony: ${esc(scaleRes.anchor ? scaleRes.anchor.name : "—")} — a kiemelt értékek változtak. <button class="btn sm ghost" id="scale-reset-inline" type="button">↺ Alap mennyiségek</button>`;
-        } else {
-          ingHintEl.innerHTML = `Tapintsd meg a hozzávalót, ha felhasználtad. Zöld ✓-t kapsz.`;
-        }
+        ingHintEl.innerHTML = hintHTML(scaleRes);
         const inlineReset = ingHintEl.querySelector("#scale-reset-inline");
         if (inlineReset) inlineReset.addEventListener("click", resetScale);
       }
@@ -540,8 +567,9 @@ window.Detail = (function () {
       }
     }
 
-    // step ↔ video sync
-    const stepsEls = Array.from(box.querySelectorAll("#step-list li"));
+    // step ↔ video sync (only when the recipe has a video)
+    if (!video) return;
+    const stepsEls = Array.from(box.querySelectorAll("#step-list li[data-t]"));
     const sync = () => {
       const t = video.currentTime;
       let active = -1;
@@ -553,13 +581,17 @@ window.Detail = (function () {
     };
     video.addEventListener("timeupdate", sync);
     video.addEventListener("play", sync);
-    stepsEls.forEach((el) =>
-      el.addEventListener("click", () => {
+    stepsEls.forEach((el) => {
+      const seek = () => {
         video.currentTime = parseFloat(el.dataset.t || 0);
         video.play().catch(() => {});
-      })
-    );
+      };
+      el.addEventListener("click", seek);
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); seek(); }
+      });
+    });
   }
 
-  return { render };
+  return { render, leave };
 })();

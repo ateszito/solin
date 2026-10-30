@@ -1,54 +1,19 @@
 /* ============================================================
    Solin — add.js (t_6588e1d6) — add-recipe ingestion UI
-   "add recipe from TikTok/IG URL": URL input → ONE submit → ingest
-   progress → prefilled editable preview → save / cancel.
+   Flow: paste TikTok/IG URL → one submit → ingest progress →
+   prefilled editable preview → save / cancel. Or start a blank
+   recipe directly in the editor.
 
-   Companion: app/ingest.js (chain client) + design/INGESTION.md
-   A1–A5 + use_cases.md §16. Their §13.x cross-anchors are
-   LIVE-QUOTE-ONLY PLACEHOLDERS — the §16.8 preamble voids the first-
-   draft markers and NOTHING was restored this run, so this file
-   quotes no section markers and invents no identifiers, chain names,
-   seed keys, counter keys, or trap names (§13.7 discipline corrected
-   + §16.9 V-7 blackhole: §16 seeds NOTHING — specs use INVENTED
-   mock data only, and §5.3 single-entry seeds forbid per-entry
-   strict cross-platform-pair probes, so no probes are run here).
-
-   Pinned chain quotes (live-tree re-anchor done this run —
-   INGESTION.md compressed-copy verbatim, DO NOT SHIP BLINDLY):
-   - "No server-side fetching by default. §16 ships with URL-fetch
-     OFF (SOLIN_URL_FETCH=false default): no yt-dlp, no downloads,
-     no scraper APIs, no OAuth, no cookies." → the UI gates URL
-     submits behind SolinIngest.flagOn("urlFetch")===true &&
-     SolinIngest.flagOn("streaming")===true — BOTH default OFF
-     (the §13.4-style chain marker "no adapter injected — delegate
-     mode only (defaults OFF under Node, §13.4)" IS live at
-     pairing_ui.js:222 ⇒ chain-gated behind later flag flips, not
-     v1 defaults). "no mixed one fill_in call" + "never to
-     removed/unknown fill_ingredients" → this UI NEVER calls any
-     fill/pairing/inventory chain (pairing/pairing_ui/fcapi/
-     quickpick/invsync untouched — R5).
-   - "one-of submit (url|video_file)" ONE submit per flow; refused
-     submits NEVER queue (no slot-wait, no queue-stall re-anchor —
-     the §13.2/§13.3 named-name cluster REMAINS UNRESOLVED this run
-     (not in live tree ⇒ placeholder) ⇒ never passed here).
-   - raw transcript endpoint default-OFF (flag-ON needs V-4 + §13.4
-     coverage, same PR) → NOT called by the UI (the §13.7 empty
-     marker "GET_DRAFT_FAILS_LIVE_TEST_79237864402" was FABRICATED
-     and is VOID — do NOT reinstate; do NOT re-anchor from this
-     compressed copy).
-   - error branch renders (default-off never queues a failed fetch)
-     → user picks skip (manual) or attach (B); NEVER auto-parse,
-     NEVER auto-reparse (no auto-fallback, no wait-slot).
-   - §16 rides ON TOP of §13.2/§13.3/§13.4/§13.5/§13.6/§13.8 (R5),
-     NOT through them — nothing here widens them.
-   - C8 chain body read top-level {code, message, details} ONLY
-     (reference-8 format kept — errors land as audit-logs only,
-     ID-only never; placeholder chain "secret default / log secret
-     keys" stays re-anchor-pending, do-NOT-pass).
-
-   Editor keys mirror the live edit.js input surface (ing-name/
-   ing-qty/ing-note + t:/text) — draft objects seed the rows
-   DIRECTLY, no textarea roundtrip.
+   Notes:
+   - URL fetching is gated behind SolinIngest.flagOn("urlFetch") &&
+     flagOn("streaming") (both default OFF, see app/ingest.js).
+   - One submit per flow; refused submits are never queued and a
+     failed parse is never retried automatically — the user chooses
+     manual entry or attaching a file.
+   - Never touches pairing / inventory / food-counter modules.
+   - Errors are read from the top-level {code, message, details}.
+   - Draft objects seed the edit.js rows (ing-name / ing-qty /
+     ing-note, steps {t, text}) directly.
    ============================================================ */
 (function () {
   "use strict";
@@ -59,8 +24,7 @@
 
   /* ================= chain gates (NO DOM, Node-safe) ================= */
   function chainOpen() {
-    /* default OFF both ways — explicit true ONLY; §13.4-style chain
-       flags (streaming) + URL-fetch stay blocked by default. */
+    /* Both flags default OFF; only an explicit true opens the chain. */
     return Ingest.flagOn("urlFetch") === true && Ingest.flagOn("streaming") === true;
   }
   function apiSet() { return Ingest.apiBase() !== ""; }
@@ -76,16 +40,15 @@
         var rj = (body.recipe_draft && (body.recipe_draft.recipe_json || body.recipe_draft)) || body.recipe_json || body.draft || body;
         if (typeof rj === "string") { rj = JSON.parse(rj); }
         if (rj && (rj.ingredients || rj.steps || rj.description)) { return rj; }
-        return null;                         /* opaque shape → NO crash (V-7) */
+        return null;                         /* unknown shape → no crash */
       } catch (e) { return null; }
     }
     return null;
   }
 
   /* ---- submit gate: ONE submit per flow; refused ones never queue ----
-     (no slot-wait; empty/unsupported/filler submits are UI-rejected —
-     the one-submit-keys `attempts` stays UNRESOLVED ⇒ placeholder,
-     do-not-pass; chain-off never queues a failed fetch) */
+     Empty / unsupported input is rejected in the UI; with the chain
+     off the flow goes straight to the error branch (manual / attach). */
   function submit(f, input, k) {
     k = k || {};
     if (!f) { return { kind: "idle" }; }
@@ -139,8 +102,7 @@
     return { kind: "go", submitted: true };
   }
 
-  /* restart (whole-flow restart to 2nd → KILLED here: default-off never
-     queues; no auto-requeue/reparse) */
+  /* Cancel the flow: stop polling and clear the slot (no auto-retry). */
   function cancel(f) {
     if (f && f.session && f.session.poll && f.session.poll.stop) { f.session.poll.stop(); }
     if (f) { f.session = null; f.error = null; }
@@ -194,9 +156,6 @@
       totalMin: Number(d.total_time) > 0 ? Number(d.total_time) : null,
       macrosPerServing: (d.nutrition && typeof d.nutrition === "object") ? null : null,
       ingredients: e.ing, steps: e.steps,
-      /* "sub-continue-key kept §13.6 lineage (verified)" — recipe_ingest
-         keys are CHAIN-side; this UI carries NO new config keys (§13.4:
-         "no keys in §13.4!"; COUNTERS default empty OFF) */
     };
   }
 
@@ -231,8 +190,11 @@
   }
 
   function startBlank(srcUrl) {   /* route C — manual create */
-    var doc = toLocalDoc({ title: "(új recept)", description: "",
+    var doc = toLocalDoc({ title: "", description: "",
                            ingredients: [], steps: [] }, srcUrl || "");
+    /* draft until the first save — discarded if the user backs out */
+    doc.title = ""; doc.title_hu = ""; doc.creator = ""; doc.cuisine = "";
+    doc._blank = true;
     memSave(doc);
     stopUiTimer(); cancel(F);
     openEdit(doc.id);             /* straight into the editor */
@@ -244,39 +206,49 @@
   function idleHTML() {
     var open = chainOpen() && apiSet();
     var hint = open
-      ? "URL chain ON: egy submit / flow — a poll nem blokkol (~60 s giveup)."
-      : "Auto-parse OFF by default (SOLIN_URL_FETCH=false): a URL-t nem "
-        + "parseoljuk automatikusan. Toltsd le a videót a telefonodrol, "
-        + "azt csatolhatod (B, ha a chain ON), vagy indithatsz ures receptet (C).";
-    return '<div class="field"><label>TikTok / Instagram URL</label>'
-      + '<input id="add-url" type="url" autocomplete="off" spellcheck="false"'
-      + ' placeholder="https://www.tiktok.com/@user/video/…" /></div>'
-      + '<div class="grid2">'
-      + '<button type="button" class="btn sm" id="add-submit"'
-      + (open ? "" : " disabled") + ">URL beküldése</button>"
-      + '<button type="button" class="btn sm ghost" id="add-blank">'
-      + "Új recept üresen (C)</button></div>"
-      + '<p class="hint">' + esc(hint) + "</p>";
+      ? "Illeszd be a videó linkjét — a háttérben kinyerjük a receptet (kb. 1 perc), közben nyugodtan használhatod az appot."
+      : "Az automatikus link-feldolgozás még nem érhető el. Indíts egy üres receptet, és töltsd ki a hozzávalókat és lépéseket kézzel.";
+    return '<div class="card add-card">'
+      + '<div class="add-option">'
+      + '<h3>Kézi felvitel</h3>'
+      + '<p class="hint">Cím, hozzávalók, lépések — a szerkesztőben bármikor módosíthatod.</p>'
+      + '<button type="button" class="btn primary" id="add-blank">Üres recept indítása</button>'
+      + '</div>'
+      + '<div class="add-divider"><span>vagy</span></div>'
+      + '<div class="add-option' + (open ? "" : " is-disabled") + '">'
+      + '<h3>Importálás TikTok / Instagram linkről' + (open ? "" : ' <span class="pill">hamarosan</span>') + '</h3>'
+      + '<div class="field"><label for="add-url" class="sr-only">Videó linkje</label>'
+      + '<input id="add-url" type="url" inputmode="url" autocomplete="off" spellcheck="false"'
+      + ' placeholder="https://www.tiktok.com/@felhasznalo/video/…"' + (open ? "" : " disabled") + ' /></div>'
+      + '<button type="button" class="btn" id="add-submit"'
+      + (open ? "" : " disabled") + ">Recept importálása</button>"
+      + '<p class="hint" style="margin-top:8px">' + esc(hint) + "</p>"
+      + '</div></div>';
   }
 
   function pollHTML(f) {
-    return '<p class="hint">Forrás feldolgozása… (nem blokkol, '
-      + "~60 mp utan feladjuk — 'Mégse'val azonnal leallithato)</p>"
-      + '<button type="button" class="btn sm ghost" id="add-cancel">Mégse</button>';
+    return '<div class="card"><p class="add-progress"><span class="spinner" aria-hidden="true"></span> '
+      + "Recept feldolgozása…</p>"
+      + '<p class="hint">Ez kb. 1 percig tarthat. Nyugodtan böngészhetsz közben.</p>'
+      + '<button type="button" class="btn sm ghost" id="add-cancel">Mégse</button></div>';
   }
 
   function errorHTML(f) {
     var e = (f.session && f.session.error) || {};
-    return '<p class="hint"><b>' + esc(e.code || "ERROR") + "</b> — "
-      + esc(e.message || "ismeretlen hiba") + "</p>"
+    var friendly = ({
+      FEATURE_DISABLED: "Az automatikus import most nem érhető el.",
+      GIVEUP: "A feldolgozás túl sokáig tartott.",
+      TOO_MANY_REQUESTS: "Túl sok kérés — próbáld újra pár perc múlva."
+    })[e.code] || "Nem sikerült feldolgozni a linket.";
+    return '<div class="card"><p><b>' + esc(friendly) + "</b></p>"
+      + '<p class="hint">Folytathatod kézzel: indíts egy üres receptet, a linket elmentjük forrásként.</p>'
       + '<div class="grid2">'
-      + '<button type="button" class="btn sm ghost" id="add-blank">'
-      + "Ugrás újes receptre (C)</button>"
-      + '<button type="button" class="btn sm ghost" id="add-reset">'
-      + "Új URL / mégse</button></div>"
-      + '<p class="hint">No auto-parse (default-OFF flags). '
-      + 'Ha van letoltott fajlod, azt kesobb a reszletes szerkesztoben '
-      + 'adhatod hozza; kulonben indulhatsz ures recepttel (C).</p>';
+      + '<button type="button" class="btn primary" id="add-blank">'
+      + "Folytatás kézzel</button>"
+      + '<button type="button" class="btn ghost" id="add-reset">'
+      + "Másik link</button></div>"
+      + (e.code ? '<p class="hint" style="margin-top:8px;font-size:11px">Hibakód: ' + esc(e.code) + "</p>" : "")
+      + "</div>";
   }
 
   /* prefilled editable preview — draft objects seed the rows DIRECT
@@ -288,41 +260,41 @@
     var trust = (f.session && f.session.trust) || "";
     var ing = e.ing.map(function (o) {
       return '<li>'
-        + '<input name="ing-name" placeholder="name" value="' + esc(o.name) + '"/>'
-        + '<input name="ing-qty" placeholder="qty" value="' + esc(o.qty) + '"/>'
-        + '<input name="ing-note" placeholder="note" value="' + esc(o.note) + '"/>'
+        + '<input name="ing-name" placeholder="név" value="' + esc(o.name) + '"/>'
+        + '<input name="ing-qty" placeholder="mennyiség" value="' + esc(o.qty) + '"/>'
+        + '<input name="ing-note" placeholder="megjegyzés" value="' + esc(o.note) + '"/>'
         + '<button type="button" class="rm" aria-label="remove">×</button></li>';
     }).join("");
     var steps = e.steps.map(function (o) {
       var t = (o.t == null ? "" : o.t);
       return '<li>'
-        + '<input name="st-t" placeholder="sec" value="' + esc(t) + '" style="max-width:90px"/>'
-        + '<input name="st-text" placeholder="step" value="' + esc(o.text) + '" style="flex:2 1 200px"/>'
+        + '<input name="st-t" placeholder="mp" value="' + esc(t) + '" style="max-width:90px"/>'
+        + '<input name="st-text" placeholder="lépés leírása" value="' + esc(o.text) + '" style="flex:2 1 200px"/>'
         + '<button type="button" class="rm" aria-label="remove">×</button></li>';
     }).join("");
     var trustHint = trust === "LOW_CONFIDENCE"
-      ? "Figyelem: alacsony bizonyossag (LOW_CONFIDENCE) — ellenorizd a mezoket!"
+      ? "Figyelem: a felismerés bizonytalan — ellenőrizd a mezőket!"
       : "";
-    return '<p class="hint">Az extrahalt mezok — javithatok, mentes elott.'
+    return '<p class="hint">A kinyert adatok — mentés előtt javíthatod őket.'
       + (trustHint ? " " + esc(trustHint) : "") + "</p>"
-      + '<div class="field"><label>Cim</label>'
+      + '<div class="field"><label for="add-title">Cím</label>'
       + '<input id="add-title" value="' + esc(draft.title || "") + '"/></div>'
-      + '<div class="field"><label>Leiras</label>'
+      + '<div class="field"><label for="add-desc">Leírás</label>'
       + '<textarea id="add-desc" rows="3">' + esc(draft.description || "") + "</textarea></div>"
       + '<div class="grid2">'
-      + '<div class="field"><label>Adag</label><input id="add-servings" type="number" min="1" max="999" value="'
+      + '<div class="field"><label for="add-servings">Adag</label><input id="add-servings" type="number" inputmode="numeric" min="1" max="999" value="'
       + esc(Number(draft.servings) > 0 ? Number(draft.servings) : 4) + '"/></div>'
-      + '<div class="field"><label>Ido (perc)</label><input id="add-min" type="number" min="1" value="'
+      + '<div class="field"><label for="add-min">Idő (perc)</label><input id="add-min" type="number" inputmode="numeric" min="1" value="'
       + esc(Number(draft.total_time) > 0 ? Number(draft.total_time) : "") + '"/></div></div>'
-      + '<div class="field"><label>Hozzavalok (1 sor = 1 hozzavaló)</label>'
+      + '<div class="field"><label>Hozzávalók (1 sor = 1 hozzávaló)</label>'
       + '<ul class="dyn-list" id="add-ing">' + ing + '</ul>'
-      + '<button type="button" class="btn sm add-row" id="add-ing-add">+ hozzavaló sor</button></div>'
-      + '<div class="field"><label>Lepesek (mp → szoveg)</label>'
+      + '<button type="button" class="btn sm add-row" id="add-ing-add">+ Hozzávaló</button></div>'
+      + '<div class="field"><label>Lépések (videó mp → leírás)</label>'
       + '<ul class="dyn-list" id="add-steps">' + steps + '</ul>'
-      + '<button type="button" class="btn sm add-row" id="add-step-add">+ lepes sor</button></div>'
+      + '<button type="button" class="btn sm add-row" id="add-step-add">+ Lépés</button></div>'
       + '<div class="grid2">'
-      + '<button type="button" class="btn sm" id="add-save">Recept mentese</button>'
-      + '<button type="button" class="btn sm ghost" id="add-cancel">Mégse</button></div>';
+      + '<button type="button" class="btn primary" id="add-save">Recept mentése</button>'
+      + '<button type="button" class="btn ghost" id="add-cancel">Mégse</button></div>';
   }
 
   /* ---- read-back: editable preview -> local doc (edits override draft) ---- */
@@ -393,7 +365,7 @@
       var el = document.querySelector("#" + id);
       if (el) { el.onclick = fn; }
     };
-    on("add-back", function () { cancel(F); go("browse"); });
+    on("add-back", function () { cancel(F); if (Solin.back) Solin.back("browse"); else go("browse"); });
     on("add-submit", function () {
       var el = document.querySelector("#add-url");
       var v = el ? el.value : "";
@@ -406,7 +378,10 @@
                       error: { code: "FEATURE_DISABLED", message: r.message },
                       draft: null, trust: null, poll: null, req: null };
       }
-      if (r.message) { toast(r.message, 2600); }
+      if (r.kind === "reject") {
+        toast(String(v).trim() ? "Ez nem tűnik TikTok / Instagram linknek." : "Illeszd be a videó linkjét.", 2600);
+        if (el) { el.focus(); }
+      }
       mount();               /* repaint: PENDING progress or error branch */
     });
     on("add-blank", function () { startBlank(F.lastInput || ""); });
@@ -414,15 +389,15 @@
     on("add-cancel", function () { cancel(F); mount(); });
     on("add-ing-add", function () {
       addRow(host, "add-ing",
-        '<input name="ing-name" placeholder="name"/>'
-        + '<input name="ing-qty" placeholder="qty"/>'
-        + '<input name="ing-note" placeholder="note"/>'
+        '<input name="ing-name" placeholder="név"/>'
+        + '<input name="ing-qty" placeholder="mennyiség"/>'
+        + '<input name="ing-note" placeholder="megjegyzés"/>'
         + '<button type="button" class="rm">×</button>');
     });
     on("add-step-add", function () {
       addRow(host, "add-steps",
-        '<input name="st-t" placeholder="sec" style="max-width:90px"/>'
-        + '<input name="st-text" placeholder="step" style="flex:2 1 200px"/>'
+        '<input name="st-t" placeholder="mp" style="max-width:90px"/>'
+        + '<input name="st-text" placeholder="lépés leírása" style="flex:2 1 200px"/>'
         + '<button type="button" class="rm">×</button>');
     });
     on("add-save", function () {

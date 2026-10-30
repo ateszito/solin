@@ -96,7 +96,6 @@
      notify: {backoffToast(reason), statusBlock(body)} — never throws.  */
   function createPoller(s) {
     var timers = s.timer, state = "PENDING", tick = 0, timer = null;
-    function label() { return "poll#" + (tick + 1); }
     function lastTick(ms) { /* default-off never auto-requeues (no wait slot) */
       return tick > 0;
     }
@@ -129,7 +128,7 @@
         var cls = classify(res);
         if (cls.mode === "wait") { tick++; wait(); return; }
         if (cls.mode === "backoff429") {
-          s.notify.backoffToast(label() + ": TOO_MANY_REQUESTS (backing off)");
+          s.notify.backoffToast("Sok a kérés — kicsit lassabban próbálkozunk tovább…");
           tick = SCHEDULE.length - 1; /* stay on the 5 s cap */
           wait();
           return;
@@ -138,7 +137,8 @@
         state = "ERROR"; s.onDone(cls);
       }, function () {
         if (state !== "PENDING") return;
-        s.notify.backoffToast(label() + ": chain unreachable");
+        /* only surface the glitch once — a toast on every retry is noise */
+        if (tick === 0) s.notify.backoffToast("Kapcsolódási gond — újrapróbálkozunk…");
         tick++; wait(); /* transport glitch → retry same submit, capped */
       });
     }
