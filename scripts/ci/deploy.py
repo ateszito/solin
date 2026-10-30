@@ -31,7 +31,13 @@ from contextlib import contextmanager
 
 CI = os.environ.get('SOLIN_CI_DIR', '/opt/solin' if os.path.isdir('/opt/solin') else os.path.expanduser('~/SolinCI'))
 ST = os.path.join(CI, 'state')
-REPO = os.environ.get('SOLIN_REPO_DIR', os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+REPO = os.environ.get('SOLIN_REPO_DIR')
+if not REPO:
+    candidate = os.path.join(CI, 'repo')
+    if os.path.isdir(candidate):
+        REPO = candidate
+    else:
+        REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 VC = os.path.join(CI, 'VideoContent')
 if not os.path.isdir(VC):
     VC = os.path.join(REPO, 'VideoContent')

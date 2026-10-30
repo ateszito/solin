@@ -28,7 +28,7 @@ window.SOLIN_DATA = {
       id: "r1",
       title: "Javítom magam — Chicken & Sausage Pasta",
       title_hu: "Javítom magam, ez 10/10!!",
-      description: "High-protein chicken & sausage pasta. A kiírt teperték egy adagra értendő — az egészet 5 adagra osztottam. 9,9 pont a kuktától.",
+      description: "High-protein chicken & sausage pasta. A kiírt tápérték egy adagra értendő — az egészet 5 adagra osztottam. 9,9 pont a kuktától.",
       creator: "iamvargacsaba",
       source: "https://vm.tiktok.com/ZN88s6bGY",
       video: "VideoContent/video1.mp4",
@@ -54,20 +54,20 @@ window.SOLIN_DATA = {
         { name: "fokhagyma", qty: "1-2 gerezd", note: "darálva" },
         { name: "paradicsompüré", qty: "3 evőkanál" },
         { name: "tejszín", qty: "160 g", note: "vagy rizs-tejszín" },
-        { name: "víz", qty: "kb. 3 evőkanál", note: "opcionális, öntönységhez" },
+        { name: "víz", qty: "kb. 3 evőkanál", note: "opcionális, a szaft sűrűségéhez" },
         { name: "tészta", qty: "240 g", note: "már FŐTT — nem nyersen kerül bele" },
         { name: "spenót", qty: "80 g", note: "opcionális, de fontos" },
-        { name: "parmezán", qty: "40 g", note: "rágratva végül" }
+        { name: "parmezán", qty: "40 g", note: "a végén rászórva" }
       ],
       steps: [
         { t: 6,  text: "200 g vöröshagyma apróra, bele a serpenyőbe; hozzá 50 g apróra vágott kolbász." },
-        { t: 11, text: "Amikor a kolbász összeszóll, belevágjuk a 650 g csirkemell aprított darabokat." },
-        { t: 20, text: "Fűszerezés: jódag só, csili, füstölt paprika, bors, fokhagyma." },
-        { t: 31, text: "Hátradolgozva: 3 evőkanál paradicsompüré." },
+        { t: 11, text: "Amikor a kolbász kiengedte a zsírját, mehet bele a 650 g felkockázott csirkemell." },
+        { t: 20, text: "Fűszerezés: jó adag só, csili, füstölt paprika, bors, fokhagyma." },
+        { t: 31, text: "Hozzáadjuk: 3 evőkanál paradicsompüré." },
         { t: 35, text: "Mehet hozzá 160 g tejszín — vagy rizs-tejszín, amit akarsz." },
-        { t: 39, text: "Kicsi vizet is adok öntönységhez, és beleválik a 240 g MAR FŐTT tészta. (Nyersen ne!)" },
-        { t: 46, text: "opcionális, de szerintem fontos: 80 g spenót rádobva, amíg összeesik." },
-        { t: 49, text: "Végére rágratol 40 g parmezán. Kész — jó étvágyat, 9,9 pont!" }
+        { t: 39, text: "Kevés vizet is adok a szaft sűrűségéhez, és belekerül a 240 g MÁR FŐTT tészta. (Nyersen ne!)" },
+        { t: 46, text: "Opcionális, de szerintem fontos: 80 g spenót rádobva, amíg összeesik." },
+        { t: 49, text: "A végére rászórunk 40 g parmezánt. Kész — jó étvágyat, 9,9 pont!" }
       ]
     },
     {
@@ -107,13 +107,13 @@ window.SOLIN_DATA = {
       ],
       steps: [
         { t: 6,  text: "Vöröshagyma apróra + 50 g apróra vágott kolbász a serpenyőbe." },
-        { t: 11, text: "Majd a 650 g csirkemell, amíg a kolbász összeszóll." },
+        { t: 11, text: "Majd a 650 g csirkemell, amikor a kolbász kiengedte a zsírját." },
         { t: 20, text: "Fűszerek: só, csili, füstölt paprika, bors, fokhagyma." },
         { t: 31, text: "3 evőkanál paradicsompüré." },
         { t: 35, text: "160 g tejszín (vagy rizs-tejszín)." },
         { t: 39, text: "Kicsi víz + a 240 g már főtt tészta." },
         { t: 46, text: "80 g spenót — opcionális, de fontos." },
-        { t: 49, text: "40 g parmezán rágratva. Kész!" }
+        { t: 49, text: "40 g parmezán a tetejére. Kész!" }
       ]
     }
   ]

@@ -4,7 +4,7 @@
   "description": "Solin — Recipe Platform (Web & Mobile)",
   "private": true,
   "scripts": {
-    "test:frontend": "node app/tests/add_recipe_flow.spec.js && node app/tests/custom_items.spec.js && node app/tests/custom_items_data.spec.js && node app/tests/pairing_ui.spec.js && node app/tests/quick_select.spec.js && node app/tests/scale.spec.js",
+    "test:frontend": "node app/tests/add_recipe_flow.spec.js && node app/tests/custom_items.spec.js && node app/tests/custom_items_data.spec.js && node app/tests/pairing_ui.spec.js && node app/tests/quick_select.spec.js && node app/tests/scale.spec.js && node app/tests/imgutil.spec.js",
     "cap:dev": "node scripts/mobile_env.js dev",
     "cap:staging": "node scripts/mobile_env.js staging",
     "cap:prod": "node scripts/mobile_env.js prod",
