@@ -43,7 +43,7 @@ def get_ollama_host() -> Optional[str]:
     return None
 
 
-def prepare_image(img_bytes: bytes, max_dim: int = 1200, quality: int = 82) -> tuple[str, str]:
+def prepare_image(img_bytes: bytes, max_dim: int = 1000, quality: int = 80) -> tuple[str, str]:
     """Prepare image for Ollama Vision and return (b64_raw, data_url)."""
     orig = Image.open(io.BytesIO(img_bytes))
     orig = ImageOps.exif_transpose(orig)
@@ -150,14 +150,14 @@ def extract_recipe_from_images(
         "- steps: Array of preparation and cooking instructions in order:\n"
         "    number: Step number (1, 2, 3...)\n"
         "    instruction: Full instruction text for this step verbatim\n\n"
-        "STRICT REQUIREMENT: Output ONLY the JSON object. Do not wrap in markdown quotes or preamble."
+        "STRICT REQUIREMENT: Do not include internal thoughts, preliminary explanations, or reasoning. Start directly with { and output ONLY the valid JSON object without markdown code fences."
     )
 
     payload = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt, "images": b64_images}],
         "stream": True,
-        "options": {"temperature": 0.1},
+        "options": {"temperature": 0.1, "num_predict": 2500},
     }).encode("utf-8")
 
     req = urllib.request.Request(

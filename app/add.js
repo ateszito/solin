@@ -424,7 +424,7 @@
           for (var i = 0; i < files.length; i++) {
             var f = files[i];
             if (window.SolinImg && SolinImg.compress) {
-              var comp = await SolinImg.compress(f);
+              var comp = await SolinImg.compress(f, { maxWidth: 1200, maxHeight: 1200, quality: 0.8 });
               if (comp && comp.dataUrl) imagesBase64.push(comp.dataUrl);
             } else {
               var reader = new FileReader();
@@ -438,7 +438,10 @@
           }
 
           var apiBase = (window.SolinCfg && SolinCfg.apiBase && SolinCfg.apiBase()) || "";
-          var endpoint = apiBase ? (apiBase + "/api/v1/recipes/extract-image") : "/api/v1/recipes/extract-image";
+          var endpoint = "/api/v1/recipes/extract-image";
+          if (apiBase && (typeof window !== "undefined" && window.location && window.location.origin && !apiBase.startsWith(window.location.origin))) {
+            endpoint = apiBase.replace(/\/+$/, "") + "/api/v1/recipes/extract-image";
+          }
 
           var resp = await fetch(endpoint, {
             method: "POST",
@@ -449,7 +452,7 @@
           if (!resp.ok) {
             var errData = {};
             try { errData = await resp.json(); } catch (e) {}
-            throw new Error(errData.detail || ("Hiba: " + resp.status));
+            throw new Error(errData.detail || ("Hiba a szervertől: HTTP " + resp.status));
           }
 
           var extracted = await resp.json();
@@ -458,8 +461,12 @@
         } catch (err) {
           console.error("Recipe photo extraction error:", err);
           photoBtn.disabled = false;
+          var msg = (err && err.message) || String(err);
+          if (msg.includes("Load failed") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+            msg = "A kérés időtúllépés vagy hálózati megszakadás miatt nem sikerült. Kérlek próbáld újra!";
+          }
           if (photoStatus) {
-            photoStatus.innerHTML = '<p class="hint" style="color:#ef4444;margin-top:8px;"><b>Hiba történt:</b> ' + esc(err.message || err) + '<br/><button type="button" class="btn sm" id="add-photo-retry" style="margin-top:6px;">Újrapróbálás</button></p>';
+            photoStatus.innerHTML = '<p class="hint" style="color:#ef4444;margin-top:8px;"><b>Hiba történt:</b> ' + esc(msg) + '<br/><button type="button" class="btn sm" id="add-photo-retry" style="margin-top:6px;">Újrapróbálás</button></p>';
             var retry = document.querySelector("#add-photo-retry");
             if (retry) retry.onclick = function () { photoInput.click(); };
           }
