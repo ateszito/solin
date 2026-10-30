@@ -3,7 +3,7 @@
 import os
 
 import uuid
-from fastapi import FastAPI, HTTPException, Request, File, UploadFile
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +20,7 @@ from .inventory.routes import register as register_inventory
 from .inventory.media import MEDIA_URL_PREFIX, media_root
 from .inventory.service import default_service as _inv_svc
 from .ingestion.register import register_ingestion
+from .kamra.routes import register as register_kamra
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -88,6 +89,9 @@ def healthz() -> dict:
 # ------ Inventory module (contract use_cases.md §3) ------------------------
 # Router + the two error handlers (C8 shape) live on the app.
 register_inventory(app)
+
+# ------ Kamra (Pantry ingredients & multilingual registry) ----------------
+register_kamra(app)
 
 # ------ Recipe Ingestion module (contract use_cases.md §16) -----------------
 register_ingestion(app, settings)
@@ -372,6 +376,21 @@ async def extract_recipe_photo_endpoint(
             save_media=True,
             media_dir=media_recipes_dir,
         )
+        # Auto-register extracted ingredients in Kamra
+        try:
+            from .kamra.service import default_kamra_service
+            from .kamra.model import RecipeSyncRequest, RecipeIngredientItem
+            ings = [
+                RecipeIngredientItem(name=i.get("name", ""), qty=i.get("qty"), note=i.get("note"))
+                for i in recipe_data.get("ingredients", [])
+                if i.get("name")
+            ]
+            if ings:
+                default_kamra_service.sync_recipe(RecipeSyncRequest(ingredients=ings, auto_create=True))
+        except Exception as e:
+            import logging
+            logging.getLogger("uvicorn.error").warning("Auto-syncing ingredients to Kamra failed: %s", e)
+
         return recipe_data
     except ValueError as ve:
         raise HTTPException(status_code=422, detail=str(ve))
@@ -381,6 +400,49 @@ async def extract_recipe_photo_endpoint(
         import logging
         logging.getLogger("uvicorn.error").exception("Recipe photo extraction failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Recipe photo extraction failed: {str(e)}")
+
+
+class VideoDownloadRequest(BaseModel):
+    url: str
+    recipe_id: Optional[str] = None
+
+
+@app.post("/api/v1/recipes/video/upload")
+async def upload_recipe_video_endpoint(
+    file: UploadFile = File(...),
+    recipe_id: Optional[str] = Form(None),
+):
+    """Upload a video file for a recipe (MP4, MOV, WebM)."""
+    from .recipes.video_service import save_uploaded_video
+    try:
+        content = await file.read()
+        res = save_uploaded_video(content, original_filename=file.filename or "video.mp4", recipe_id=recipe_id)
+        if recipe_id and recipe_id in _store:
+            _store[recipe_id].video_url = res["video_url"]
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").exception("Video upload failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Videó mentése sikertelen: {str(e)}")
+
+
+@app.post("/api/v1/recipes/video/download")
+def download_recipe_video_endpoint(payload: VideoDownloadRequest):
+    """Download video from Instagram, TikTok, or YouTube Shorts link."""
+    from .recipes.video_service import download_video_from_url
+    try:
+        res = download_video_from_url(payload.url, recipe_id=payload.recipe_id)
+        if payload.recipe_id and payload.recipe_id in _store:
+            _store[payload.recipe_id].video_url = res["video_url"]
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").exception("Video download failed: %s", e)
+        raise HTTPException(status_code=422, detail=f"Videó letöltése sikertelen: {str(e)}")
 
 @app.get("/api/v1/recipes/{recipe_id}", response_model=RecipeResponse)
 def get_recipe(recipe_id: str):
@@ -403,6 +465,21 @@ def create_recipe(recipe: RecipeCreate):
         nutrition=recipe.nutrition, ingredients=recipe.ingredients,
         steps=recipe.steps, image=recipe.image, images=recipe.images, status=recipe.status,
     )
+    # Auto-register ingredients in Kamra
+    try:
+        from .kamra.service import default_kamra_service
+        from .kamra.model import RecipeSyncRequest, RecipeIngredientItem
+        ings = [
+            RecipeIngredientItem(name=i.name, qty=getattr(i, 'qty', None), note=getattr(i, 'note', None))
+            for i in (recipe.ingredients or [])
+            if getattr(i, 'name', None)
+        ]
+        if ings:
+            default_kamra_service.sync_recipe(RecipeSyncRequest(ingredients=ings, auto_create=True))
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning("Auto-syncing ingredients to Kamra failed: %s", e)
+
     return _store[rid]
 
 @app.delete("/api/v1/recipes/{recipe_id}", status_code=204)

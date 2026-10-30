@@ -95,15 +95,49 @@ window.SolinStore = (function () {
     return list;
   })();
 
-  function getInventory() {
-    const v = load(K.inventory, null);
-    return v || INV_DEFAULT;
+  let _kamraCache = null;
+
+  async function syncKamraFromApi() {
+    try {
+      const base = (window.SolinCfg && window.SolinCfg.apiBase && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+      const endpoint = (base ? base.replace(/\/+$/, "") : "") + "/api/v1/kamra";
+      const resp = await fetch(endpoint);
+      if (resp.ok) {
+        const items = await resp.json();
+        if (Array.isArray(items) && items.length) {
+          _kamraCache = items;
+          save(K.inventory, items);
+          return items;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not sync Kamra from API, using local storage:", e);
+    }
+    return getInventory();
   }
-  function setInventory(list) { save(K.inventory, list); }
+
+  function getInventory() {
+    if (_kamraCache && _kamraCache.length) return _kamraCache;
+    const v = load(K.inventory, null);
+    if (v && v.length) {
+      _kamraCache = v;
+      return v;
+    }
+    return INV_DEFAULT;
+  }
+  function setInventory(list) {
+    _kamraCache = list;
+    save(K.inventory, list);
+  }
 
   function findByBase(name) {
     const n = norm(name);
-    return getInventory().find((i) => norm(i.name) === n) || null;
+    return getInventory().find((i) => {
+      if (norm(i.name) === n) return true;
+      if (i.name_en && norm(i.name_en) === n) return true;
+      if (Array.isArray(i.synonyms) && i.synonyms.some((s) => norm(s) === n)) return true;
+      return false;
+    }) || null;
   }
 
   // Known substitutes for an ingredient: the user's pantry entry first,
@@ -111,13 +145,14 @@ window.SolinStore = (function () {
   // Shared by the recipe detail view and the "Mit főzzek?" matcher.
   function subsFor(name) {
     const inv = findByBase(name);
-    const fromInv = inv ? inv.subs || [] : [];
+    const fromInv = inv ? (inv.subs || []) : [];
     const seed = (window.SOLIN_DATA && window.SOLIN_DATA.suggestedSubs) || {};
     const baseKey = Object.keys(seed).find((k) => similar(k, name));
     const fromSeed = baseKey ? seed[baseKey] : [];
     const out = [];
     fromInv.concat(fromSeed).forEach((s) => {
-      if (!out.some((o) => similar(o, s))) out.push(s);
+      const str = typeof s === "string" ? s : (s.name || s.name_en || "");
+      if (str && !out.some((o) => similar(o, str))) out.push(str);
     });
     return out;
   }
@@ -172,7 +207,7 @@ window.SolinStore = (function () {
     K, load, save,
     getRecipes, getRecipe, saveEdit, resetEdits, hasEdits, editFields, deleteCustomRecipe,
     finalizeCustomRecipe, purgeBlankRecipes,
-    getInventory, setInventory, findByBase, subsFor,
+    getInventory, setInventory, syncKamraFromApi, findByBase, subsFor,
     getChecks, setChecks,
     getHave, setHave,
     getUI, setUI,

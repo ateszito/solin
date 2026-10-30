@@ -24,11 +24,12 @@
 
 FROM python:3.11-slim
 
-# Install system dependencies: Tesseract OCR with Hungarian + English models
+# Install system dependencies: Tesseract OCR with Hungarian + English models, and ffmpeg for videos
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-hun \
     tesseract-ocr-eng \
+    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv
