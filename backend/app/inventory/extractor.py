@@ -1,17 +1,21 @@
 """OCR and Nutrition/Ingredients Extraction Engine for Solin.
 
 Extracts nutritional macros (C4 schema) and ingredients list from food packaging
-images using server-side Pillow image preprocessing and Tesseract OCR with
-Hungarian ('hun') and English ('eng') language models.
+images using local Ollama Vision LLM (e.g. qwen3.5:9b) with seamless fallback to
+server-side Pillow image preprocessing and Tesseract OCR with Hungarian ('hun') and
+English ('eng') language models.
 """
 
 from __future__ import annotations
 
+import base64
 import io
+import json
 import os
 import re
 import shutil
 import subprocess
+import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image, ImageEnhance, ImageOps
@@ -280,8 +284,14 @@ def parse_ingredients(text: str) -> Tuple[Optional[str], List[str]]:
     if not cleaned:
         return None, []
 
-    # Split into structured items:
-    # Split by comma or semicolon, but NOT if inside parentheses like "sertéshús (85%, víz, só)"
+    return split_ingredient_items(cleaned)
+
+
+def split_ingredient_items(cleaned: str) -> Tuple[str, List[str]]:
+    """Split cleaned ingredient string into items respecting parentheses."""
+    if not cleaned:
+        return "", []
+
     items = []
     current: List[str] = []
     paren_depth = 0
@@ -304,8 +314,175 @@ def parse_ingredients(text: str) -> Tuple[Optional[str], List[str]]:
     return cleaned, items
 
 
+def get_ollama_host() -> Optional[str]:
+    """Find reachable Ollama API endpoint."""
+    configured = os.environ.get("OLLAMA_HOST")
+    candidates = []
+    if configured:
+        candidates.append(configured if configured.startswith("http") else f"http://{configured}")
+    candidates.extend([
+        "http://host.docker.internal:11434",
+        "http://192.168.0.40:11434",
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+    ])
+    for host in candidates:
+        try:
+            with urllib.request.urlopen(f"{host}/api/tags", timeout=1.5) as resp:
+                if resp.status == 200:
+                    return host
+        except Exception:
+            continue
+    return None
+
+
+def extract_via_ollama(img_bytes: bytes, target: str = "all") -> Optional[Dict[str, Any]]:
+    """Extract nutritional macros and ingredients using local Ollama Vision LLM.
+
+    Returns dict with macros, ingredients, ingredients_list, raw_text, engine,
+    or None if Ollama is unreachable or fails.
+    """
+    host = get_ollama_host()
+    if not host:
+        return None
+
+    model = os.environ.get("OLLAMA_VISION_MODEL") or os.environ.get("OLLAMA_MODEL") or "qwen3.5:9b"
+
+    try:
+        orig = Image.open(io.BytesIO(img_bytes))
+        orig = ImageOps.exif_transpose(orig)
+        if orig.mode != "RGB":
+            orig = orig.convert("RGB")
+
+        # Resize to max 1200px dimension for fast GPU inference
+        max_dim = 1200
+        w, h = orig.size
+        if max(w, h) > max_dim:
+            scale = max_dim / max(w, h)
+            orig = orig.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+
+        buf = io.BytesIO()
+        orig.save(buf, format="JPEG", quality=85)
+        b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        prompt = (
+            "Analyze this food packaging / nutrition label image (Hungarian or English).\n"
+            "Extract:\n"
+            "1. The nutritional macro values per 100g (or 100ml). Look carefully for decimal points and commas (e.g. 0,2g or 0.2g is 0.2, NOT 2 or 20).\n"
+            "2. The ingredients list (e.g. 'Összetevők:', 'Hozzávalók:', 'Ingredients:'). If visible, transcribe the full list. If not visible on this label, set it to empty string \"\".\n\n"
+            "Return STRICTLY a JSON object with this exact structure, with no markdown formatting or extra text:\n"
+            "{\n"
+            '  "calories": <number in kcal or 0>,\n'
+            '  "protein": <number in grams or 0>,\n'
+            '  "fat": <number in grams or 0>,\n'
+            '  "carbs": <number in grams or 0>,\n'
+            '  "fiber": <number in grams or 0>,\n'
+            '  "sugar": <number in grams or 0>,\n'
+            '  "salt": <number in grams or 0>,\n'
+            '  "sodium": <number in mg or 0>,\n'
+            '  "ingredients": "<full ingredients text if found, or empty string>"\n'
+            "}"
+        )
+
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt, "images": [b64_img]}],
+            "stream": False,
+            "options": {"temperature": 0.1},
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            content = data.get("message", {}).get("content", "")
+
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        if not m:
+            return None
+        parsed = json.loads(m.group(0))
+
+        macros = {
+            "calories": 0.0,
+            "protein": 0.0,
+            "fat": 0.0,
+            "carbs": 0.0,
+            "fiber": 0.0,
+            "sugar": 0.0,
+            "sodium": 0.0,
+        }
+        for k in ["calories", "protein", "fat", "carbs", "fiber", "sugar"]:
+            val = parsed.get(k)
+            if val is not None:
+                try:
+                    num = float(str(val).replace(",", ".").replace("kcal", "").replace("g", "").strip())
+                    macros[k] = round(num, 2)
+                except (ValueError, TypeError):
+                    pass
+
+        salt = 0.0
+        if "salt" in parsed and parsed["salt"] is not None:
+            try:
+                salt = float(str(parsed["salt"]).replace(",", ".").replace("g", "").strip())
+            except (ValueError, TypeError):
+                salt = 0.0
+
+        sodium = 0.0
+        if "sodium" in parsed and parsed["sodium"] is not None:
+            try:
+                sodium = float(str(parsed["sodium"]).replace(",", ".").replace("mg", "").strip())
+            except (ValueError, TypeError):
+                sodium = 0.0
+
+        if sodium == 0.0 and salt > 0.0:
+            sodium = round(salt * 400.0, 1)
+
+        macros["sodium"] = sodium
+
+        raw_ing = str(parsed.get("ingredients") or "").strip()
+        ing_str = (
+            raw_ing
+            if raw_ing
+            and raw_ing.lower()
+            not in [
+                "none",
+                "null",
+                "n/a",
+                "empty",
+                "ingredients not visible in the provided image.",
+                "ingredients not visible in the image.",
+            ]
+            else None
+        )
+
+        items = []
+        if ing_str:
+            _, items = split_ingredient_items(ing_str)
+
+        has_macros = any(v > 0 for v in macros.values())
+        if not has_macros and not ing_str:
+            return None
+
+        return {
+            "macros": macros,
+            "ingredients": ing_str,
+            "ingredients_list": items,
+            "raw_text": content,
+            "engine": f"ollama:{model}",
+        }
+    except Exception:
+        return None
+
+
 def extract_from_image(img_bytes: bytes, target: str = "all") -> Dict[str, Any]:
     """Run full extraction pipeline on image bytes.
+
+    Tries local Ollama Vision LLM first for high-accuracy multilingual recognition.
+    Falls back gracefully to server-side Pillow preprocessing + Tesseract OCR
+    if Ollama is unavailable or returns no results.
 
     target: 'all' | 'macros' | 'ingredients'
     Returns:
@@ -313,9 +490,19 @@ def extract_from_image(img_bytes: bytes, target: str = "all") -> Dict[str, Any]:
         "macros": {...},
         "ingredients": str | None,
         "ingredients_list": List[str],
-        "raw_text": str
+        "raw_text": str,
+        "engine": str
       }
     """
+    # 1. Try local Ollama Vision LLM
+    try:
+        ollama_res = extract_via_ollama(img_bytes, target=target)
+        if ollama_res is not None:
+            return ollama_res
+    except Exception:
+        pass
+
+    # 2. Fallback: Server-side Pillow preprocessing + Tesseract OCR pipeline
     variants = preprocess_image(img_bytes)
     lang = get_tesseract_languages()
 
@@ -359,4 +546,5 @@ def extract_from_image(img_bytes: bytes, target: str = "all") -> Dict[str, Any]:
         "ingredients": ingredients_str,
         "ingredients_list": ingredients_list,
         "raw_text": raw_text[:2000] if raw_text else "",
+        "engine": "tesseract_ocr",
     }

@@ -684,5 +684,80 @@ def test_extract_label_endpoint(client):
     assert "ingredients" in data
     assert "ingredients_list" in data
     assert "raw_text" in data
+    assert "engine" in data
+
+
+def test_extract_via_ollama_mocked(monkeypatch):
+    """Verify Ollama extraction parsing logic, macro normalization, and ingredient splitting."""
+    import io
+    from PIL import Image
+    from backend.app.inventory.extractor import extract_from_image
+
+    img = Image.new("RGB", (100, 100), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    raw_jpg = buf.getvalue()
+
+    fake_ollama_resp = {
+        "calories": 567,
+        "protein": "21g",
+        "fat": "45,0",
+        "carbs": "26",
+        "fiber": 10,
+        "sugar": "8.0",
+        "salt": "4.0",
+        "sodium": 0,
+        "ingredients": "mandula (80%, pörkölt), repceolaj; tengeri só",
+    }
+
+    class FakeResponse:
+        def read(self):
+            import json
+            return json.dumps({
+                "message": {
+                    "content": json.dumps(fake_ollama_resp)
+                }
+            }).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("backend.app.inventory.extractor.get_ollama_host", lambda: "http://fake-ollama:11434")
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=60: FakeResponse())
+
+    res = extract_from_image(raw_jpg)
+    assert res["engine"].startswith("ollama:")
+    assert res["macros"]["calories"] == 567.0
+    assert res["macros"]["protein"] == 21.0
+    assert res["macros"]["fat"] == 45.0
+    assert res["macros"]["carbs"] == 26.0
+    assert res["macros"]["fiber"] == 10.0
+    assert res["macros"]["sugar"] == 8.0
+    # salt 4.0 -> sodium 1600.0 (salt * 400.0)
+    assert res["macros"]["sodium"] == 1600.0
+    assert res["ingredients"] == "mandula (80%, pörkölt), repceolaj; tengeri só"
+    # Parentheses preserved during splitting
+    assert res["ingredients_list"] == ["mandula (80%, pörkölt)", "repceolaj", "tengeri só"]
+
+
+def test_extract_via_ollama_fallback_to_tesseract(monkeypatch):
+    """When Ollama is unreachable, extractor gracefully falls back to Tesseract OCR."""
+    import io
+    from PIL import Image
+    from backend.app.inventory.extractor import extract_from_image
+
+    img = Image.new("RGB", (100, 100), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    raw_jpg = buf.getvalue()
+
+    monkeypatch.setattr("backend.app.inventory.extractor.get_ollama_host", lambda: None)
+
+    res = extract_from_image(raw_jpg)
+    assert res["engine"] == "tesseract_ocr"
+    assert "macros" in res
+    assert "ingredients" in res
+
 
 

@@ -36,6 +36,11 @@ services:
   solin-prod-api:
     image: solin:prod-api
     container_name: solin-prod-api
+    environment:
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_VISION_MODEL: "qwen3.5:9b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [solin_net]
     volumes:
       - vol_solin_prod_data:/srv/data
@@ -82,6 +87,11 @@ services:
   solin-staging-api:
     image: solin:staging-api
     container_name: solin-staging-api
+    environment:
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_VISION_MODEL: "qwen3.5:9b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [solin_net]
     volumes:
       - vol_solin_staging_data:/srv/data
@@ -135,6 +145,10 @@ services:
     container_name: solin-dev-api
     environment:
       SOLIN_INGEST_ENABLED: "true"
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_VISION_MODEL: "qwen3.5:9b"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [solin_net]
     volumes:
       - vol_solin_dev_data:/srv/data
