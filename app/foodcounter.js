@@ -607,6 +607,216 @@ window.FoodCounter = (function () {
     </div>`;
   }
 
+  /* ---- Interactive Label Crop & Rotate Tool ------------------- */
+  function openLabelCropModal(fileOrSrc, onConfirmCrop, onSkip) {
+    let overlay = document.querySelector("#solin-crop-modal");
+    if (overlay) overlay.remove();
+
+    overlay = document.createElement("div");
+    overlay.id = "solin-crop-modal";
+    overlay.className = "solin-crop-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    let currentRotation = 0;
+
+    overlay.innerHTML = `
+      <div class="solin-crop-header">
+        <div class="solin-crop-title-wrap">
+          <span class="solin-crop-title">✂️ Címke igazítása (Kijelölés & Forgatás)</span>
+          <span class="solin-crop-sub">Húzd a kék keretet a tápérték táblázatra, hogy levágd a vonalkódot és a hátteret!</span>
+        </div>
+        <button type="button" class="btn sm ghost" id="crop-close" title="Bezárás">✕</button>
+      </div>
+      <div class="solin-crop-toolbar">
+        <button type="button" class="btn sm ghost" id="crop-rotate">🔄 90° Forgatás</button>
+        <button type="button" class="btn sm ghost" id="crop-reset">↺ Alaphelyzet</button>
+      </div>
+      <div class="solin-crop-stage" id="crop-stage">
+        <div class="solin-crop-wrap" id="crop-wrap">
+          <img id="crop-img" class="solin-crop-img" alt="Címkefotó" draggable="false" />
+          <div id="crop-box" class="solin-crop-box">
+            <div class="solin-crop-grid"></div>
+            <div class="crop-h crop-tl" data-dir="tl"></div>
+            <div class="crop-h crop-tr" data-dir="tr"></div>
+            <div class="crop-h crop-bl" data-dir="bl"></div>
+            <div class="crop-h crop-br" data-dir="br"></div>
+            <div class="crop-h crop-t" data-dir="t"></div>
+            <div class="crop-h crop-b" data-dir="b"></div>
+            <div class="crop-h crop-l" data-dir="l"></div>
+            <div class="crop-h crop-r" data-dir="r"></div>
+          </div>
+        </div>
+      </div>
+      <div class="solin-crop-footer">
+        <button type="button" class="btn sm ghost" id="crop-skip">Teljes kép beolvasása</button>
+        <div class="solin-crop-actions">
+          <button type="button" class="btn sm primary" id="crop-confirm">🔍 Kijelölt terület beolvasása</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const imgEl = overlay.querySelector("#crop-img");
+    const cropBox = overlay.querySelector("#crop-box");
+    const cropWrap = overlay.querySelector("#crop-wrap");
+
+    let box = { x: 0, y: 0, w: 0, h: 0 };
+
+    function initBox() {
+      const rect = imgEl.getBoundingClientRect();
+      const wrapW = rect.width;
+      const wrapH = rect.height;
+      if (!wrapW || !wrapH) return;
+
+      // Center crop box to central 80% width by 65% height
+      box.w = Math.round(wrapW * 0.82);
+      box.h = Math.round(wrapH * 0.65);
+      box.x = Math.round((wrapW - box.w) / 2);
+      box.y = Math.round(wrapH * 0.15);
+      renderBox();
+    }
+
+    function renderBox() {
+      const rect = imgEl.getBoundingClientRect();
+      const maxW = rect.width;
+      const maxH = rect.height;
+      box.w = Math.max(40, Math.min(box.w, maxW));
+      box.h = Math.max(40, Math.min(box.h, maxH));
+      box.x = Math.max(0, Math.min(box.x, maxW - box.w));
+      box.y = Math.max(0, Math.min(box.y, maxH - box.h));
+
+      cropBox.style.left = box.x + "px";
+      cropBox.style.top = box.y + "px";
+      cropBox.style.width = box.w + "px";
+      cropBox.style.height = box.h + "px";
+    }
+
+    function loadSource(src) {
+      imgEl.onload = () => {
+        setTimeout(initBox, 60);
+      };
+      imgEl.src = src;
+    }
+
+    if (typeof fileOrSrc === "string") {
+      loadSource(fileOrSrc);
+    } else if (fileOrSrc instanceof Blob || fileOrSrc instanceof File) {
+      const reader = new FileReader();
+      reader.onload = (e) => loadSource(e.target.result);
+      reader.readAsDataURL(fileOrSrc);
+    }
+
+    // 90 degree clockwise rotation
+    overlay.querySelector("#crop-rotate").addEventListener("click", () => {
+      const canvas = document.createElement("canvas");
+      const nw = imgEl.naturalWidth || imgEl.width;
+      const nh = imgEl.naturalHeight || imgEl.height;
+      canvas.width = nh;
+      canvas.height = nw;
+      const ctx = canvas.getContext("2d");
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(imgEl, -nw / 2, -nh / 2);
+      currentRotation = (currentRotation + 90) % 360;
+      loadSource(canvas.toDataURL("image/jpeg", 0.95));
+    });
+
+    overlay.querySelector("#crop-reset").addEventListener("click", initBox);
+
+    const close = () => overlay.remove();
+    overlay.querySelector("#crop-close").addEventListener("click", () => {
+      close();
+      if (typeof onSkip === "function") onSkip();
+    });
+    overlay.querySelector("#crop-skip").addEventListener("click", () => {
+      close();
+      if (typeof onSkip === "function") onSkip();
+    });
+
+    // Touch and mouse dragging / resizing
+    let activeMode = null;
+    let startPointer = { x: 0, y: 0 };
+    let startBox = { x: 0, y: 0, w: 0, h: 0 };
+
+    function onPointerStart(e) {
+      const pt = e.touches ? e.touches[0] : e;
+      const target = e.target;
+      if (target.dataset && target.dataset.dir) {
+        activeMode = target.dataset.dir;
+      } else if (target === cropBox || cropBox.contains(target)) {
+        activeMode = "move";
+      } else {
+        return;
+      }
+      e.preventDefault();
+      startPointer = { x: pt.clientX, y: pt.clientY };
+      startBox = { ...box };
+    }
+
+    function onPointerMove(e) {
+      if (!activeMode) return;
+      const pt = e.touches ? e.touches[0] : e;
+      e.preventDefault();
+      const dx = pt.clientX - startPointer.x;
+      const dy = pt.clientY - startPointer.y;
+
+      if (activeMode === "move") {
+        box.x = startBox.x + dx;
+        box.y = startBox.y + dy;
+      } else {
+        if (activeMode.includes("r")) box.w = startBox.w + dx;
+        if (activeMode.includes("b")) box.h = startBox.h + dy;
+        if (activeMode.includes("l")) {
+          box.x = startBox.x + dx;
+          box.w = startBox.w - dx;
+        }
+        if (activeMode.includes("t")) {
+          box.y = startBox.y + dy;
+          box.h = startBox.h - dy;
+        }
+      }
+      renderBox();
+    }
+
+    function onPointerEnd() {
+      activeMode = null;
+    }
+
+    cropWrap.addEventListener("mousedown", onPointerStart);
+    cropWrap.addEventListener("touchstart", onPointerStart, { passive: false });
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("touchmove", onPointerMove, { passive: false });
+    window.addEventListener("mouseup", onPointerEnd);
+    window.addEventListener("touchend", onPointerEnd);
+
+    // Confirm Crop -> produce cropped canvas
+    overlay.querySelector("#crop-confirm").addEventListener("click", () => {
+      const rect = imgEl.getBoundingClientRect();
+      const scaleX = (imgEl.naturalWidth || imgEl.width) / rect.width;
+      const scaleY = (imgEl.naturalHeight || imgEl.height) / rect.height;
+
+      const sx = Math.max(0, Math.round(box.x * scaleX));
+      const sy = Math.max(0, Math.round(box.y * scaleY));
+      const sw = Math.min((imgEl.naturalWidth || imgEl.width) - sx, Math.round(box.w * scaleX));
+      const sh = Math.min((imgEl.naturalHeight || imgEl.height) - sy, Math.round(box.h * scaleY));
+
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = sw;
+      cropCanvas.height = sh;
+      const ctx = cropCanvas.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      close();
+      if (typeof onConfirmCrop === "function") {
+        onConfirmCrop(cropCanvas);
+      }
+    });
+  }
+
   /* ---- Image Compression & OCR Binding ---- */
   function bindSlotUploads(panel) {
     FC.stagedSlots = FC.stagedSlots || {};
@@ -619,7 +829,7 @@ window.FoodCounter = (function () {
         if (!file) return;
 
         if (statusEl) {
-          statusEl.innerHTML = `<span class="hint" style="color:var(--text-2);">📷 Kép tömörítése és optimalizálása...</span>`;
+          statusEl.innerHTML = `<span class="hint" style="color:var(--text-2);">📷 Kép feldolgozása és optimalizálása...</span>`;
         }
 
         try {
@@ -659,9 +869,13 @@ window.FoodCounter = (function () {
             `;
           }
 
-          // If label_photo: run OCR to extract nutrition data
+          // If label_photo: open interactive crop tool first to focus OCR on the table
           if (slot === "label_photo") {
-            runLabelOcr(panel, comp, statusEl);
+            openLabelCropModal(comp.dataUrl || file, (croppedCanvas) => {
+              runLabelOcr(panel, comp, statusEl, croppedCanvas);
+            }, () => {
+              runLabelOcr(panel, comp, statusEl, null);
+            });
           }
         } catch (err) {
           console.error("Compression error:", err);
@@ -673,7 +887,7 @@ window.FoodCounter = (function () {
     });
   }
 
-  async function runLabelOcr(panel, comp, statusEl) {
+  async function runLabelOcr(panel, comp, statusEl, croppedCanvas) {
     if (!window.SolinImg || !SolinImg.extractNutrition) return;
 
     let ocrBox = statusEl.querySelector(".fc-ocr-box");
@@ -690,7 +904,7 @@ window.FoodCounter = (function () {
     `;
 
     try {
-      const imgSource = comp.canvas || comp.dataUrl || comp.blob;
+      const imgSource = croppedCanvas || comp.canvas || comp.dataUrl || comp.blob;
       const res = await SolinImg.extractNutrition(imgSource, (prog) => {
         const textEl = ocrBox.querySelector(".fc-ocr-text");
         if (textEl && prog.message) textEl.textContent = prog.message;
@@ -707,13 +921,28 @@ window.FoodCounter = (function () {
         }
       });
 
+      const photoSrc = (croppedCanvas && croppedCanvas.toDataURL)
+        ? croppedCanvas.toDataURL("image/jpeg", 0.9)
+        : (comp.dataUrl || (comp.blob ? URL.createObjectURL(comp.blob) : null));
+
+      const doRecrop = () => {
+        openLabelCropModal(comp.dataUrl || comp.blob, (newCrop) => {
+          runLabelOcr(panel, comp, statusEl, newCrop);
+        }, () => {
+          runLabelOcr(panel, comp, statusEl, null);
+        });
+      };
+
       if (count === 0) {
         ocrBox.className = "fc-ocr-box";
         ocrBox.innerHTML = `
-          <div class="hint" style="margin:0;">
-            ℹ️ Nem sikerült egyértelmű makrókat felismerni a képen. A mezők manuálisan kitölthetők.
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <span class="hint" style="margin:0;">ℹ️ Nem sikerült egyértelmű makrókat felismerni a képen.</span>
+            <button type="button" class="btn sm ghost fc-recrop-btn" style="padding:2px 8px;font-size:12px;">✂️ Igazítás / Újravágás</button>
           </div>
         `;
+        const recropBtn = ocrBox.querySelector(".fc-recrop-btn");
+        if (recropBtn) recropBtn.addEventListener("click", doRecrop);
         return;
       }
 
@@ -742,8 +971,6 @@ window.FoodCounter = (function () {
         sodium: "Nátrium (mg)"
       };
 
-      const photoSrc = comp.dataUrl || (comp.blob ? URL.createObjectURL(comp.blob) : null);
-
       if (hasExisting) {
         showMacroCompareModal(existing, detected, labels, (editedMacros) => {
           applyMacros(formEl, editedMacros || detected);
@@ -751,28 +978,38 @@ window.FoodCounter = (function () {
           ocrBox.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
               <span>✓ Makrók sikeresen frissítve a fotó alapján!</span>
-              ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó ellenőrzése</button>` : ""}
+              <div style="display:flex;gap:6px;">
+                ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó</button>` : ""}
+                <button type="button" class="btn sm ghost fc-recrop-btn" style="padding:2px 8px;font-size:12px;">✂️ Igazítás</button>
+              </div>
             </div>
           `;
           if (photoSrc) {
             const btn = ocrBox.querySelector(".fc-zoom-label-btn");
             if (btn) btn.addEventListener("click", () => openImageViewer(photoSrc, "Címkefotó"));
           }
+          const recropBtn = ocrBox.querySelector(".fc-recrop-btn");
+          if (recropBtn) recropBtn.addEventListener("click", doRecrop);
           toast("✓ Makrók frissítve a címkefotó alapján!");
-        }, photoSrc);
+        }, photoSrc, doRecrop);
       } else {
         applyMacros(formEl, detected);
         ocrBox.className = "fc-ocr-box fc-ocr-success";
         ocrBox.innerHTML = `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
             <span>✓ ${count} makró automatikusan beillesztve a fotóból!</span>
-            ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó ellenőrzése</button>` : ""}
+            <div style="display:flex;gap:6px;">
+              ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó</button>` : ""}
+              <button type="button" class="btn sm ghost fc-recrop-btn" style="padding:2px 8px;font-size:12px;">✂️ Igazítás</button>
+            </div>
           </div>
         `;
         if (photoSrc) {
           const btn = ocrBox.querySelector(".fc-zoom-label-btn");
           if (btn) btn.addEventListener("click", () => openImageViewer(photoSrc, "Címkefotó"));
         }
+        const recropBtn = ocrBox.querySelector(".fc-recrop-btn");
+        if (recropBtn) recropBtn.addEventListener("click", doRecrop);
         toast("✓ Makrók automatikusan beillesztve a fotóból!");
       }
     } catch (err) {
@@ -799,7 +1036,7 @@ window.FoodCounter = (function () {
     }
   }
 
-  function showMacroCompareModal(current, detected, labels, onConfirm, photoSrc) {
+  function showMacroCompareModal(current, detected, labels, onConfirm, photoSrc, onRecrop) {
     let overlay = document.querySelector("#fc-macro-modal");
     if (overlay) overlay.remove();
 
@@ -834,7 +1071,8 @@ window.FoodCounter = (function () {
         <img src="${esc(photoSrc)}" class="fc-compare-photo-img" alt="Címkefotó előnézet" />
         <div class="fc-compare-photo-meta">
           <span class="fc-compare-photo-btn">🔍 Címkefotó nagyítása és ellenőrzése</span>
-          <small>Koppints a kép megnyitásához, zoomolásához, hogy kényelmesen leolvashasd az értékeket!</small>
+          <small>Koppints a kép megnyitásához, zoomolásához, vagy igazítsd újra a keretet!</small>
+          ${onRecrop ? `<button type="button" class="btn sm ghost" id="fc-modal-recrop-btn" style="align-self:flex-start;margin-top:4px;font-size:11.5px;padding:2px 8px;">✂️ Kijelölés módosítása</button>` : ""}
         </div>
       </div>
     ` : "";
@@ -887,6 +1125,32 @@ window.FoodCounter = (function () {
         });
       }
     }
+
+    if (onRecrop) {
+      const recropBtn = overlay.querySelector("#fc-modal-recrop-btn");
+      if (recropBtn) {
+        recropBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          close();
+          onRecrop();
+        });
+      }
+    }
+
+    overlay.querySelector("#fc-modal-apply").addEventListener("click", () => {
+      const edited = {};
+      overlay.querySelectorAll("[data-compare-key]").forEach((inp) => {
+        const k = inp.dataset.compareKey;
+        const val = inp.value.trim();
+        if (val !== "") {
+          const num = Number(val);
+          if (!isNaN(num)) edited[k] = num;
+        }
+      });
+      close();
+      if (typeof onConfirm === "function") onConfirm(edited);
+    });
+  }
 
     overlay.querySelector("#fc-modal-apply").addEventListener("click", () => {
       const edited = {};

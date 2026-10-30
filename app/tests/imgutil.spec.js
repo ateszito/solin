@@ -183,4 +183,65 @@ assert.strictEqual(SolinImg.formatBytes(1500), "1.5 KB");
 assert.strictEqual(SolinImg.formatBytes(5 * 1024 * 1024), "5.0 MB");
 console.log("  ✓ formatBytes helper passed");
 
+// 8. Mendula jar label cropped Tesseract output
+const mendulaCroppedOcr = `
+Átlagos tápérték]
+Nutrition facts"
+r100g
+Energia / Energy 9523 k
+567 kcal
+Zsír Fat
+45
+amelyből telített zsírsavak / s. satu
+5,0
+Szénhidrát / Garbohydrat
+26
+amelyből cukrók / sugars
+8,0 g
+ost / Fiber
+10
+*hérje/ Protxin
+21
+9/ salt
+0,0 g
+`;
+const resMendula = SolinImg.parseNutrition(mendulaCroppedOcr);
+assert.strictEqual(resMendula.calories, 567, "Mendula calories should be 567");
+assert.strictEqual(resMendula.fat, 45, "Mendula fat should be 45");
+assert.strictEqual(resMendula.carbs, 26, "Mendula carbs should be 26");
+assert.strictEqual(resMendula.sugar, 8.0, "Mendula sugar should be 8.0");
+assert.strictEqual(resMendula.fiber, 10, "Mendula fiber should be 10");
+assert.strictEqual(resMendula.protein, 21, "Mendula protein should be 21");
+assert.strictEqual(resMendula.sodium, 0, "Mendula sodium should be 0");
+console.log("  ✓ Mendula jar cropped OCR passed (all 7 macros)");
+
+// 9. Two-column sequential block layout
+const twoColumnLabel = `
+Energia / Energy
+Zsir / Fat
+amelyból telitett zsirsavak / saturated
+Szénhidrát / Carbohydrates
+amelybol cukrak / sugars
+Rost / Fiber
+Fehérje / Protein
+Số / salt
+2523kJ / 567 kcal
+45 g
+5,0 g
+26 g
+8,0 g
+10 g
+21 g
+0,0 g
+`;
+const resTwoCol = SolinImg.parseNutrition(twoColumnLabel);
+assert.strictEqual(resTwoCol.calories, 567);
+assert.strictEqual(resTwoCol.fat, 45);
+assert.strictEqual(resTwoCol.carbs, 26);
+assert.strictEqual(resTwoCol.sugar, 8.0);
+assert.strictEqual(resTwoCol.fiber, 10);
+assert.strictEqual(resTwoCol.protein, 21);
+assert.strictEqual(resTwoCol.sodium, 0);
+console.log("  ✓ Two-column sequential block layout passed");
+
 console.log("ALL SolinImg unit tests passed successfully!");

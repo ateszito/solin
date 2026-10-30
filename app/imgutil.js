@@ -29,12 +29,17 @@
     let s = String(str).trim().toLowerCase();
 
     if (key === "calories") {
-      const kcalMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*kcal/i);
+      const kcalMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i);
       if (kcalMatch) return Math.round(parseFloat(kcalMatch[1].replace(/,/g, ".").replace(/\s+/g, "")));
-      const kjMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*k[j3]/i);
+      const kjMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i);
       if (kjMatch) return Math.round(parseFloat(kjMatch[1].replace(/,/g, ".").replace(/\s+/g, "")) / 4.184);
       const anyNum = s.match(/(\d+)/);
-      return anyNum ? parseInt(anyNum[1], 10) : null;
+      if (anyNum) {
+        const n = parseInt(anyNum[1], 10);
+        if (n > 1200 && n < 4500) return Math.round(n / 4.184);
+        return n;
+      }
+      return null;
     }
 
     // 1. Normalize delimiters: comma, dot, apostrophe, middle dot, colon, dash between digits
@@ -94,6 +99,8 @@
     if (isNaN(val)) return null;
 
     if (key === "sodium" || key === "salt") {
+      if (/k[j31]|kcal/i.test(s)) return null;
+      if (!isMg && val > 50) return null;
       if (isMg) return Math.round(val);
       // Convert salt in grams to sodium in mg (1g salt ≈ 400mg sodium)
       return Math.round(val * 400);
@@ -106,28 +113,24 @@
   const W = "(?![a-záéíóöőúüű])";
 
   const labelPatterns = {
-    calories: [
-      new RegExp("(?:energia|energy|energie|kal[oó]ria|calories?|brennwert)" + W, "i"),
-      new RegExp("(\\d+(?:\\.\\d+)?)\\s*kcal" + W, "i")
-    ],
     fat: [
-      new RegExp("(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|total\\s*fat|fat|fett)" + W, "i")
+      new RegExp("(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|zsf|zsl|total\\s*fat|fat|fett)" + W, "i")
     ],
     carbs: [
-      new RegExp("(?:sz[eé]nhidr[aá]t|carbohydrate|total\\s*carb(?:ohydrate)?|carbs|kohlenhydrate)" + W, "i")
+      new RegExp("(?:sz[eé]nhidr[aá]t|garbohydrat|carbohydrate|total\\s*carb(?:ohydrate)?|carbs|kohlenhydrate)" + W, "i")
     ],
     sugar: [
-      new RegExp("(?:amelyb[oöőeé06d][l1]?\\s*(?:cukr|cukt|cukor|cukrok)|cukrok?|cukor|of\\s*which\\s*sugars?|total\\s*sugars?|sugars?|davon\\s*zucker|zucker)" + W, "i")
+      new RegExp("(?:amelyb[oöőeé06d][l1]?\\s*(?:cukr|cukt|cukor|cukrok)|cukr[oó]k?|cukor|of\\s*which\\s*sugars?|total\\s*sugars?|sugars?|davon\\s*zucker|zucker)" + W, "i")
     ],
     fiber: [
-      new RegExp("(?:[eé]lelmi\\s*rost|rost|dietary\\s*fiber|fiber|fibre|ballaststoffe)" + W, "i")
+      new RegExp("(?:[eé]lelmi\\s*rost|rost|ost\\s*[/|]?\\s*fiber|dietary\\s*fiber|fiber|fibre|ballaststoffe)" + W, "i")
     ],
     protein: [
-      new RegExp("(?:feh[eé]rje|feh[eé]r]e|feherje|protein|eiwei[sß])" + W, "i")
+      new RegExp("(?:feh[eé]rje|feh[eé]r]e|[eé]h[eé]rje|h[eé]rje|protein|protx?in|provain|eiwei[sß])" + W, "i")
     ],
     sodium: [
       new RegExp("(?:n[aá]trium|sodium)" + W, "i"),
-      new RegExp("(?:^|[^a-záéíóöőúüű])(?:s[oó0$]|salt|salz)" + W, "i")
+      new RegExp("(?:^|[^a-záéíóöőúüű])(?:[s96$]?\\s*[/|]\\s*salt|s[oó0$]|salt|salz)" + W, "i")
     ]
   };
 
@@ -135,7 +138,7 @@
   const NUM_VALUE_RX = /[:=]?\s*([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)/i;
 
   function isSaturatedLine(line) {
-    return /tel[ií]tett|saturated|ges[aä]ttigt/i.test(line);
+    return /tel[ií]tett|saturated|ges[aä]ttigt|satu\b/i.test(line);
   }
 
   /**
@@ -152,7 +155,12 @@
 
     const lines = rawText
       .split(/[\r\n]+/)
-      .map((s) => s.trim())
+      .map((s) => {
+        let t = s.trim();
+        t = t.replace(/^[|¦\[\]!©+~:;\s]+/, "").replace(/[|¦\[\]!©+~:;\s]+$/, "").trim();
+        t = t.replace(/\s+[|¦]\s+/g, " ");
+        return t;
+      })
       .filter(Boolean);
 
     const result = {};
@@ -161,13 +169,31 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Calories priority check (handles "1986 kJ/481 kcal" or "481 kcal")
+      // Calories priority check (handles "1986 kJ/481 kcal", "Calories 250", "25231) 567.kcal", "481 kcal")
       if (result.calories == null) {
-        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,\s]\d+)?)\s*k[j3]\s*[/|]\s*(\d+(?:[.,\s]\d+)?)\s*kcal/i)
-          || line.match(/(\d+(?:[.,\s]\d+)?)\s*kcal/i)
+        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,\s]\d+)?)\s*k[j31]?\s*[/|\\)\s]\s*(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i)
+          || line.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i)
           || line.match(/(?:calories|kal[oó]ria)\s*[:=]?\s*(\d+)/i);
         if (kcalM) {
           result.calories = cleanMacroNumber(kcalM[2] || kcalM[1], "calories");
+        } else if (/energia|energy|energie|brennwert/i.test(line)) {
+          // Check subsequent 1-2 lines for explicit kcal before taking kJ
+          for (let off = 1; off <= 2 && i + off < lines.length; off++) {
+            const nextL = lines[i + off];
+            const nextKcal = nextL.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i);
+            if (nextKcal) {
+              result.calories = cleanMacroNumber(nextKcal[1], "calories");
+              break;
+            }
+          }
+          // Fallback: check if line or next line has kJ
+          if (result.calories == null) {
+            const kjM = line.match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i)
+              || (i + 1 < lines.length ? lines[i + 1].match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i) : null);
+            if (kjM && parseFloat(kjM[1]) > 50) {
+              result.calories = cleanMacroNumber(kjM[1] + " kJ", "calories");
+            }
+          }
         }
       }
 
@@ -200,8 +226,8 @@
       if (result.calories == null && /energia|energy|energie|kal[oó]ria|calories?/i.test(line)) {
         for (let off = 1; off <= 2 && i + off < lines.length; off++) {
           const nxt = lines[i + off];
-          const kcalM = nxt.match(/(\d+(?:[.,\s]\d+)?)\s*kcal/i)
-            || nxt.match(/(\d+(?:[.,\s]\d+)?)\s*k[j3]/i);
+          const kcalM = nxt.match(/(\d+(?:[.,\s]\d+)?)\s*\.?\s*kcal/i)
+            || nxt.match(/(\d+(?:[.,\s]\d+)?)\s*k[j31]/i);
           if (kcalM) {
             result.calories = cleanMacroNumber(kcalM[1], "calories");
             break;
@@ -224,6 +250,9 @@
                 k !== key && labelPatterns[k].some((p) => p.test(nextL))
               );
               if (isOtherLabel && !/^\d/.test(nextL)) break;
+
+              // If nextL is an energy/calorie line (contains kJ or kcal), do not consume it for non-calorie macros
+              if (key !== "calories" && /(?:k[j31]|kcal)\b/i.test(nextL)) break;
 
               const numM = nextL.match(/^[^a-záéíóöőúüű\d]*([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)/i)
                 || nextL.match(/([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)$/i);
@@ -264,6 +293,63 @@
       }
     }
 
+    // Pass 4: Two-column / sequential block alignment
+    // Many labels are formatted as two distinct columns (all labels first, then all values).
+    // If fewer than 3 macros were detected, check if we have a sequence of label lines
+    // followed by a sequence of numeric value lines.
+    const detectedCount = Object.keys(result).filter((k) => k !== "rawText" && result[k] != null).length;
+    if (detectedCount < 3) {
+      const orderKeys = [
+        { key: "calories", rx: /energia|energy|brennwert/i },
+        { key: "fat", rx: /(?:^|[^a-záéíóöőúüű])(?:zs[ií1l][rt]|isit|lsir|zsf|zsl|total\\s*fat|fat|fett)(?![a-záéíóöőúüű])/i },
+        { key: "sat_fat", rx: /tel[ií]tett|saturated|ges[aä]ttigt|satu\b/i },
+        { key: "carbs", rx: /sz[eé]nhidr[aá]t|garbohydrat|carbohydrate|total\\s*carb|carbs|kohlenhydrate/i },
+        { key: "sugar", rx: /cukr|sugar|zucker/i },
+        { key: "fiber", rx: /rost|fiber|fibre|ballaststoffe/i },
+        { key: "protein", rx: /feh[eé]rje|feh[eé]r]e|[eé]h[eé]rje|h[eé]rje|protein|protx?in|provain|eiwei[sß]/i },
+        { key: "sodium", rx: /[s96$]?\\s*[\/|]\\s*salt|s[oó0$]|salt|salz|n[aá]trium|sodium/i }
+      ];
+
+      const labelSeq = [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (/^per\s+\d+/i.test(l) || /^100\s*g/i.test(l)) continue;
+        for (const it of orderKeys) {
+          if (it.rx.test(l)) {
+            labelSeq.push({ key: it.key, lineIdx: i, text: l });
+            break;
+          }
+        }
+      }
+
+      const valSeq = [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (/^per\s+\d+/i.test(l) || /^100\s*g/i.test(l)) continue;
+        if (/^\d{1,2}\.\s*\d{1,2}\.\s*\d{2,4}/.test(l)) continue; // ignore dates like 18. 07. 2027
+        const isLabelLine = orderKeys.some((it) => it.rx.test(l));
+        if (isLabelLine) continue;
+
+        const hasNum = /\d/.test(l);
+        const hasMacroUnit = /(?:k[j31]|kcal|g|mg|9)\b/i.test(l);
+        if (hasNum && (hasMacroUnit || (l.replace(/[^\d.,]/g, "").length <= 5))) {
+          valSeq.push({ lineIdx: i, text: l });
+        }
+      }
+
+      if (labelSeq.length >= 3 && valSeq.length >= 3) {
+        labelSeq.forEach((lbl, idx) => {
+          if (idx < valSeq.length) {
+            const k = lbl.key;
+            if (k !== "sat_fat" && result[k] == null) {
+              const val = cleanMacroNumber(valSeq[idx].text, k);
+              if (val != null) result[k] = val;
+            }
+          }
+        });
+      }
+    }
+
     result.rawText = rawText;
     return result;
   }
@@ -283,30 +369,53 @@
         try {
           let w = img.naturalWidth || img.width;
           let h = img.naturalHeight || img.height;
-          const maxDim = 2000;
-          if (w > maxDim || h > maxDim) {
-            if (w > h) {
-              h = Math.round((h * maxDim) / w);
-              w = maxDim;
-            } else {
-              w = Math.round((w * maxDim) / h);
-              h = maxDim;
+
+          // For cropped label images, ensure width is at least 1400px (upscale if small)
+          // and cap max dimension at 2200px
+          let targetW = w;
+          let targetH = h;
+          if (w < 1200 && h < 1200) {
+            const upFactor = Math.min(2.5, 1400 / Math.max(w, h));
+            targetW = Math.round(w * upFactor);
+            targetH = Math.round(h * upFactor);
+          } else {
+            const maxDim = 2200;
+            if (w > maxDim || h > maxDim) {
+              if (w > h) {
+                targetH = Math.round((h * maxDim) / w);
+                targetW = maxDim;
+              } else {
+                targetW = Math.round((w * maxDim) / h);
+                targetH = maxDim;
+              }
             }
           }
-          const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fillRect(0, 0, w, h);
-          ctx.drawImage(img, 0, 0, w, h);
 
-          const imgData = ctx.getImageData(0, 0, w, h);
+          const canvas = document.createElement("canvas");
+          canvas.width = targetW;
+          canvas.height = targetH;
+          const ctx = canvas.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, targetW, targetH);
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+
+          // Suppress border artefacts on outer margins (turns them white)
+          const edgeX = Math.round(targetW * 0.025);
+          const edgeY = Math.round(targetH * 0.02);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, edgeX, targetH);
+          ctx.fillRect(targetW - edgeX, 0, edgeX, targetH);
+          ctx.fillRect(0, 0, targetW, edgeY);
+          ctx.fillRect(0, targetH - edgeY, targetW, edgeY);
+
+          const imgData = ctx.getImageData(0, 0, targetW, targetH);
           const d = imgData.data;
-          const contrast = 40;
+          const contrast = 55;
           const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
           for (let i = 0; i < d.length; i += 4) {
-            const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            const gray = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
             const boosted = Math.min(255, Math.max(0, factor * (gray - 128) + 128));
             d[i] = boosted;
             d[i + 1] = boosted;
@@ -573,6 +682,7 @@
 
   return {
     parseNutrition: parseNutrition,
+    cleanMacroNumber: cleanMacroNumber,
     compress: compress,
     extractNutrition: extractNutrition,
     formatBytes: formatBytes
