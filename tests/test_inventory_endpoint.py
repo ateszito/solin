@@ -611,3 +611,25 @@ def test_total_cost_invariant_across_portions_1_4_6(client, seeded):
         b = r.json()
         costs.add((b["total_cost"]["amount"], b["total_cost"]["currency"]))
     assert costs == {(2.05, "USD")}
+
+
+def test_cors_capacitor_and_localhost_allowed(client):
+    """Capacitor iOS/Android and local origins must pass CORS preflight and GET."""
+    for origin in ("capacitor://localhost", "ionic://localhost", "http://localhost"):
+        # Preflight OPTIONS
+        pre = client.options(
+            "/api/v1/inventory",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type",
+            },
+        )
+        assert pre.status_code == 200, f"OPTIONS failed for {origin}: {pre.status_code}"
+        assert pre.headers.get("access-control-allow-origin") == origin
+
+        # GET request
+        res = client.get("/api/v1/inventory", headers={"Origin": origin})
+        assert res.status_code == 200, f"GET failed for {origin}: {res.status_code}"
+        assert res.headers.get("access-control-allow-origin") == origin
+

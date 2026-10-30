@@ -33,9 +33,21 @@ app = FastAPI(
 
 # CORS — driven by CORS_ORIGINS (blueprint sec 3.2). Fallback to localhost
 # for local dev only when CORS_ORIGINS is empty AND we aren't a named env.
-_origins = settings.cors_origins
+_origins = list(settings.cors_origins) if settings.cors_origins else []
 if not _origins and settings.env == "unknown":
     _origins = ["http://localhost:3000", "http://localhost:3001"]
+
+# Always allow mobile app (Capacitor / Ionic) and local webview origins
+_mobile_origins = [
+    "capacitor://localhost",
+    "ionic://localhost",
+    "http://localhost",
+    "https://localhost",
+]
+for mo in _mobile_origins:
+    if mo not in _origins:
+        _origins.append(mo)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,

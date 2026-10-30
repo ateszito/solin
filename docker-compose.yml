@@ -57,7 +57,7 @@ services:
       APP_VERSION: ${PROD_APP_VERSION:-v0.1.0+placeholder}
       API_BASE_URL: https://solin.ateszito.com
       PUBLIC_BASE_URL: https://solin.ateszito.com
-      CORS_ORIGINS: https://solin.ateszito.com
+      CORS_ORIGINS: https://solin.ateszito.com,capacitor://localhost,http://localhost
       FEATURE_ALLOW_EDIT: "true"
       FEATURE_INVISIBILITY: "true"
       DEBUG: "false"
@@ -103,7 +103,7 @@ services:
       APP_VERSION: ${STAGING_APP_VERSION:-v0.1.0-rc1+placeholder}
       API_BASE_URL: https://solin-staging.ateszito.com
       PUBLIC_BASE_URL: https://solin-staging.ateszito.com
-      CORS_ORIGINS: https://solin-staging.ateszito.com
+      CORS_ORIGINS: https://solin-staging.ateszito.com,capacitor://localhost,http://localhost
       FEATURE_ALLOW_EDIT: "true"
       FEATURE_INVISIBILITY: "true"
       DEBUG: "false"
@@ -159,7 +159,7 @@ services:
       APP_VERSION: ${DEV_APP_VERSION:-v0.1.0-dev+placeholder}
       API_BASE_URL: https://solin-dev.ateszito.com
       PUBLIC_BASE_URL: https://solin-dev.ateszito.com
-      CORS_ORIGINS: https://solin-dev.ateszito.com
+      CORS_ORIGINS: https://solin-dev.ateszito.com,capacitor://localhost,http://localhost
       FEATURE_ALLOW_EDIT: "true"
       FEATURE_INVISIBILITY: "true"
       DEBUG: "true"

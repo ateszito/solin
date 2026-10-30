@@ -44,7 +44,7 @@ ARG SOLIN_ENV=development
 ARG APP_VERSION=v0.0.0-dev+local
 ARG API_BASE_URL=https://solin-dev.ateszito.com
 ARG PUBLIC_BASE_URL=https://solin-dev.ateszito.com
-ARG CORS_ORIGINS=https://solin-dev.ateszito.com
+ARG CORS_ORIGINS=https://solin-dev.ateszito.com,capacitor://localhost,http://localhost
 ARG JWT_SECRET_KEY=***
 ARG DATABASE_URL=postgresql://solin:***@solin-dev-db:5432/solin_dev
 ENV \
