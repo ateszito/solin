@@ -18,23 +18,29 @@
   /**
    * Normalize and parse a single macro number string extracted from OCR.
    * Handles OCR quirks like:
+   *  - Delimiters: "," / "." / "'" / "·" / "•" / ":" / "-" / space between digits (e.g. "45,6", "45 6", "45'6")
+   *  - Missing decimal commas/dots in tight font (e.g. "456" -> 45.6g, "186" -> 18.6g)
    *  - "g" misread as trailing "9" (e.g. "45,09", "1809", "099", "029", "09", "4009")
-   *  - Missing decimal commas in tight font (e.g. "450g" or "450" -> 45.0)
    *  - Accidental non-numeric noise
    *  - Salt (g) -> Sodium (mg) conversion (1g salt ≈ 400mg sodium)
    */
   function cleanMacroNumber(str, key) {
     if (!str) return null;
-    let s = String(str).trim().toLowerCase().replace(/,/g, ".");
+    let s = String(str).trim().toLowerCase();
 
     if (key === "calories") {
-      const kcalMatch = s.match(/(\d+(?:\.\d+)?)\s*kcal/i);
-      if (kcalMatch) return Math.round(parseFloat(kcalMatch[1]));
-      const kjMatch = s.match(/(\d+(?:\.\d+)?)\s*k[j3]/i);
-      if (kjMatch) return Math.round(parseFloat(kjMatch[1]) / 4.184);
+      const kcalMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*kcal/i);
+      if (kcalMatch) return Math.round(parseFloat(kcalMatch[1].replace(/,/g, ".").replace(/\s+/g, "")));
+      const kjMatch = s.match(/(\d+(?:[.,\s]\d+)?)\s*k[j3]/i);
+      if (kjMatch) return Math.round(parseFloat(kjMatch[1].replace(/,/g, ".").replace(/\s+/g, "")) / 4.184);
       const anyNum = s.match(/(\d+)/);
       return anyNum ? parseInt(anyNum[1], 10) : null;
     }
+
+    // 1. Normalize delimiters: comma, dot, apostrophe, middle dot, colon, dash between digits
+    s = s.replace(/(\d)\s*[,.\x27·•~:;-]\s*(\d)/g, "$1.$2");
+    // Normalize digit space single-digit (e.g. "45 6 g" -> "45.6 g")
+    s = s.replace(/(\d)\s+(\d)(?=\s*(?:g|mg|kcal|9)|$)/g, "$1.$2");
 
     // Strip leading / trailing OCR symbols
     s = s.replace(/^[|:;=\-—~_\])}]+/, "").replace(/[|:;=\-—~_{([]+$/, "").trim();
@@ -46,37 +52,40 @@
     if (!numPart) return null;
 
     if (!isMg) {
-      // Case 1: Trailing 9 on decimal (e.g. "0.99" where original was "0.9 g" and "g" became 9)
-      if (/^\d+\.\d9$/.test(numPart) && key !== "sodium") {
-        numPart = numPart.slice(0, -1);
-      }
-      // Case 2: Multi-digit integer without dot (e.g. "4509", "1809", "099", "029", "09", "4009")
-      else if (/^\d{2,4}$/.test(numPart) && !numPart.includes(".")) {
-        if (numPart.endsWith("9") && numPart.length > 1 && !isG) {
-          numPart = numPart.slice(0, -1); // strip trailing "9" representing unit "g"
+      if (numPart.includes(".")) {
+        // Case 1: Trailing 9 on decimal (e.g. "0.99" where original was "0.9 g" and "g" became 9)
+        if (/^\d+\.\d9$/.test(numPart) && key !== "sodium") {
+          numPart = numPart.slice(0, -1);
         }
-
-        if (key === "sodium" || key === "salt") {
-          // Salt in grams: "400" -> 4.00g, "40" -> 0.40g
+      } else {
+        // Case 2: Multi-digit integer without dot (e.g. "456", "4509", "1809", "099", "029", "09", "4009")
+        if (numPart.startsWith("0") && numPart.length >= 2) {
           if (numPart.length === 3) {
-            numPart = (parseFloat(numPart) / 100).toFixed(2);
-          } else if (numPart.length === 2) {
-            numPart = (parseFloat(numPart) / 10).toFixed(1);
+            numPart = "0." + numPart[1]; // e.g. "099" -> 0.9, "029" -> 0.2
+          } else if (numPart === "09" || numPart === "00") {
+            numPart = "0"; // "0" + "g" -> 0g
+          } else {
+            numPart = "0." + numPart[1];
           }
-        } else if (numPart.length === 3 && (key === "fat" || key === "protein" || key === "carbs" || key === "sugar")) {
-          // Macro > 100g per 100g is impossible; e.g. "450" -> 45.0, "180" -> 18.0
-          if (parseFloat(numPart) > 100) {
-            numPart = (parseFloat(numPart) / 10).toFixed(1);
+        } else {
+          if (numPart.endsWith("9") && numPart.length > 2 && !isG) {
+            numPart = numPart.slice(0, -1); // strip trailing "9" representing unit "g"
           }
-        } else if (numPart.length === 2 && numPart.startsWith("0")) {
-          // e.g. "09" -> 0.9, "02" -> 0.2
-          numPart = "0." + numPart[1];
-        }
-      } else if (isG && /^\d{3,}$/.test(numPart) && !numPart.includes(".")) {
-        if (key === "sodium" || key === "salt") {
-          numPart = (parseFloat(numPart) / 100).toFixed(2);
-        } else if (parseFloat(numPart) > 100) {
-          numPart = (parseFloat(numPart) / 10).toFixed(1);
+
+          if (key === "sodium" || key === "salt") {
+            // Salt in grams: "400" -> 4.00g, "40" -> 0.40g
+            if (numPart.length === 3) {
+              numPart = (parseFloat(numPart) / 100).toFixed(2);
+            } else if (numPart.length === 2) {
+              numPart = (parseFloat(numPart) / 10).toFixed(1);
+            }
+          } else {
+            // For macros per 100g (fat, protein, carbs, fiber, sugar): max possible is 100g!
+            // Any value >= 100g on a 100g label had its decimal dropped (e.g. "456" -> 45.6, "186" -> 18.6, "450" -> 45.0)
+            if (numPart.length === 3 && parseFloat(numPart) >= 100) {
+              numPart = (parseFloat(numPart) / 10).toFixed(1);
+            }
+          }
         }
       }
     }
@@ -122,6 +131,9 @@
     ]
   };
 
+  // Matches numeric tokens with flexible delimiters (e.g. "45,6", "45.6", "45, 6", "45 6", "45'6")
+  const NUM_VALUE_RX = /[:=]?\s*([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)/i;
+
   function isSaturatedLine(line) {
     return /tel[ií]tett|saturated|ges[aä]ttigt/i.test(line);
   }
@@ -151,8 +163,8 @@
 
       // Calories priority check (handles "1986 kJ/481 kcal" or "481 kcal")
       if (result.calories == null) {
-        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,]\d+)?)\s*k[j3]\s*[/|]\s*(\d+(?:[.,]\d+)?)\s*kcal/i)
-          || line.match(/(\d+(?:[.,]\d+)?)\s*kcal/i)
+        const kcalM = line.match(/(?:energia|energy|kal[oó]ria|calories?)?[^\d]*?(\d+(?:[.,\s]\d+)?)\s*k[j3]\s*[/|]\s*(\d+(?:[.,\s]\d+)?)\s*kcal/i)
+          || line.match(/(\d+(?:[.,\s]\d+)?)\s*kcal/i)
           || line.match(/(?:calories|kal[oó]ria)\s*[:=]?\s*(\d+)/i);
         if (kcalM) {
           result.calories = cleanMacroNumber(kcalM[2] || kcalM[1], "calories");
@@ -167,7 +179,7 @@
           const match = line.match(rx);
           if (match) {
             const after = line.slice(match.index + match[0].length);
-            const numM = after.match(/[:=]?\s*([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)/i);
+            const numM = after.match(NUM_VALUE_RX);
             if (numM && /\d/.test(numM[1])) {
               const val = cleanMacroNumber(numM[1], key);
               if (val != null) {
@@ -188,8 +200,8 @@
       if (result.calories == null && /energia|energy|energie|kal[oó]ria|calories?/i.test(line)) {
         for (let off = 1; off <= 2 && i + off < lines.length; off++) {
           const nxt = lines[i + off];
-          const kcalM = nxt.match(/(\d+(?:[.,]\d+)?)\s*kcal/i)
-            || nxt.match(/(\d+(?:[.,]\d+)?)\s*k[j3]/i);
+          const kcalM = nxt.match(/(\d+(?:[.,\s]\d+)?)\s*kcal/i)
+            || nxt.match(/(\d+(?:[.,\s]\d+)?)\s*k[j3]/i);
           if (kcalM) {
             result.calories = cleanMacroNumber(kcalM[1], "calories");
             break;
@@ -213,8 +225,8 @@
               );
               if (isOtherLabel && !/^\d/.test(nextL)) break;
 
-              const numM = nextL.match(/^[^a-záéíóöőúüű\d]*([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)/i)
-                || nextL.match(/([~<>]?\s*\d+(?:[.,]\d+)?\s*(?:g|mg|kcal|9)?)$/i);
+              const numM = nextL.match(/^[^a-záéíóöőúüű\d]*([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)/i)
+                || nextL.match(/([~<>]?\s*\d+(?:\s*[,.\x27·•~:;-]\s*\d+|\s+\d(?=\s*(?:g|mg|kcal|9)|$))?\s*(?:g|mg|kcal|9)?)$/i);
 
               if (numM && /\d/.test(numM[1])) {
                 const val = cleanMacroNumber(numM[1], key);

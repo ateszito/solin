@@ -62,18 +62,200 @@ window.FoodCounter = (function () {
      SECTION 1/4 — view bootstrap + product list + detail panel
      ============================================================ */
 
-  /* ---- list rendering ------------------------------------------- */
-  function macroChips(m) {
-    if (!m) return "";
-    const c = (v, label) =>
-      `<span class="fc-chip" title="${label}">${label} ${fmt(v)}</span>`;
-    return [
-      c(m.calories, "kcal"),
-      c(m.protein, "P"),
-      c(m.carbs, "C"),
-      c(m.fat, "F"),
-    ].join("");
+  /* ---- Lightbox / Image Zoom Viewer ---------------------------- */
+  function openImageViewer(src, title) {
+    if (!src) return;
+    let overlay = document.querySelector("#solin-lightbox");
+    if (overlay) overlay.remove();
+
+    overlay = document.createElement("div");
+    overlay.id = "solin-lightbox";
+    overlay.className = "solin-lightbox-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    let scale = 1.0;
+    let translateX = 0;
+    let translateY = 0;
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let initialPinchDist = null;
+
+    overlay.innerHTML = `
+      <div class="solin-lightbox-header">
+        <span class="solin-lightbox-title">${esc(title || "Fotó nagyítása")}</span>
+        <div class="solin-lightbox-tools">
+          <button type="button" class="btn sm ghost" id="lb-zoom-out" title="Kicsinyítés">－</button>
+          <button type="button" class="btn sm ghost" id="lb-zoom-reset" title="Alaphelyzet">100%</button>
+          <button type="button" class="btn sm ghost" id="lb-zoom-in" title="Nagyítás">＋</button>
+          <button type="button" class="btn sm ghost lb-close" id="lb-close" title="Bezárás">✕</button>
+        </div>
+      </div>
+      <div class="solin-lightbox-viewport" id="lb-viewport">
+        <img id="lb-img" class="solin-lightbox-img" src="${esc(src)}" alt="" draggable="false" />
+      </div>
+      <div class="solin-lightbox-footer">
+        <span>💡 Két ujjal (pinch) vagy a ＋ / － gombokkal nagyíthatsz és mozgathatod a képet</span>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const imgEl = overlay.querySelector("#lb-img");
+    const viewport = overlay.querySelector("#lb-viewport");
+    const resetBtn = overlay.querySelector("#lb-zoom-reset");
+
+    function updateTransform() {
+      scale = Math.max(0.5, Math.min(scale, 5.0));
+      imgEl.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+      if (resetBtn) resetBtn.textContent = `${Math.round(scale * 100)}%`;
+      viewport.style.cursor = scale > 1 ? "grab" : "default";
+    }
+
+    const close = () => {
+      document.removeEventListener("keydown", onKeyDown);
+      overlay.remove();
+    };
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") close();
+      else if (e.key === "+" || e.key === "=") { scale += 0.25; updateTransform(); }
+      else if (e.key === "-") { scale -= 0.25; updateTransform(); }
+      else if (e.key === "0") { scale = 1; translateX = 0; translateY = 0; updateTransform(); }
+    }
+    document.addEventListener("keydown", onKeyDown);
+
+    overlay.querySelector("#lb-close").addEventListener("click", close);
+    overlay.querySelector("#lb-zoom-in").addEventListener("click", () => { scale += 0.35; updateTransform(); });
+    overlay.querySelector("#lb-zoom-out").addEventListener("click", () => { scale -= 0.35; updateTransform(); });
+    overlay.querySelector("#lb-zoom-reset").addEventListener("click", () => { scale = 1; translateX = 0; translateY = 0; updateTransform(); });
+
+    // Double-tap or double-click to toggle zoom
+    let lastTap = 0;
+    viewport.addEventListener("click", (e) => {
+      if (e.target === viewport) close();
+    });
+    imgEl.addEventListener("click", () => {
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        if (scale > 1.2) {
+          scale = 1; translateX = 0; translateY = 0;
+        } else {
+          scale = 2.5;
+        }
+        updateTransform();
+      }
+      lastTap = now;
+    });
+
+    // Mouse wheel zoom
+    viewport.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.2 : -0.2;
+      scale += delta;
+      updateTransform();
+    }, { passive: false });
+
+    // Mouse drag
+    viewport.addEventListener("mousedown", (e) => {
+      if (e.target !== imgEl && e.target !== viewport) return;
+      isDragging = true;
+      startX = e.clientX - translateX;
+      startY = e.clientY - translateY;
+      viewport.style.cursor = "grabbing";
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      translateX = e.clientX - startX;
+      translateY = e.clientY - startY;
+      updateTransform();
+    });
+    window.addEventListener("mouseup", () => {
+      isDragging = false;
+      viewport.style.cursor = scale > 1 ? "grab" : "default";
+    });
+
+    // Touch events (mobile pinch-to-zoom + pan)
+    function touchDist(t1, t2) {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    viewport.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        startX = e.touches[0].clientX - translateX;
+        startY = e.touches[0].clientY - translateY;
+      } else if (e.touches.length === 2) {
+        isDragging = false;
+        initialPinchDist = touchDist(e.touches[0], e.touches[1]);
+      }
+    }, { passive: true });
+
+    viewport.addEventListener("touchmove", (e) => {
+      if (e.touches.length === 1 && isDragging) {
+        translateX = e.touches[0].clientX - startX;
+        translateY = e.touches[0].clientY - startY;
+        updateTransform();
+      } else if (e.touches.length === 2 && initialPinchDist != null) {
+        const dist = touchDist(e.touches[0], e.touches[1]);
+        const factor = dist / initialPinchDist;
+        scale = Math.max(0.5, Math.min(5.0, scale * factor));
+        initialPinchDist = dist;
+        updateTransform();
+      }
+    }, { passive: true });
+
+    viewport.addEventListener("touchend", () => {
+      isDragging = false;
+      initialPinchDist = null;
+    }, { passive: true });
   }
+
+  /* ---- list rendering with macro progress bars ------------------- */
+  function macroVisualBars(m, nPrices) {
+    if (!m) return "";
+    const cal = m.calories != null ? Math.round(m.calories) : null;
+    const p = m.protein != null ? Number(m.protein) : 0;
+    const f = m.fat != null ? Number(m.fat) : 0;
+    const c = m.carbs != null ? Number(m.carbs) : 0;
+    const s = m.sugar != null ? Number(m.sugar) : null;
+    const fib = m.fiber != null ? Number(m.fiber) : null;
+
+    const bar = (label, shortL, val, cls) => {
+      if (val == null || isNaN(val) || val <= 0) return "";
+      const pct = Math.min(100, Math.max(0, val));
+      return `
+        <div class="fc-bar-item ${cls}" title="${label}: ${fmt(val)} g / 100g">
+          <div class="fc-bar-header">
+            <span class="fc-bar-tag">${shortL}</span>
+            <span class="fc-bar-val">${fmt(val)}<small>g</small></span>
+          </div>
+          <div class="fc-bar-track">
+            <div class="fc-bar-fill" style="width: ${pct}%;"></div>
+          </div>
+        </div>
+      `;
+    };
+
+    return `
+      <div class="fc-macro-summary">
+        <div class="fc-macro-head-row">
+          ${cal != null ? `<span class="fc-cal-badge">🔥 <b>${cal}</b> kcal<small>/100g</small></span>` : ""}
+          <span class="fc-chip muted">${nPrices} ár</span>
+        </div>
+        <div class="fc-macro-bars">
+          ${bar("Fehérje", "Fehérje", p, "bar-p")}
+          ${bar("Zsír", "Zsír", f, "bar-f")}
+          ${bar("Szénhidrát", "Szénhidrát", c, "bar-c")}
+          ${s != null && s > 0 ? bar("Cukor", "Cukor", s, "bar-s") : ""}
+          ${fib != null && fib > 0 ? bar("Rost", "Rost", fib, "bar-fib") : ""}
+        </div>
+      </div>
+    `;
+  }
+
   function fmt(v) {
     if (v == null) return "–";
     const n = Number(v);
@@ -81,8 +263,6 @@ window.FoodCounter = (function () {
     return (Math.round(n * 100) / 100).toString();
   }
   function imgSrc(url) {
-    // backend returns root-relative /api/v1/media/... — render as-is;
-    // tolerate absolute URLs too.
     if (!url) return "";
     if (/^(https?:)?\/\//.test(url)) return url;
     return url.startsWith("/") ? url : "/" + url;
@@ -96,11 +276,9 @@ window.FoodCounter = (function () {
 
   async function renderList() {
     const box = $("#fc-product-list");
-    // skeleton rows keep the layout stable while the API answers
     const sk = '<li class="fc-product skeleton" aria-hidden="true"><span class="fc-thumb-none sk-block"></span>' +
       '<span class="fc-main"><span class="sk-line" style="width:55%"></span><span class="sk-line" style="width:80%"></span></span></li>';
     box.innerHTML = '<li class="sr-only" role="status">Termékek betöltése…</li>' + sk + sk + sk;
-    // keep search filter in sync with the input
     const q = ($("#fc-search") || {}).value || "";
     let items;
     try {
@@ -114,7 +292,7 @@ window.FoodCounter = (function () {
       if (retry) retry.addEventListener("click", () => renderList());
       return;
     }
-    FC.products = items; // cache for product picker + detail lookups
+    FC.products = items;
     const countEl = $("#fc-count");
     if (countEl) countEl.textContent = items.length + " termék";
     if (!items.length) {
@@ -128,19 +306,28 @@ window.FoodCounter = (function () {
       const nPrices = (p.prices || []).length;
       return `<li class="fc-product" data-open="${esc(p.id)}" role="button" tabindex="0"
         aria-label="${esc(p.name)} részletei">
-        <span class="fc-thumb">${img
+        <span class="fc-thumb" ${img ? `data-view-img="${esc(imgSrc(img))}" title="Fotó nagyítása"` : ""}>${img
           ? `<img src="${esc(imgSrc(img))}" alt="" loading="lazy" />`
           : '<span class="fc-thumb-none">▣</span>'}</span>
         <span class="fc-main">
           <span class="fc-name">${esc(p.name)}${p.brand ? `<small> · ${esc(p.brand)}</small>` : ""}</span>
-          ${macroChips(p.macros_per_100)}
-          <span class="fc-chip muted">${nPrices} ár</span>
+          ${macroVisualBars(p.macros_per_100, nPrices)}
         </span>
         <span class="fc-open" aria-hidden="true">›</span>
       </li>`;
     }).join("");
+
     $$("#fc-product-list [data-open]").forEach((li) => {
-      const open = () => openDetail(li.dataset.open);
+      const id = li.dataset.open;
+      const thumb = li.querySelector("[data-view-img]");
+      if (thumb) {
+        thumb.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const pName = li.querySelector(".fc-name")?.textContent || "Termékfotó";
+          openImageViewer(thumb.dataset.viewImg, pName);
+        });
+      }
+      const open = () => openDetail(id);
       li.addEventListener("click", open);
       li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
     });
@@ -152,7 +339,7 @@ window.FoodCounter = (function () {
     panel.hidden = false;
     panel.innerHTML = '<div class="skeleton" aria-busy="true"><span class="sk-line" style="width:40%;height:18px"></span>' +
       '<span class="sk-line" style="width:70%"></span><span class="sk-block" style="height:64px"></span></div>';
-    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
     let p;
     try {
       p = await api("/" + encodeURIComponent(id));
@@ -172,7 +359,7 @@ window.FoodCounter = (function () {
       return `<div class="fc-slot">
         <span class="fc-slot-label">${label}</span>
         ${s && s.url
-          ? `<img src="${esc(imgSrc(s.url))}" alt="${label}" />`
+          ? `<img src="${esc(imgSrc(s.url))}" alt="${label}" title="Koppints a fotó nagyításához" />`
           : '<span class="fc-thumb-none">▢</span>'}
       </div>`;
     };
@@ -200,7 +387,7 @@ window.FoodCounter = (function () {
       </div>
       <h4>Árak ${((p.prices||[]).length ? "(" + (p.prices||[]).length + ")" : "")}</h4>
       ${priceRows}
-      <h4>Fotók</h4>
+      <h4>Fotók <small class="hint">(koppints a nagyításhoz)</small></h4>
       <div class="fc-slots">
         ${slot("product_photo", "Termékfotó")}
         ${slot("label_photo", "Címkefotó (a makrókkal)")}
@@ -218,6 +405,14 @@ window.FoodCounter = (function () {
         renderList();
       } catch (e) { toast("Törlési hiba: " + e.message); }
     });
+
+    // Wire photos to lightbox
+    panel.querySelectorAll(".fc-slot img").forEach((imgEl) => {
+      imgEl.style.cursor = "zoom-in";
+      imgEl.addEventListener("click", () => {
+        openImageViewer(imgEl.src, p.name || "Termékfotó");
+      });
+    });
   }
 
   /* ============================================================
@@ -228,18 +423,16 @@ window.FoodCounter = (function () {
     const panel = $("#fc-detail");
     const isEdit = !!idOrNull;
     panel.hidden = false;
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
     if (isEdit) fillForm(idOrNull);
     else resetForm();
   }
 
   async function fillForm(id) {
-    // `id` being present IS the edit case — derive isEdit in THIS scope.
-    // (Bug: the template below referenced isEdit, which was previously only
-    //  declared in openForm's block → `isEdit is not defined` → panel stuck
-    //  on "Betöltés…" forever. openForm no longer needs its own isEdit.)
     const isEdit = !!id;
     const panel = $("#fc-detail");
     panel.innerHTML = '<p class="hint">Betöltés…</p>';
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
     let p;
     try { p = await api("/" + encodeURIComponent(id)); }
     catch (e) { panel.innerHTML = `<p class="hint">Hiba: ${esc(e.message)}</p>`; return; }
@@ -259,7 +452,7 @@ window.FoodCounter = (function () {
       return `<div class="fc-slot-upload">
         <span class="fc-slot-label">${label}</span>
         ${s && s.url
-          ? `<img src="${esc(imgSrc(s.url))}" alt="" data-slot-preview="${slot}" />`
+          ? `<img src="${esc(imgSrc(s.url))}" alt="" data-slot-preview="${slot}" title="Koppints a nagyításhoz" />`
           : ""}
         <input type="file" accept="image/jpeg,image/png,image/webp"
                data-slot-file="${slot}"
@@ -323,6 +516,19 @@ window.FoodCounter = (function () {
       panel.querySelector("#fc-prices").insertAdjacentHTML("beforeend", priceRowHtml("", "", "", ""));
     });
     panel.querySelector("#fc-form").addEventListener("submit", (e) => { e.preventDefault(); submitForm(p.id); });
+
+    // Wire existing preview images to lightbox
+    panel.querySelectorAll(".fc-slot-upload img").forEach((imgEl) => {
+      imgEl.style.cursor = "zoom-in";
+      imgEl.addEventListener("click", () => openImageViewer(imgEl.src, "Feltöltött fotó"));
+    });
+
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => {
+      const nameInp = panel.querySelector('input[name="name"]');
+      if (nameInp) nameInp.focus();
+    }, 120);
+
     bindSlotUploads(panel);
   }
 
@@ -380,6 +586,13 @@ window.FoodCounter = (function () {
       panel.querySelector("#fc-prices").insertAdjacentHTML("beforeend", priceRowHtml("", "", "", ""));
     });
     panel.querySelector("#fc-form").addEventListener("submit", (e) => { e.preventDefault(); submitForm(null); });
+
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    setTimeout(() => {
+      const nameInp = panel.querySelector('input[name="name"]');
+      if (nameInp) nameInp.focus();
+    }, 120);
+
     bindSlotUploads(panel);
   }
 
@@ -419,12 +632,17 @@ window.FoodCounter = (function () {
           let previewEl = panel.querySelector(`[data-slot-preview="${slot}"]`);
           if (previewEl && comp.dataUrl) {
             previewEl.src = comp.dataUrl;
+            previewEl.style.cursor = "zoom-in";
+            previewEl.onclick = () => openImageViewer(previewEl.src, "Feltöltött fotó");
           } else if (comp.dataUrl) {
             const wrap = input.closest(".fc-slot-upload");
             if (wrap && !wrap.querySelector(`img[data-slot-preview="${slot}"]`)) {
               const img = document.createElement("img");
               img.src = comp.dataUrl;
               img.dataset.slotPreview = slot;
+              img.style.cursor = "zoom-in";
+              img.title = "Koppints a fotó nagyításához";
+              img.addEventListener("click", () => openImageViewer(img.src, "Feltöltött fotó"));
               input.insertAdjacentElement("beforebegin", img);
             }
           }
@@ -524,17 +742,37 @@ window.FoodCounter = (function () {
         sodium: "Nátrium (mg)"
       };
 
+      const photoSrc = comp.dataUrl || (comp.blob ? URL.createObjectURL(comp.blob) : null);
+
       if (hasExisting) {
-        showMacroCompareModal(existing, detected, labels, () => {
-          applyMacros(formEl, detected);
+        showMacroCompareModal(existing, detected, labels, (editedMacros) => {
+          applyMacros(formEl, editedMacros || detected);
           ocrBox.className = "fc-ocr-box fc-ocr-success";
-          ocrBox.innerHTML = `✓ ${count} makró sikeresen felülírva a fotóból!`;
+          ocrBox.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+              <span>✓ Makrók sikeresen frissítve a fotó alapján!</span>
+              ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó ellenőrzése</button>` : ""}
+            </div>
+          `;
+          if (photoSrc) {
+            const btn = ocrBox.querySelector(".fc-zoom-label-btn");
+            if (btn) btn.addEventListener("click", () => openImageViewer(photoSrc, "Címkefotó"));
+          }
           toast("✓ Makrók frissítve a címkefotó alapján!");
-        });
+        }, photoSrc);
       } else {
         applyMacros(formEl, detected);
         ocrBox.className = "fc-ocr-box fc-ocr-success";
-        ocrBox.innerHTML = `✓ ${count} makró automatikusan beillesztve a fotóból!`;
+        ocrBox.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <span>✓ ${count} makró automatikusan beillesztve a fotóból!</span>
+            ${photoSrc ? `<button type="button" class="btn sm ghost fc-zoom-label-btn" style="padding:2px 8px;font-size:12px;">🔍 Fotó ellenőrzése</button>` : ""}
+          </div>
+        `;
+        if (photoSrc) {
+          const btn = ocrBox.querySelector(".fc-zoom-label-btn");
+          if (btn) btn.addEventListener("click", () => openImageViewer(photoSrc, "Címkefotó"));
+        }
         toast("✓ Makrók automatikusan beillesztve a fotóból!");
       }
     } catch (err) {
@@ -561,7 +799,7 @@ window.FoodCounter = (function () {
     }
   }
 
-  function showMacroCompareModal(current, detected, labels, onConfirm) {
+  function showMacroCompareModal(current, detected, labels, onConfirm, photoSrc) {
     let overlay = document.querySelector("#fc-macro-modal");
     if (overlay) overlay.remove();
 
@@ -572,32 +810,51 @@ window.FoodCounter = (function () {
     const keys = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium"];
     const rowsHtml = keys.map((k) => {
       const curVal = current[k] != null ? current[k] : "—";
-      const newVal = detected[k] != null ? detected[k] : "—";
+      const newVal = detected[k] != null ? detected[k] : "";
       const isDiff = detected[k] != null && current[k] !== detected[k];
       return `
         <tr>
           <td><b>${labels[k] || k}</b></td>
-          <td>${curVal}</td>
-          <td class="${isDiff ? "fc-compare-new" : ""}">${newVal}${isDiff ? " ★" : ""}</td>
+          <td class="fc-compare-cur">${curVal}</td>
+          <td>
+            <input type="number" step="any"
+                   class="fc-compare-input ${isDiff ? "fc-input-diff" : ""}"
+                   data-compare-key="${k}"
+                   value="${newVal !== "" ? esc(newVal) : ""}"
+                   placeholder="—"
+                   aria-label="${labels[k] || k}" />
+            ${isDiff ? `<span style="color:var(--success);font-weight:700;margin-left:4px;" title="Módosul">★</span>` : ""}
+          </td>
         </tr>
       `;
     }).join("");
 
+    const photoCardHtml = photoSrc ? `
+      <div class="fc-compare-photo-card" id="fc-modal-photo-trigger" role="button" tabindex="0" title="Kattints a fotó nagyításához">
+        <img src="${esc(photoSrc)}" class="fc-compare-photo-img" alt="Címkefotó előnézet" />
+        <div class="fc-compare-photo-meta">
+          <span class="fc-compare-photo-btn">🔍 Címkefotó nagyítása és ellenőrzése</span>
+          <small>Koppints a kép megnyitásához, zoomolásához, hogy kényelmesen leolvashasd az értékeket!</small>
+        </div>
+      </div>
+    ` : "";
+
     overlay.innerHTML = `
-      <div class="fc-modal-card">
+      <div class="fc-modal-card" style="max-width:480px;">
         <div class="fc-modal-header">
           <h3>Frissíted a makrókat a fotó alapján?</h3>
           <button type="button" class="btn sm ghost" id="fc-modal-close" style="font-size:16px;padding:2px 8px;">✕</button>
         </div>
-        <p class="hint" style="margin:0 0 10px;">
-          A feltöltött címkefotóból új tápérték adatokat olvastunk ki. Szeretnéd felülírni a jelenlegi értékeket?
+        <p class="hint" style="margin:0 0 8px;">
+          A feltöltött címkefotóból az alábbi értékeket olvastuk ki. Szükség esetén az értékeket szerkesztheted is mentés előtt:
         </p>
+        ${photoCardHtml}
         <table class="fc-compare-table">
           <thead>
             <tr>
               <th>Tápanyag</th>
               <th>Jelenlegi</th>
-              <th>Fotóból olvasott</th>
+              <th>Új érték (szerkeszthető)</th>
             </tr>
           </thead>
           <tbody>
@@ -606,7 +863,7 @@ window.FoodCounter = (function () {
         </table>
         <div class="fc-modal-actions">
           <button type="button" class="btn sm ghost" id="fc-modal-cancel">Megtartom a régit</button>
-          <button type="button" class="btn sm primary" id="fc-modal-apply">Frissítés a fotó alapján</button>
+          <button type="button" class="btn sm primary" id="fc-modal-apply">Értékek alkalmazása</button>
         </div>
       </div>
     `;
@@ -618,9 +875,31 @@ window.FoodCounter = (function () {
     overlay.querySelector("#fc-modal-cancel").addEventListener("click", close);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
 
+    if (photoSrc) {
+      const trigger = overlay.querySelector("#fc-modal-photo-trigger");
+      if (trigger) {
+        trigger.addEventListener("click", () => openImageViewer(photoSrc, "Címkefotó nagyítása"));
+        trigger.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openImageViewer(photoSrc, "Címkefotó nagyítása");
+          }
+        });
+      }
+    }
+
     overlay.querySelector("#fc-modal-apply").addEventListener("click", () => {
+      const edited = {};
+      overlay.querySelectorAll("[data-compare-key]").forEach((inp) => {
+        const k = inp.dataset.compareKey;
+        const val = inp.value.trim();
+        if (val !== "") {
+          const num = Number(val);
+          if (!isNaN(num)) edited[k] = num;
+        }
+      });
       close();
-      if (typeof onConfirm === "function") onConfirm();
+      if (typeof onConfirm === "function") onConfirm(edited);
     });
   }
 

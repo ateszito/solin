@@ -157,7 +157,27 @@ assert.strictEqual(resLidlEng.protein, 18);
 assert.strictEqual(resLidlEng.sodium, 1600);
 console.log("  ✓ English OCR variant of Lidl photo passed");
 
-// 6. Format bytes helper
+// 6. Delimiter robustness & dropped delimiter tests (45,6 / 45.6 / 45 6 / 456)
+const delimiterVariantsLabel = `
+Energia: 250 kcal
+Zsír: 45,6 g
+Fehérje: 18 6 g
+Szénhidrát: 0, 9 g
+Cukor: 456 g
+Rost: 0 g
+Só: 4, 00 g
+`;
+const resDelim = SolinImg.parseNutrition(delimiterVariantsLabel);
+assert.strictEqual(resDelim.calories, 250);
+assert.strictEqual(resDelim.fat, 45.6, "Comma delimiter 45,6 -> 45.6");
+assert.strictEqual(resDelim.protein, 18.6, "Space delimiter 18 6 -> 18.6");
+assert.strictEqual(resDelim.carbs, 0.9, "Spaced comma 0, 9 -> 0.9");
+assert.strictEqual(resDelim.sugar, 45.6, "Dropped delimiter 456 -> 45.6");
+assert.strictEqual(resDelim.fiber, 0);
+assert.strictEqual(resDelim.sodium, 1600);
+console.log("  ✓ Delimiter variants & dropped decimal recovery passed");
+
+// 7. Format bytes helper
 assert.strictEqual(SolinImg.formatBytes(500), "500 B");
 assert.strictEqual(SolinImg.formatBytes(1500), "1.5 KB");
 assert.strictEqual(SolinImg.formatBytes(5 * 1024 * 1024), "5.0 MB");
