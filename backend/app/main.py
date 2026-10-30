@@ -3,12 +3,12 @@
 import os
 
 import uuid
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Any, Dict
 
 from .config import settings  # single source of truth for every env var (Tier A + B)
 from .services.recipe_scaling import (
@@ -151,7 +151,7 @@ class Step(BaseModel):
 class RecipeCreate(BaseModel):
     title: str
     description: Optional[str] = None
-    video_url: str
+    video_url: Optional[str] = None
     transcript_url: Optional[str] = None
     creator: str = "unknown"
     creator_source: Optional[str] = None
@@ -167,7 +167,8 @@ class RecipeCreate(BaseModel):
     nutrition: NutrientInfo
     ingredients: List[Ingredient]
     steps: List[Step]
-    images: List[dict] = []
+    image: Optional[str] = None
+    images: List[Any] = []
     status: str = "draft"
 
 class RecipeResponse(BaseModel):
@@ -190,7 +191,8 @@ class RecipeResponse(BaseModel):
     nutrition: NutrientInfo
     ingredients: List[Ingredient]
     steps: List[Step]
-    images: List[dict] = []
+    image: Optional[str] = None
+    images: List[Any] = []
     status: str = "draft"
     created_at: str = "2026-01-01T00:00:00Z"
     updated_at: str = "2026-01-01T00:00:00Z"
@@ -320,6 +322,66 @@ def get_trending():
     )
     return [RecipeSummary(id=r.id, title=r.title, cuisine=r.cuisine, rating=r.rating, calories_per_serving=r.nutrition.calories, creator=r.creator) for r in recipes[:10]]
 
+@app.post("/api/v1/recipes/extract-image")
+async def extract_recipe_photo_endpoint(
+    request: Request,
+    files: Optional[List[UploadFile]] = File(None),
+):
+    """Extract full recipe from one or more photos (cookbooks, cards, guides) via Ollama Vision."""
+    from .recipes.photo_extractor import extract_recipe_from_images
+    media_recipes_dir = os.path.join(_inv_media_root, "recipes")
+    images_bytes: List[bytes] = []
+    target_lang = "auto"
+
+    # 1. Check multipart form upload
+    if files:
+        for f in files:
+            content = await f.read()
+            if content:
+                images_bytes.append(content)
+        try:
+            form = await request.form()
+            target_lang = str(form.get("target_lang") or "auto")
+        except Exception:
+            pass
+
+    # 2. Check JSON payload with base64 images
+    if not images_bytes:
+        try:
+            body = await request.json()
+            target_lang = str(body.get("target_lang") or "auto")
+            for item in body.get("images", []):
+                raw = item
+                if isinstance(item, dict):
+                    raw = item.get("data_url") or item.get("url") or item.get("data") or ""
+                if isinstance(raw, str) and raw:
+                    if "," in raw and "base64," in raw:
+                        raw = raw.split("base64,")[1]
+                    import base64
+                    images_bytes.append(base64.b64decode(raw))
+        except Exception:
+            pass
+
+    if not images_bytes:
+        raise HTTPException(status_code=400, detail="No recipe photos provided.")
+
+    try:
+        recipe_data = extract_recipe_from_images(
+            images_bytes,
+            target_lang=target_lang,
+            save_media=True,
+            media_dir=media_recipes_dir,
+        )
+        return recipe_data
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+    except RuntimeError as re:
+        raise HTTPException(status_code=503, detail=str(re))
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").exception("Recipe photo extraction failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Recipe photo extraction failed: {str(e)}")
+
 @app.get("/api/v1/recipes/{recipe_id}", response_model=RecipeResponse)
 def get_recipe(recipe_id: str):
     recipe = _store.get(recipe_id)
@@ -339,7 +401,7 @@ def create_recipe(recipe: RecipeCreate):
         difficulty=recipe.difficulty, rating=recipe.rating, cuisine=recipe.cuisine,
         tags=recipe.tags, dietary_info=recipe.dietary_info,
         nutrition=recipe.nutrition, ingredients=recipe.ingredients,
-        steps=recipe.steps, images=recipe.images, status=recipe.status,
+        steps=recipe.steps, image=recipe.image, images=recipe.images, status=recipe.status,
     )
     return _store[rid]
 

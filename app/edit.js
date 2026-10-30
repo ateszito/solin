@@ -7,7 +7,30 @@
 window.Edit = (function () {
   const { $, $$, S, state, esc, toast, go } = window.Solin;
 
+  let editingImages = [];
+
   function row(label, name, val) { return `<div class="field"><label for="ed-${name}">${label}</label><input id="ed-${name}" name="${name}" value="${esc(val)}" /></div>`; }
+
+  function buildPhotos(images) {
+    const listHtml = (images || []).map((src, idx) => `
+      <div class="rec-photo-item" data-idx="${idx}">
+        <img src="${esc(src)}" alt="Recept fotó ${idx + 1}" />
+        <button type="button" class="rec-photo-del" title="Fotó törlése" aria-label="Fotó törlése">×</button>
+        <span class="rec-photo-badge">${idx === 0 ? "Fő kép" : (idx + 1) + ". kép"}</span>
+      </div>`).join("");
+    return `
+      <div class="field">
+        <label>Recept fotók</label>
+        <div class="rec-photos-grid" id="rec-photos-grid">
+          ${listHtml}
+        </div>
+        <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <input type="file" id="ed-photos-input" accept="image/*" multiple style="display:none;" />
+          <button type="button" class="btn sm" id="ed-add-photo">📷 Fotó hozzáadása</button>
+          <span class="hint" style="margin:0;">Fényképezd le az ételt vagy a receptkönyv oldalát!</span>
+        </div>
+      </div>`;
+  }
 
   function buildIngredients(r) {
     const rows = (r.ingredients || []).map(ing => `
@@ -61,6 +84,10 @@ window.Edit = (function () {
       ? "Add meg a recept adatait. A recept ezen a készüléken mentődik; ha mentés nélkül lépsz ki, nem jön létre."
       : "A javításaid ezen a készüléken mentődnek, az eredeti recept fölé rétegezve. A „Visszaállítás” visszaállítja az eredetit.";
     const patched = S.editFields(r.id);
+    editingImages = ((Array.isArray(r.images) && r.images.length)
+      ? r.images.map((im) => (typeof im === "string" ? im : (im.url || im.data_url))).filter(Boolean)
+      : (r.image ? [r.image] : [])).slice();
+
     // a new recipe starts with one empty ingredient + step row to type into
     const rows = isNew && !(r.ingredients || []).length
       ? Object.assign({}, r, { ingredients: [{ name: "", qty: "" }], steps: [{ t: "", text: "" }] })
@@ -80,11 +107,79 @@ window.Edit = (function () {
       </div>
       <div class="field"><label for="ed-description">Leírás</label><textarea id="ed-description" name="description" rows="3">${esc(r.description)}</textarea></div>
       <div class="field"><label for="ed-tags">Címkék (vesszővel elválasztva)</label><input id="ed-tags" name="tags" value="${esc((r.tags||[]).join(", "))}"/></div>
+      ${buildPhotos(editingImages)}
       ${buildIngredients(rows)}
       ${buildSteps(rows)}
       ${isNew ? "" : `<p class="hint">A szerkesztett mezők: <b>${patched.length ? esc(patched.join(", ")) : "nincs szerkesztés még"}</b> — ezek a korrekciók ezen a készüléken maradnak, és a receptnél megjelennek.</p>`}
     `;
     if (isNew) setTimeout(() => { const t = $("#ed-title"); if (t) t.focus(); }, 0);
+
+    function paintPhotos() {
+      const grid = $("#rec-photos-grid");
+      if (!grid) return;
+      grid.innerHTML = (editingImages || []).map((src, idx) => `
+        <div class="rec-photo-item" data-idx="${idx}">
+          <img src="${esc(src)}" alt="Recept fotó ${idx + 1}" />
+          <button type="button" class="rec-photo-del" title="Fotó törlése" aria-label="Fotó törlése">×</button>
+          <span class="rec-photo-badge">${idx === 0 ? "Fő kép" : (idx + 1) + ". kép"}</span>
+        </div>`).join("");
+      wirePhotoEvents();
+    }
+
+    function wirePhotoEvents() {
+      const grid = $("#rec-photos-grid");
+      if (!grid) return;
+      grid.querySelectorAll(".rec-photo-item").forEach((item) => {
+        const idx = parseInt(item.dataset.idx, 10);
+        const img = item.querySelector("img");
+        if (img) {
+          img.addEventListener("click", () => {
+            const lb = window.Solin.openLightbox || (window.FoodCounter && FoodCounter.openLightbox);
+            if (lb) lb(editingImages[idx], "Recept fotó");
+          });
+        }
+        const delBtn = item.querySelector(".rec-photo-del");
+        if (delBtn) {
+          delBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            editingImages.splice(idx, 1);
+            paintPhotos();
+          });
+        }
+      });
+    }
+
+    const addPhotoBtn = $("#ed-add-photo");
+    const photoInput = $("#ed-photos-input");
+    if (addPhotoBtn && photoInput) {
+      addPhotoBtn.addEventListener("click", () => photoInput.click());
+      photoInput.addEventListener("change", async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        toast("Fotó(k) tömörítése és hozzáadása…");
+        for (const f of files) {
+          try {
+            if (window.SolinImg && SolinImg.compress) {
+              const comp = await SolinImg.compress(f);
+              if (comp && comp.dataUrl) editingImages.push(comp.dataUrl);
+            } else {
+              const reader = new FileReader();
+              const durl = await new Promise((res, rej) => {
+                reader.onload = () => res(reader.result);
+                reader.onerror = rej;
+                reader.readAsDataURL(f);
+              });
+              editingImages.push(durl);
+            }
+          } catch (err) {
+            console.error("Photo load error:", err);
+          }
+        }
+        photoInput.value = "";
+        paintPhotos();
+      });
+    }
+    wirePhotoEvents();
 
     // dynamic row adders
     $("#ing-add").addEventListener("click", () => {
@@ -180,6 +275,14 @@ window.Edit = (function () {
       if (newStepsC.length) patch.steps = newStepsC;
     }
 
+    const currentImgs = ((Array.isArray(r.images) && r.images.length)
+      ? r.images.map((im) => (typeof im === "string" ? im : (im.url || im.data_url))).filter(Boolean)
+      : (r.image ? [r.image] : []));
+    if (JSON.stringify(editingImages) !== JSON.stringify(currentImgs)) {
+      patch.images = editingImages.slice();
+      patch.image = editingImages.length ? editingImages[0] : null;
+    }
+
     if (Object.keys(macros).length) patch.macrosPerServing = Object.assign({}, r.macrosPerServing || {}, macros);
     if (r._blank) {
       if (!v("title").trim()) {
@@ -205,6 +308,7 @@ window.Edit = (function () {
   // leaves an empty "(új recept)" behind. Returns true if it was dropped.
   let editingId = null;
   function leave() {
+    editingImages = [];
     const id = editingId;
     editingId = null;
     const r = id && S.getRecipe(id);

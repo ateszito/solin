@@ -72,48 +72,45 @@ window.SOLIN_DATA = {
     },
     {
       id: "r2",
-      title: "Diétás Boljognyai",
-      title_hu: "Diétás Boljognyai 🍝",
-      description: "Diétás tészta recept: csirkemell, kolbász, tejszín, spenót, parmezán. High protein, nagy ízek, gyorsan elkészül.",
+      title: "Diétás Bolognai 🍝",
+      title_hu: "Diétás Bolognai 🍝",
+      description: "Diétás bolognai ragu light darált pulykával, répával, zellerrel és passzátával. 9,2 pontos, magas fehérjetartalmú recept 4 adagra.",
       creator: "iamvargacsaba",
       source: "https://vm.tiktok.com/ZN88s6bGY",
       video: "VideoContent/video2.mp4",
-      rating: 9.9,
-      cuisine: "hungarian",
+      rating: 9.2,
+      cuisine: "olasz",
       difficulty: "easy",
-      tags: ["highprotein", "diéta", "pasta", "chicken", "quick"],
+      tags: ["highprotein", "diéta", "pasta", "bolognai", "pulyka", "quick"],
       dietary: ["high-protein"],
-      servings: 5,
-      servingsNote: "adagonkénti makrók (5 adag)",
+      servings: 4,
+      servingsNote: "négy adagra osztod az egészet — adagonként 50 g fehérje és 488 kcal",
       prepMin: 10,
-      cookMin: 20,
-      totalMin: 30,
-      macrosPerServing: { kcal: 850, protein: 45.2, carbs: 48.0, fat: 28.5 },
+      cookMin: 25,
+      totalMin: 35,
+      macrosPerServing: { kcal: 488, protein: 50.0, carbs: 52.0, fat: 9.0 },
       ingredients: [
-        { name: "vöröshagyma", qty: "200 g", note: "apróra vágva" },
-        { name: "kolbász", qty: "50 g", note: "apróra vágva" },
-        { name: "csirkeemlő", qty: "650 g" },
-        { name: "só", qty: "jódag", note: "ízlés szerint" },
-        { name: "csili", qty: "kb. 1 db", note: "ízlés szerint" },
-        { name: "füstölt paprika", qty: "1 tk" },
-        { name: "bors", qty: "½ tk" },
-        { name: "fokhagyma", qty: "1-2 gerezd", note: "darálva" },
-        { name: "paradicsompüré", qty: "3 evőkanál" },
-        { name: "tejszín", qty: "160 g", note: "vagy rizs-tejszín" },
-        { name: "víz", qty: "kb. 3 evőkanál", note: "opcionális" },
-        { name: "tészta", qty: "240 g", note: "már FŐTT" },
-        { name: "spenót", qty: "80 g", note: "opcionális" },
-        { name: "parmezán", qty: "40 g", note: "végül a tésztára" }
+        { name: "olaj", qty: "3 g", note: "sütéshez" },
+        { name: "vöröshagyma", qty: "1 fej (kb. 150 g)", note: "apróra vágva" },
+        { name: "sárgarépa", qty: "200 g", note: "apróra vágva vagy reszelve" },
+        { name: "zeller", qty: "200 g", note: "apróra vágva vagy reszelve" },
+        { name: "light darált pulyka", qty: "500 g" },
+        { name: "paradicsom passzáta", qty: "700 g" },
+        { name: "só", qty: "ízlés szerint" },
+        { name: "bors", qty: "ízlés szerint" },
+        { name: "fokhagyma", qty: "ízlés szerint" },
+        { name: "tészta", qty: "4 adag", note: "már kifőzve" },
+        { name: "light reszelt mozzarella", qty: "60 g", note: "15 g adagonként a tetejére" }
       ],
       steps: [
-        { t: 6,  text: "Vöröshagyma apróra + 50 g apróra vágott kolbász a serpenyőbe." },
-        { t: 11, text: "Majd a 650 g csirkemell, amikor a kolbász kiengedte a zsírját." },
-        { t: 20, text: "Fűszerek: só, csili, füstölt paprika, bors, fokhagyma." },
-        { t: 31, text: "3 evőkanál paradicsompüré." },
-        { t: 35, text: "160 g tejszín (vagy rizs-tejszín)." },
-        { t: 39, text: "Kicsi víz + a 240 g már főtt tészta." },
-        { t: 46, text: "80 g spenót — opcionális, de fontos." },
-        { t: 49, text: "40 g parmezán a tetejére. Kész!" }
+        { t: 7,  text: "Nagyjából 3 g olajat hevítünk a serpenyőben, és a hagymát üvegesre pirítjuk." },
+        { t: 15, text: "Hozzáadjuk a 200 g felaprított sárgarépát és a 200 g zellert." },
+        { t: 24, text: "Mehet bele az 500 g light darált pulyka, és az egészet jól lepirítjuk." },
+        { t: 31, text: "Hozzáöntünk 700 g paradicsom passzátát." },
+        { t: 35, text: "Fűszerezünk ízlés szerint: só, bors és fokhagyma." },
+        { t: 52, text: "Hagyjuk rotyogni és besűrűsödni a ragut." },
+        { t: 57, text: "Összeforgatjuk a kifőtt tésztával, és négy egyenlő adagra osztjuk." },
+        { t: 60, text: "Tálaláskor adagonként 15 g light reszelt mozzarellát szórunk a tetejére. 9,2 pont — jó étvágyat!" }
       ]
     }
   ]
@@ -122,5 +119,6 @@ window.SOLIN_DATA = {
 /* Quick-add presets for the "what I have" section (Hungarian, as the user cooks) */
 window.SOLIN_PRESETS = [
   "vöröshagyma","kolbász","csirkeemlő","csirkemell","paradicsompüré","tejszín",
-  "rizs-tejszín","tészta","főtt tészta","spenót","parmezán","fokhagyma","só"
+  "rizs-tejszín","tészta","főtt tészta","spenót","parmezán","fokhagyma","só",
+  "sárgarépa","zeller","light darált pulyka","paradicsom passzáta","light reszelt mozzarella","olaj","bors"
 ];
