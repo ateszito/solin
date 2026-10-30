@@ -66,8 +66,8 @@ deploy() { # $1 branch  $2 env  $3 sha
   fi
 }
 
-# ---- dev / staging / main --------------------------------------------------------
-for spec in "dev:dev" "staging:staging" "main:prod"; do
+# ---- dev / staging / prod / main --------------------------------------------------------
+for spec in "dev:dev" "staging:staging" "prod:prod" "main:prod"; do
   br="${spec%%:*}"; ev="${spec##*:}"
   sha="$(git rev-parse "origin/$br" 2>/dev/null || true)"
   [ -n "$sha" ] || continue
