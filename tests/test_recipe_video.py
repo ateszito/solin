@@ -82,3 +82,33 @@ def test_video_extract_endpoint(monkeypatch):
     assert len(res["ingredients"]) >= 2
     assert len(res["steps"]) >= 2
 
+
+def test_video_extract_steps_from_transcript_when_description_empty(monkeypatch):
+    from backend.app.recipes import video_service
+
+    def fake_download(url, recipe_id=None):
+        return {
+            "video_url": "/api/v1/media/videos/rec_pasta_123.mp4",
+            "filename": "rec_pasta_123.mp4",
+            "thumbnail_url": "/api/v1/media/videos/rec_pasta_123_thumb.jpg",
+            "title": "Javítom magam — Chicken & Sausage Pasta",
+            "duration": 60,
+            "creator": "iamvargacsaba",
+            "description": "Javítom magam, ez 10/10!! A kiírt tápérték egy adagra értendő. 5 adagra osztottam az egészet 🫡 #recept #highprotein",
+            "transcript": "[6s] nyomjuk kétszáz gramm vöröshagyma bele a tálba\n[8s] és mehet hozzá ötven gramm apróra vágott kolbász\n[13s] akkor mehet bele hatszázötven gramm csirkeemlő",
+            "size_bytes": 20480,
+        }
+
+    monkeypatch.setattr(video_service, "download_video_from_url", fake_download)
+
+    payload = {"url": "https://www.tiktok.com/@iamvargacsaba/video/7673157007536344342"}
+    resp = client.post("/api/v1/recipes/extract-video", json=payload)
+    assert resp.status_code == 200
+    res = resp.json()
+    assert "transcript" in res
+    assert "[6s] nyomjuk kétszáz gramm vöröshagyma" in res["transcript"]
+    # Even with empty description steps, steps are produced from the transcript
+    assert len(res["steps"]) >= 2
+    assert res["steps"][0]["t"] == 6 or res["steps"][0]["t"] > 0
+    assert len(res["ingredients"]) >= 2
+

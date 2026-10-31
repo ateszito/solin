@@ -33,5 +33,32 @@
     });
   }
 
+  // Language switcher wiring
+  const langBtn = document.getElementById("lang-switch");
+  if (langBtn && window.SolinI18n) {
+    langBtn.addEventListener("click", () => {
+      window.SolinI18n.toggleLang();
+    });
+  }
+
+  if (window.SolinI18n) {
+    window.SolinI18n.onChange(() => {
+      if (window.Browse && window.Browse.render) window.Browse.render();
+      if (window.Inventory && window.Inventory.render) window.Inventory.render();
+      if (window.Detail && window.Solin.state.tab === "recipe" && window.Solin.state.activeRecipe) {
+        window.Detail.render(window.Solin.state.activeRecipe);
+      }
+    });
+  }
+
+  // Cross-device recipe synchronization on startup
+  if (S.S && S.S.syncRecipesWithBackend) {
+    S.S.syncRecipesWithBackend().then((changed) => {
+      if (changed && window.Browse && window.Browse.render) {
+        window.Browse.render();
+      }
+    });
+  }
+
   console.log("Solin v3 ready —", S.S.getRecipes().length, "recipes loaded");
 })();

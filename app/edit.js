@@ -179,6 +179,10 @@ window.Edit = (function () {
         <div class="field"><label>Összes idő (perc)</label><input name="totalMin" type="number" value="${esc(r.totalMin)}"/></div>
       </div>
       <div class="field"><label for="ed-description">Leírás</label><textarea id="ed-description" name="description" rows="3">${esc(r.description)}</textarea></div>
+      <details class="field" style="margin:10px 0;" ${r.transcript ? "open" : ""}>
+        <summary style="cursor:pointer;font-weight:600;color:var(--text, #1e293b);padding:4px 0;">📝 Videó leirat / Transcript ${r.transcript ? "(elérhető)" : ""}</summary>
+        <textarea id="ed-transcript" name="transcript" rows="4" placeholder="A videó hanganyagából kinyert szöveg..." style="width:100%;box-sizing:border-box;margin-top:6px;font-family:inherit;font-size:13px;line-height:1.5;">${esc(r.transcript || "")}</textarea>
+      </details>
       <div class="field"><label for="ed-tags">Címkék (vesszővel elválasztva)</label><input id="ed-tags" name="tags" value="${esc((r.tags||[]).join(", "))}"/></div>
       ${buildVideoCard(editingVideo, r.source || "")}
       ${buildPhotos(editingImages)}
@@ -325,6 +329,14 @@ window.Edit = (function () {
           }
           const data = await resp.json();
           editingVideo = data.video_url;
+          if (data.transcript) {
+            const transEl = $("#ed-transcript");
+            if (transEl) {
+              transEl.value = data.transcript;
+              const det = transEl.closest("details");
+              if (det) det.open = true;
+            }
+          }
           toast("Videó sikeresen feltöltve! ✓");
           paintVideo();
         } catch (err) {
@@ -393,6 +405,14 @@ window.Edit = (function () {
           const creatorEl = document.querySelector("#view-edit [name='creator']");
           if (data.creator && creatorEl && (!creatorEl.value.trim() || creatorEl.value.trim() === "unknown")) {
             creatorEl.value = data.creator;
+          }
+
+          // Auto-fill transcript if available
+          const transEl = $("#ed-transcript");
+          if (data.transcript && transEl) {
+            transEl.value = data.transcript;
+            const det = transEl.closest("details");
+            if (det) det.open = true;
           }
 
           toast(`Videó${descNotice} sikeresen letöltve! ✓`);
@@ -483,6 +503,7 @@ window.Edit = (function () {
     const servings = num("servings"); if (servings != null && servings !== r.servings) patch.servings = servings;
     const totalMin = num("totalMin"); if (totalMin != null && totalMin !== r.totalMin) patch.totalMin = totalMin;
     if (v("description") !== r.description) patch.description = v("description");
+    if (v("transcript") !== (r.transcript || "")) patch.transcript = v("transcript");
     const tags = v("tags").split(",").map((t) => t.trim()).filter(Boolean);
     if (JSON.stringify(tags) !== JSON.stringify(r.tags)) patch.tags = tags;
 
