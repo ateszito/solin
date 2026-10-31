@@ -293,7 +293,12 @@ def translate_ingredient(name: str, given_en: Optional[str] = None) -> Tuple[str
     # 1. Exact lookup
     if n in _LOOKUP:
         hu, en, cat = _LOOKUP[n]
-        return (hu, given_en.strip() if given_en and given_en.strip() else en, cat)
+        valid_en = en
+        if given_en and given_en.strip():
+            # Only keep given_en if it does not match Hungarian name or Hungarian synonyms
+            if norm(given_en) != norm(hu) and norm(given_en) != n:
+                valid_en = given_en.strip()
+        return (hu, valid_en, cat)
 
     # If given_en provided, check that too
     if given_en:

@@ -224,14 +224,12 @@ class KamraService:
             hu_trans, en_trans, cat_trans = translate_ingredient(cur_hu, cur_en)
 
             changed = False
-            # If name is english (matches en translation or equals name_en), update to proper Hungarian
-            if (norm(cur_hu) == norm(en_trans) or cur_hu.lower() == cur_en.lower()) and hu_trans.lower() != cur_hu.lower():
-                item["name"] = hu_trans.lower()
-                item["name_en"] = en_trans
-                changed = True
-            elif not cur_en or cur_en.lower() == cur_hu.lower():
-                item["name_en"] = en_trans
-                changed = True
+            # If name is english or swapped with name_en, normalize both to canonical HU/EN
+            if cur_hu.lower() != hu_trans.lower() or cur_en != en_trans:
+                if hu_trans and en_trans:
+                    item["name"] = hu_trans.lower()
+                    item["name_en"] = en_trans
+                    changed = True
 
             if item.get("category") == "other" and cat_trans != "other":
                 item["category"] = cat_trans
