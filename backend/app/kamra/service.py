@@ -224,8 +224,8 @@ class KamraService:
             hu_trans, en_trans, cat_trans = translate_ingredient(cur_hu, cur_en)
 
             changed = False
-            # If name is english or equals name_en, update to proper Hungarian
-            if cur_hu.lower() == cur_en.lower() and hu_trans.lower() != cur_hu.lower():
+            # If name is english (matches en translation or equals name_en), update to proper Hungarian
+            if (norm(cur_hu) == norm(en_trans) or cur_hu.lower() == cur_en.lower()) and hu_trans.lower() != cur_hu.lower():
                 item["name"] = hu_trans.lower()
                 item["name_en"] = en_trans
                 changed = True
