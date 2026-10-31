@@ -130,11 +130,6 @@ window.Inventory = (function () {
     if (_bound) return;
     _bound = true;
 
-    // Load store products and sync Kamra from backend
-    await loadStoreProducts();
-    await S.syncKamraFromApi();
-    render();
-
     $("#inv-add").addEventListener("click", addBase);
     $("#sub-add").addEventListener("click", addSub);
 
@@ -184,6 +179,13 @@ window.Inventory = (function () {
         }
       });
     }
+
+    // Load store products and sync Kamra from backend when authenticated
+    await loadStoreProducts();
+    if (!window.SolinAuth || window.SolinAuth.isAuthenticated()) {
+      await S.syncKamraFromApi();
+    }
+    render();
   }
 
   async function addBase() {

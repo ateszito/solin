@@ -23,6 +23,7 @@ from .ingestion.register import register_ingestion
 from .kamra.routes import register as register_kamra
 from .kamra.service import default_kamra_service
 from .recipes.storage import default_recipe_store
+from .auth.routes import register as register_auth
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -87,6 +88,9 @@ def healthz() -> dict:
         "app_version": settings.app_version,
         "db_configured": bool(settings.database_url),
     }
+
+# ------ User Authentication & Profile System + API Auth Gate ----------------
+register_auth(app)
 
 # ------ Inventory module (contract use_cases.md §3) ------------------------
 # Router + the two error handlers (C8 shape) live on the app.
@@ -292,13 +296,18 @@ class RecipeSyncPayload(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
-    return HealthResponse(status="ok", platform="Solin", version="0.1.0", environment="development")
+    return HealthResponse(
+        status="ok",
+        platform="Solin",
+        version=settings.app_version,
+        environment=settings.env if settings.env != "unknown" else "development",
+    )
 
 @app.get("/api/v1/recipes", response_model=List[RecipeSummary])
 def list_recipes(limit: int = 20, offset: int = 0, cuisine: Optional[str] = None):
     recipes = [r for r in _store.values() if r.status == "published"]
     if cuisine:
-        recipes = [r for r in recipes if recipe.cuisine and cuisine.lower() in recipe.cuisine.lower()]
+        recipes = [r for r in recipes if r.cuisine and cuisine.lower() in r.cuisine.lower()]
     results = [RecipeSummary(
         id=r.id, title=r.title, cuisine=r.cuisine,
         rating=r.rating,
