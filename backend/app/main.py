@@ -21,6 +21,8 @@ from .inventory.media import MEDIA_URL_PREFIX, media_root
 from .inventory.service import default_service as _inv_svc
 from .ingestion.register import register_ingestion
 from .kamra.routes import register as register_kamra
+from .kamra.service import default_kamra_service
+from .recipes.storage import default_recipe_store
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -275,6 +277,17 @@ def _default_recipes() -> dict:
 
 _store.update(_default_recipes())
 
+# Backfill bilingual translations for Kamra items (guaranteeing both HU and EN names)
+try:
+    default_kamra_service.backfill_bilingual_translations()
+except Exception as _e:
+    import logging
+    logging.getLogger("uvicorn.error").warning("Kamra bilingual backfill warning: %s", _e)
+
+class RecipeSyncPayload(BaseModel):
+    custom_recipes: Optional[List[Dict[str, Any]]] = None
+    edits: Optional[Dict[str, Dict[str, Any]]] = None
+
 # ------ API Endpoints ------
 
 @app.get("/health", response_model=HealthResponse)
@@ -467,6 +480,24 @@ def extract_recipe_from_video_endpoint(payload: VideoExtractRequest):
         logging.getLogger("uvicorn.error").exception("Video recipe extraction failed: %s", e)
         raise HTTPException(status_code=422, detail=f"Recept kinyerése sikertelen: {str(e)}")
 
+@app.get("/api/v1/recipes/sync")
+def get_synced_recipes():
+    """Retrieve all persisted custom recipes and edits."""
+    return default_recipe_store.sync()
+
+@app.post("/api/v1/recipes/sync")
+def sync_recipes_endpoint(payload: RecipeSyncPayload):
+    """Sync client recipes and edits with persistent backend store.
+
+    Accepts custom recipes (e.g. from local storage) and edits, saves any new
+    recipes, auto-registers their ingredients into Kamra with bilingual
+    translations, and returns the full combined set.
+    """
+    return default_recipe_store.sync(
+        custom_recipes=payload.custom_recipes,
+        edits=payload.edits,
+    )
+
 @app.get("/api/v1/recipes/{recipe_id}", response_model=RecipeResponse)
 def get_recipe(recipe_id: str):
     recipe = _store.get(recipe_id)
@@ -503,12 +534,20 @@ def create_recipe(recipe: RecipeCreate):
         import logging
         logging.getLogger("uvicorn.error").warning("Auto-syncing ingredients to Kamra failed: %s", e)
 
+    try:
+        res_dict = _store[rid].model_dump() if hasattr(_store[rid], "model_dump") else _store[rid].dict()
+        default_recipe_store.save_recipe(res_dict)
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning("Persisting recipe to disk store failed: %s", e)
+
     return _store[rid]
 
 @app.delete("/api/v1/recipes/{recipe_id}", status_code=204)
 def delete_recipe(recipe_id: str):
     if recipe_id in _store:
         del _store[recipe_id]
+    default_recipe_store.delete_recipe(recipe_id)
     return JSONResponse(status_code=204, content=None)
 
 @app.post("/api/v1/recipes/{recipe_id}/scale")

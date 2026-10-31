@@ -59,10 +59,15 @@ window.Browse = (function () {
           <span class="macro-chip">${esc(m.fat ?? "–")} <span>g zsír</span></span>
         </div>`
       : `<div class="macro-row"><span class="macro-chip muted">Makrók még nincsenek megadva</span></div>`;
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const isOrigEn = (r.original_lang === "en") || (r.video && !r.title_hu && /^[a-zA-Z0-9\s,.'"-]+$/.test(r.title));
+    const langBadge = isOrigEn ? `<span class="rec-lang-badge" style="position:absolute;top:8px;left:8px;background:rgba(15,23,42,0.75);color:#fff;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:700;backdrop-filter:blur(2px);">🇬🇧 EN</span>` : "";
+
     return `
     <article class="recipe-card" data-id="${esc(r.id)}" tabindex="0" role="link" aria-label="${esc(r.title)} megnyitása">
       <div class="rec-media">
         ${media}
+        ${langBadge}
         ${Number(r.rating) > 0 ? `<span class="rating">★ ${esc(r.rating)}</span>` : ""}
         ${r.video ? `<span class="rec-play" aria-hidden="true">▶</span>` : ""}
       </div>
@@ -76,12 +81,14 @@ window.Browse = (function () {
 
   function render() {
     const recipes = S.getRecipes();
-    $("#recipe-count").textContent = recipes.length + " recept";
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    $("#recipe-count").textContent = recipes.length + (isEn ? " recipes" : " recept");
 
-    // tag bar ("Mind" = clear filter)
+    // tag bar ("Mind" / "All" = clear filter)
     const tags = allTags();
+    const allLabel = isEn ? "All" : "Mind";
     $("#tagbar").innerHTML = (tags.length
-      ? `<button type="button" data-tag="" class="${state.filterTag ? "" : "active"}" aria-pressed="${!state.filterTag}">Mind</button>`
+      ? `<button type="button" data-tag="" class="${state.filterTag ? "" : "active"}" aria-pressed="${!state.filterTag}">${allLabel}</button>`
       : "") +
       tags.map((t) => {
         const on = t === state.filterTag;

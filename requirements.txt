@@ -5,3 +5,4 @@ pytest
 httpx
 Pillow>=10.3
 yt-dlp
+faster-whisper>=1.0.0
