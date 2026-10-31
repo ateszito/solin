@@ -87,6 +87,9 @@ window.Match = (function () {
       const missLine = m.missing.length
         ? `<div class="mr-line"><span class="muted">Hiányzik:</span> ${missed}</div>`
         : `<div class="mr-line mr-allset">Minden hozzávaló megvan — süthetsz!</div>`;
+      const shopBtn = m.missing.length
+        ? `<button type="button" class="btn sm ghost" data-add-shop="${esc(m.id)}" style="font-size:12px;">🛒 Hiányzók a bevásárlólistára (${m.missing.length})</button>`
+        : "";
       return `<div class="match-result">
         <div class="mr-head">
           <h3 class="mr-title">${esc(m.title)}</h3>
@@ -94,7 +97,10 @@ window.Match = (function () {
         </div>
         <div class="mr-body">
           ${directChips}${subChips}${missLine}
-          <button class="open-link" data-open="${esc(m.id)}">Recept megnyitása →</button>
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-top:8px;">
+            <button class="open-link" data-open="${esc(m.id)}">Recept megnyitása →</button>
+            ${shopBtn}
+          </div>
         </div>
       </div>`;
     }).join("");
@@ -102,6 +108,22 @@ window.Match = (function () {
     box.innerHTML = summary + cards;
     box.querySelectorAll("[data-open]").forEach((b) =>
       b.addEventListener("click", () => openRecipe(b.dataset.open))
+    );
+    box.querySelectorAll("[data-add-shop]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const rid = b.dataset.addShop;
+        const m = results.find((x) => x.id === rid);
+        if (m && m.missing && S.addShoppingItems) {
+          const rec = S.getRecipe(rid);
+          const itemsWithQty = m.missing.map((ms) => {
+            const ingObj = rec && (rec.ingredients || []).find((i) => i.name === ms.name);
+            return { name: ms.name, qty: ingObj ? (ingObj.qty || "") : "" };
+          });
+          const added = S.addShoppingItems(itemsWithQty, m.title);
+          renderShoppingList();
+          toast(added ? `${added} hiányzó tétel hozzáadva a bevásárlólistához 🛒` : "Már a bevásárlólistán van 🛒");
+        }
+      })
     );
   }
 
@@ -203,12 +225,141 @@ window.Match = (function () {
     $("#match-run").addEventListener("click", runMatch);
   }
 
+  function renderShoppingList() {
+    const viewMatch = $("#view-match");
+    if (!viewMatch || !S.getShoppingList) return;
+    let panel = $("#shopping-list-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "shopping-list-panel";
+      panel.className = "card";
+      panel.style.marginTop = "18px";
+      viewMatch.appendChild(panel);
+    }
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const list = S.getShoppingList();
+    const prodsMap = (window.Inventory && window.Inventory.getProductsMap) ? window.Inventory.getProductsMap() : {};
+
+    let estTotalHuf = 0;
+    const rowsHtml = list.map((item) => {
+      const invEntry = S.findByBase(item.name);
+      let priceTag = "";
+      if (invEntry && Array.isArray(invEntry.product_ids) && invEntry.product_ids.length) {
+        const prod = prodsMap[invEntry.product_ids[0]];
+        if (prod && prod.prices && prod.prices[0]) {
+          const pr = prod.prices[0];
+          priceTag = `<span class="pill" style="background:#e0f2fe;color:#0369a1;font-size:11px;">🏷️ ${esc(prod.name)}: ${esc(pr.amount)} ${esc(pr.currency)}</span>`;
+          if (pr.currency === "HUF") estTotalHuf += Number(pr.amount) || 0;
+        }
+      }
+      const dispName = isEn ? (item.name_en || (invEntry && invEntry.name_en) || item.name) : item.name;
+      return `
+        <li style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); ${item.checked ? "opacity:0.55; text-decoration:line-through;" : ""}">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1;">
+            <input type="checkbox" data-shop-chk="${esc(item.id)}" ${item.checked ? "checked" : ""} />
+            <span style="font-weight:600;">${esc(dispName)}</span>
+            ${item.qty ? `<span class="muted" style="font-size:12.5px;">(${esc(item.qty)})</span>` : ""}
+            ${item.recipe_title ? `<span class="pill" style="font-size:10.5px;">📖 ${esc(item.recipe_title)}</span>` : ""}
+            ${priceTag}
+          </label>
+          <button type="button" class="rm" data-shop-rm="${esc(item.id)}" title="Törlés">×</button>
+        </li>
+      `;
+    }).join("");
+
+    const checkedCount = list.filter((x) => x.checked).length;
+
+    panel.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <h3 style="margin:0;">🛒 ${isEn ? "Smart Shopping List" : "Okos Bevásárlólista"} <span class="pill">${list.length}</span></h3>
+        ${estTotalHuf > 0 ? `<span class="pill" style="background:rgba(16,185,129,0.14);color:#065f46;font-weight:700;">≈ ${Math.round(estTotalHuf)} HUF (${isEn ? "linked products" : "csatolt termékek ára"})</span>` : ""}
+      </div>
+      <div class="inline-form" style="gap:8px; margin-bottom:12px;">
+        <input id="shop-manual-in" type="text" placeholder="${isEn ? "Add item to buy (e.g. Milk)…" : "Tétel hozzáadása (pl. görög joghurt)…"}" style="flex:1;" />
+        <button type="button" id="shop-manual-add" class="btn sm primary">＋ ${isEn ? "Add" : "Hozzáadás"}</button>
+      </div>
+      ${list.length ? `<ul style="list-style:none; padding:0; margin:0 0 12px;">${rowsHtml}</ul>` : `<p class="hint" style="margin:0;">${isEn ? "Your shopping list is empty. Add missing ingredients straight from recipes!" : "A bevásárlólistád üres. A receptekből 1 kattintással ide teheted a hiányzó hozzávalókat!"}</p>`}
+      ${list.length ? `
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between;">
+          <button type="button" id="shop-move-to-stock" class="btn sm primary" ${checkedCount === 0 ? "disabled" : ""}>
+            📦 ${isEn ? `Move checked (${checkedCount}) to In-Stock Pantry` : `Megvettem (${checkedCount}) → Kamrába (Van otthon)`}
+          </button>
+          <button type="button" id="shop-clear-all" class="btn sm ghost">${isEn ? "Clear list" : "Lista ürítése"}</button>
+        </div>
+      ` : ""}
+    `;
+
+    const addIn = panel.querySelector("#shop-manual-in");
+    const addBtn = panel.querySelector("#shop-manual-add");
+    const doManualAdd = () => {
+      const val = (addIn && addIn.value || "").trim();
+      if (!val) return;
+      S.addShoppingItems([{ name: val, qty: "" }], "");
+      renderShoppingList();
+    };
+    if (addBtn) addBtn.addEventListener("click", doManualAdd);
+    if (addIn) addIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doManualAdd(); } });
+
+    panel.querySelectorAll("[data-shop-chk]").forEach((chk) => {
+      chk.addEventListener("change", () => {
+        const cur = S.getShoppingList();
+        const found = cur.find((x) => x.id === chk.dataset.shopChk);
+        if (found) {
+          found.checked = chk.checked;
+          S.setShoppingList(cur);
+          renderShoppingList();
+        }
+      });
+    });
+
+    panel.querySelectorAll("[data-shop-rm]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const cur = S.getShoppingList().filter((x) => x.id !== btn.dataset.shopRm);
+        S.setShoppingList(cur);
+        renderShoppingList();
+      });
+    });
+
+    const moveBtn = panel.querySelector("#shop-move-to-stock");
+    if (moveBtn) {
+      moveBtn.addEventListener("click", () => {
+        const cur = S.getShoppingList();
+        const bought = cur.filter((x) => x.checked);
+        if (!bought.length) return;
+        const have = S.getHave();
+        bought.forEach((b) => {
+          if (!have.some((h) => S.similar(h, b.name))) {
+            have.push(b.name);
+          }
+        });
+        S.setHave(have);
+        state.have = have;
+        S.setShoppingList(cur.filter((x) => !x.checked));
+        renderChipInput();
+        renderPresets();
+        liveRefresh();
+        renderShoppingList();
+        if (window.Inventory && window.Inventory.render) window.Inventory.render();
+        toast(`${bought.length} megvásárolt alapanyag bekerült az otthoni készletbe ✓`);
+      });
+    }
+
+    const clearBtn = panel.querySelector("#shop-clear-all");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        S.setShoppingList([]);
+        renderShoppingList();
+      });
+    }
+  }
+
   function render() {
     init();
     renderChipInput();
     renderPresets();
     liveRefresh();
+    renderShoppingList();
   }
 
-  return { init, render, runMatch, addChip };
+  return { init, render, runMatch, addChip, renderShoppingList };
 })();

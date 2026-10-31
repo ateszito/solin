@@ -7,6 +7,7 @@
 <meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)" />
 <meta name="color-scheme" content="light dark" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="manifest" href="manifest.json" />
 <title>Solin — Receptek</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -20,10 +21,13 @@
   <div class="header-right">
     <button type="button" id="lang-switch" class="pill" title="Nyelv váltása / Switch language" style="cursor:pointer;font-weight:700;">🇭🇺 HU</button>
     <button type="button" id="env-badge" title="Környezet (SOLIN_ENV)">—</button>
+    <button type="button" id="profile-btn" class="pill hidden" style="cursor:pointer;font-weight:600;"></button>
     <span id="recipe-count" class="pill">0 recept</span>
     <a class="btn sm primary" id="add-open" href="#add">+ Recept</a>
   </div>
 </header>
+
+<div id="auth-gate" class="auth-gate hidden" role="dialog" aria-modal="true" aria-label="Bejelentkezés"></div>
 
 <main id="app" class="app-main">
   <!-- ================= BROWSE ================= -->
@@ -164,6 +168,9 @@
       <div id="fc-meals"></div>
     </div>
   </section>
+
+  <!-- ================= USER PROFILE ================= -->
+  <section class="view hidden" id="view-profile"></section>
 </main>
 
 <nav class="bottom-nav" id="bottom-nav" aria-label="Főmenü">
@@ -180,7 +187,6 @@
     <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
     <span>Product&nbsp;Inventory</span></button>
 </nav>
-</nav>
 
 <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 <script src="_solin.env.js"></script>
@@ -188,6 +194,7 @@
 <script src="vendor/tesseract.min.js"></script>
 <script src="imgutil.js"></script>
 <script src="i18n.js"></script>
+<script src="auth.js"></script>
 <script src="data.js"></script>
 <script src="state.js"></script>
 <script src="core.js"></script>

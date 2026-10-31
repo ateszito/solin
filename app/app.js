@@ -48,11 +48,39 @@
       if (window.Detail && window.Solin.state.tab === "recipe" && window.Solin.state.activeRecipe) {
         window.Detail.render(window.Solin.state.activeRecipe);
       }
+      if (window.SolinAuth) {
+        if (window.Solin.state.view === "profile") window.SolinAuth.renderProfile();
+        if (!window.SolinAuth.isAuthenticated()) window.SolinAuth.renderAuthGate();
+      }
     });
   }
 
-  // Cross-device recipe synchronization on startup
-  if (S.S && S.S.syncRecipesWithBackend) {
+  // Initialize Authentication Gate & User Profile system
+  if (window.SolinAuth && window.SolinAuth.init) {
+    window.SolinAuth.init();
+  }
+
+  // Handle Web Share Target (?share_url=... or ?share_text=...) from mobile share sheet
+  try {
+    const params = new URLSearchParams(location.search || "");
+    const rawShare = params.get("share_url") || params.get("share_text") || "";
+    const urlMatch = rawShare.match(/https?:\/\/[^\s"'<>]+/i);
+    if (urlMatch && urlMatch[0]) {
+      window.__SOLIN_SHARED_URL = urlMatch[0];
+      history.replaceState(history.state, "", location.pathname + "#add");
+      S.go("add");
+      setTimeout(() => {
+        const urlIn = document.getElementById("add-video-url-input");
+        if (urlIn) {
+          urlIn.value = window.__SOLIN_SHARED_URL;
+          urlIn.focus();
+        }
+      }, 150);
+    }
+  } catch (e) {}
+
+  // Cross-device recipe synchronization on startup (when authenticated or when SolinAuth isn't loaded in unit tests)
+  if (S.S && S.S.syncRecipesWithBackend && (!window.SolinAuth || window.SolinAuth.isAuthenticated())) {
     S.S.syncRecipesWithBackend().then((changed) => {
       if (changed && window.Browse && window.Browse.render) {
         window.Browse.render();
