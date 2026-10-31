@@ -102,12 +102,21 @@ window.Inventory = (function () {
         ? (i.name ? `<span class="pill" style="font-size:11.5px; background:#f1f5f9; color:#475569;">🇭🇺 ${esc(i.name)}</span>` : "")
         : (i.name_en ? `<span class="pill" style="font-size:11.5px; background:#f1f5f9; color:#475569;">🇬🇧 ${esc(i.name_en)}</span>` : "");
 
+      const inStock = S.isInStock ? S.isInStock(i.name) : false;
+      const stockBtnLabel = inStock
+        ? (isEn ? "✓ In stock" : "✓ Van otthon")
+        : (isEn ? "＋ Out of stock" : "＋ Nincs otthon");
+      const stockBtnStyle = inStock
+        ? "background:rgba(16,185,129,0.16); color:#065f46; border:1px solid rgba(16,185,129,0.4); font-weight:700;"
+        : "background:#f8fafc; color:#64748b; border:1px solid #cbd5e1;";
+
       return `<li style="display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:12px 0; border-bottom:1px solid var(--line);">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <span class="inv-name" style="font-size:15px; font-weight:700;">${esc(primaryName)}</span>
             ${secondaryPill}
             <span class="pill" style="font-size:11px; background:#f8fafc; color:#64748b; border:1px solid #e2e8f0;">${getCategoryLabel(i.category)}</span>
+            <button type="button" class="pill stock-toggle-btn" data-stock-name="${esc(i.name)}" style="font-size:11.5px; cursor:pointer; padding:3px 9px; ${stockBtnStyle}" title="${isEn ? "Toggle whether you have this at home for 'What to cook?'" : "Jelöld be, ha van otthon belőle (a 'Mit főzzek?' keresőhöz)"}">${stockBtnLabel}</button>
           </div>
           <button class="rm" data-rm="${esc(i.id || i.name)}" aria-label="${esc(primaryName)} törlése" title="Törlés" style="align-self:flex-start;">×</button>
         </div>
@@ -175,6 +184,18 @@ window.Inventory = (function () {
         const linkBtn = e.target.closest(".link-prod-btn");
         if (linkBtn) {
           openLinkProductModal(linkBtn.dataset.baseId);
+          return;
+        }
+
+        const stockBtn = e.target.closest(".stock-toggle-btn");
+        if (stockBtn && S.toggleStock) {
+          const nm = stockBtn.dataset.stockName;
+          const updatedHave = S.toggleStock(nm);
+          if (window.Solin && window.Solin.state) {
+            window.Solin.state.have = updatedHave;
+          }
+          render();
+          if (inventoryChangedCallback) inventoryChangedCallback();
           return;
         }
       });
@@ -408,5 +429,5 @@ window.Inventory = (function () {
     });
   }
 
-  return { init, render, onInventoryChanged };
+  return { init, render, onInventoryChanged, getProductsMap: () => _productsMap };
 })();

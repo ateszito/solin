@@ -4,13 +4,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import secrets
+import socket
+import threading
 import time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ..config import settings
 
@@ -132,3 +135,93 @@ def verify_google_id_token(id_token: str, expected_client_id: str = "") -> Optio
         }
     except Exception:
         return None
+
+
+class SlidingWindowRateLimiter:
+    """Thread-safe in-memory sliding-window rate limiter."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._hits: Dict[str, List[float]] = {}
+
+    def allow(self, key: str, max_requests: int = 15, window_sec: float = 60.0) -> bool:
+        now = time.monotonic()
+        cutoff = now - window_sec
+        with self._lock:
+            bucket = [t for t in self._hits.get(key, []) if t > cutoff]
+            if len(bucket) >= max_requests:
+                self._hits[key] = bucket
+                return False
+            bucket.append(now)
+            self._hits[key] = bucket
+            return True
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+
+
+rate_limiter = SlidingWindowRateLimiter()
+
+
+def _is_disallowed_ip(ip_str: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+        return (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        )
+    except ValueError:
+        return True
+
+
+def validate_safe_public_url(url: str) -> str:
+    """Validate that a URL is strictly http(s) and points to a public internet host (SSRF protection).
+
+    Raises ValueError if the URL is invalid, non-HTTP(S), or targets a private/internal/loopback address.
+    """
+    clean = (url or "").strip()
+    if not clean:
+        raise ValueError("URL cannot be empty")
+    parsed = urllib.parse.urlparse(clean)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError("Only http:// and https:// URLs are permitted")
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        raise ValueError("URL must contain a valid hostname")
+    if host in ("localhost", "0.0.0.0", "127.0.0.1", "::1") or host.endswith((".local", ".internal", ".lan")):
+        raise ValueError("Internal or loopback hosts are not permitted")
+
+    # Check if host is a literal IP address
+    try:
+        ipaddress.ip_address(host)
+        if _is_disallowed_ip(host):
+            raise ValueError("Private or reserved IP addresses are not permitted")
+        return clean
+    except ValueError as e:
+        if "Private or reserved" in str(e):
+            raise
+
+    # Require a public domain structure (at least one dot)
+    if "." not in host:
+        raise ValueError("Internal single-label hostnames are not permitted")
+
+    # Resolve DNS if network is available; block if any resolved IP is private/loopback
+    try:
+        infos = socket.getaddrinfo(host, None)
+        for info in infos:
+            sockaddr = info[4]
+            if sockaddr and len(sockaddr) >= 1:
+                ip_candidate = str(sockaddr[0]).split("%")[0]
+                if _is_disallowed_ip(ip_candidate):
+                    raise ValueError("URL resolves to a private or internal network address")
+    except socket.gaierror:
+        # DNS resolution failure will be handled downstream by yt-dlp / HTTP client
+        pass
+
+    return clean
+

@@ -23,6 +23,7 @@ from .security import (
     create_access_token,
     decode_access_token,
     hash_password,
+    rate_limiter,
     verify_google_id_token,
     verify_password,
 )
@@ -104,23 +105,38 @@ def _build_auth_response(user: Dict[str, Any], store: UserStore) -> AuthResponse
 
 
 @router.get("/config")
-def get_auth_config():
+def get_auth_config(store: UserStore = Depends(get_user_store)):
     """Return public authentication configuration for the frontend."""
     google_client_id = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
+    cfg = store.get_settings()
+    has_owner = len(store.list_users()) > 0
     return {
         "auth_required": True,
         "allow_registration": True,
+        "require_approval": bool(cfg.get("require_approval")) and has_owner,
+        "has_invite_code": bool(cfg.get("invite_code")),
         "google_client_id": google_client_id,
         "google_enabled": True,
     }
 
 
+def _check_auth_rate_limit(request: Request) -> None:
+    client_ip = (request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For") or (request.client.host if request.client else "unknown")).split(",")[0].strip()
+    if not rate_limiter.allow(f"auth:{client_ip}", max_requests=20, window_sec=60.0):
+        raise HTTPException(
+            status_code=429,
+            detail="Túl sok próbálkozás. Kérjük, várj egy percet! / Too many attempts, please wait a minute.",
+        )
+
+
 @router.post("/register", response_model=AuthResponse, status_code=201)
 def register_user(
     payload: RegisterRequest,
+    request: Request,
     store: UserStore = Depends(get_user_store),
 ):
     """Register a new user account with email and password."""
+    _check_auth_rate_limit(request)
     existing = store.get_by_email(payload.email)
     if existing:
         raise HTTPException(
@@ -135,6 +151,7 @@ def register_user(
             password_hash=pw_hash,
             auth_provider="local",
             language=payload.language or "hu",
+            invite_code=payload.invite_code,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -144,9 +161,11 @@ def register_user(
 @router.post("/login", response_model=AuthResponse)
 def login_user(
     payload: LoginRequest,
+    request: Request,
     store: UserStore = Depends(get_user_store),
 ):
     """Authenticate an existing user with email and password."""
+    _check_auth_rate_limit(request)
     user = store.get_by_email(payload.email)
     if not user or not user.get("password_hash"):
         raise HTTPException(
@@ -158,15 +177,22 @@ def login_user(
             status_code=401,
             detail="Hibás e-mail cím vagy jelszó.",
         )
+    if user.get("status") == "blocked":
+        raise HTTPException(
+            status_code=403,
+            detail="Ez a fiók le van tiltva. / This account has been blocked.",
+        )
     return _build_auth_response(user, store)
 
 
 @router.post("/google", response_model=AuthResponse)
 def google_auth(
     payload: GoogleAuthRequest,
+    request: Request,
     store: UserStore = Depends(get_user_store),
 ):
     """Authenticate or register a user via Google Sign-In."""
+    _check_auth_rate_limit(request)
     google_client_id = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
     email = ""
     name = ""
@@ -199,6 +225,8 @@ def google_auth(
 
     existing = store.get_by_email(email)
     if existing:
+        if existing.get("status") == "blocked":
+            raise HTTPException(status_code=403, detail="Ez a fiók le van tiltva. / This account has been blocked.")
         patch: Dict[str, Any] = {}
         if google_id and not existing.get("google_id"):
             patch["google_id"] = google_id
@@ -206,6 +234,12 @@ def google_auth(
             patch["auth_provider"] = "both"
         if picture and existing.get("avatar") in (None, "", "👩‍🍳"):
             patch["avatar"] = picture
+        # Allow pending user to activate if they supply valid invite_code now
+        if existing.get("status") == "pending" and payload.invite_code:
+            cfg = store.get_settings()
+            expected_invite = (cfg.get("invite_code") or "").strip()
+            if expected_invite and payload.invite_code.strip() == expected_invite:
+                patch["status"] = "active"
         if patch:
             existing = store.update_user(existing["id"], patch) or existing
         return _build_auth_response(existing, store)
@@ -218,6 +252,7 @@ def google_auth(
         google_id=google_id,
         avatar=picture or "👩‍🍳",
         language=payload.language or "hu",
+        invite_code=payload.invite_code,
     )
     return _build_auth_response(user, store)
 
@@ -294,10 +329,78 @@ def logout_user():
     return {"status": "ok"}
 
 
+def _require_owner(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    if current_user.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Csak a tulajdonos végezheti el ezt a műveletet. / Owner access required.")
+    return current_user
+
+
+@router.get("/admin/users")
+def admin_list_users(
+    owner: Dict[str, Any] = Depends(_require_owner),
+    store: UserStore = Depends(get_user_store),
+):
+    """Return all user profiles and access settings (Owner only)."""
+    users = [store.to_public_profile(u) for u in store.list_users()]
+    return {
+        "users": users,
+        "settings": store.get_settings(),
+    }
+
+
+@router.put("/admin/users/{user_id}")
+def admin_update_user_status(
+    user_id: str,
+    payload: Dict[str, Any],
+    owner: Dict[str, Any] = Depends(_require_owner),
+    store: UserStore = Depends(get_user_store),
+):
+    """Approve, block, or change role of a user (Owner only)."""
+    target = store.get_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Felhasználó nem található.")
+    patch: Dict[str, Any] = {}
+    if "status" in payload and payload["status"] in ("active", "pending", "blocked"):
+        if user_id == owner["id"] and payload["status"] != "active":
+            raise HTTPException(status_code=400, detail="Saját tulajdonosi fiókodat nem tilthatod le.")
+        patch["status"] = payload["status"]
+    if "role" in payload and payload["role"] in ("owner", "user"):
+        if user_id == owner["id"] and payload["role"] != "owner":
+            raise HTTPException(status_code=400, detail="Saját tulajdonosi jogosultságodat nem veheted el.")
+        patch["role"] = payload["role"]
+    updated = store.update_user(user_id, patch) or target
+    return store.to_public_profile(updated)
+
+
+@router.delete("/admin/users/{user_id}")
+def admin_delete_user(
+    user_id: str,
+    owner: Dict[str, Any] = Depends(_require_owner),
+    store: UserStore = Depends(get_user_store),
+):
+    if user_id == owner["id"]:
+        raise HTTPException(status_code=400, detail="Saját tulajdonosi fiókodat nem törölheted.")
+    if not store.delete_user(user_id):
+        raise HTTPException(status_code=404, detail="Felhasználó nem található.")
+    return {"status": "deleted", "id": user_id}
+
+
+@router.put("/admin/settings")
+def admin_update_settings(
+    payload: Dict[str, Any],
+    owner: Dict[str, Any] = Depends(_require_owner),
+    store: UserStore = Depends(get_user_store),
+):
+    """Update registration approval policy and invite code (Owner only)."""
+    return store.update_settings(payload)
+
+
 def _is_public_api_request(path: str, method: str) -> bool:
     """Determine if a request path/method is exempt from the auth gate."""
     if method == "OPTIONS":
         return True
+    if path in ("/docs", "/redoc", "/openapi.json"):
+        return False
     if not path.startswith("/api/"):
         return True
     # Public health and auth endpoints
@@ -319,6 +422,14 @@ def _is_public_api_request(path: str, method: str) -> bool:
     return False
 
 
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
+}
+
+
 def register(app: FastAPI) -> None:
     """Register auth router and global API authentication gate middleware."""
     app.include_router(router)
@@ -337,6 +448,30 @@ def register(app: FastAPI) -> None:
                             "detail": "Bejelentkezés szükséges. Kérjük, jelentkezz be! / Authentication required.",
                             "code": "AUTH_REQUIRED",
                         },
+                        headers=SECURITY_HEADERS,
+                    )
+                u_status = user.get("status", "active")
+                if u_status == "blocked":
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": "Ez a fiók le van tiltva. / This account has been blocked.",
+                            "code": "ACCOUNT_BLOCKED",
+                        },
+                        headers=SECURITY_HEADERS,
+                    )
+                if u_status == "pending" and path not in ("/api/v1/auth/me", "/api/v1/auth/change-password"):
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": "Fiókod a tulajdonos jóváhagyására vár. / Your account is pending owner approval.",
+                            "code": "ACCOUNT_PENDING_APPROVAL",
+                        },
+                        headers=SECURITY_HEADERS,
                     )
                 request.state.user = user
-        return await call_next(request)
+        response = await call_next(request)
+        for hk, hv in SECURITY_HEADERS.items():
+            if hk not in response.headers:
+                response.headers[hk] = hv
+        return response

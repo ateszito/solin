@@ -71,7 +71,8 @@ window.SolinAuth = (function () {
   }
 
   function isAuthenticated() {
-    return Boolean(getToken() && getUser());
+    const u = getUser();
+    return Boolean(getToken() && u && u.status !== "pending" && u.status !== "blocked");
   }
 
   function setSession(token, user) {
@@ -212,13 +213,70 @@ window.SolinAuth = (function () {
     btn.title = _t("profile_title", "Profil és beállítások", "Profile & settings") + ` (${user.email})`;
   }
 
-  // ---- Render Auth Gate (Login / Register / Google) ----
+  // ---- Render Auth Gate (Login / Register / Google / Pending Approval) ----
   function renderAuthGate(errorMsg) {
     const gate = document.getElementById("auth-gate");
     if (!gate) return;
 
-    const isLogin = authMode === "login";
+    const currentUser = getUser();
     const lang = (window.SolinI18n && window.SolinI18n.getLang) ? window.SolinI18n.getLang() : "hu";
+
+    // If user is logged in but awaiting Owner approval:
+    if (getToken() && currentUser && currentUser.status === "pending") {
+      gate.innerHTML = `
+        <div class="auth-card">
+          <div class="auth-card-top">
+            <div class="auth-brand">
+              <span class="logo auth-logo">S</span>
+              <div>
+                <h2 class="auth-title">Solin</h2>
+                <p class="auth-subtitle">${_esc(currentUser.email)}</p>
+              </div>
+            </div>
+          </div>
+          <div class="auth-security-banner" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.35);">
+            <span>⏳</span>
+            <span>${_t("auth_pending_msg", "A fiókod létrejött, de a biztonságos hozzáféréshez a tulajdonos (Owner) jóváhagyása szükséges.", "Your account was created and is awaiting Owner approval before accessing private recipes.")}</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:14px;">
+            <button type="button" id="auth-check-status-btn" class="btn primary" style="flex:1;">
+              🔄 ${_t("auth_refresh_status", "Jóváhagyás ellenőrzése", "Check approval status")}
+            </button>
+            <button type="button" id="auth-pending-logout-btn" class="btn ghost">
+              🚪 ${_t("auth_logout", "Kijelentkezés", "Sign out")}
+            </button>
+          </div>
+        </div>
+      `;
+      const chkBtn = gate.querySelector("#auth-check-status-btn");
+      if (chkBtn) {
+        chkBtn.addEventListener("click", async () => {
+          try {
+            const res = await fetch(_apiBase() + "/api/v1/auth/me");
+            if (res.ok) {
+              const fresh = await res.json();
+              setSession(getToken(), fresh);
+              if (fresh.status === "active") {
+                unlockApp();
+                if (window.Solin && window.Solin.toast) window.Solin.toast(_t("auth_approved_toast", "Fiókod jóváhagyva! ✓", "Account approved! ✓"));
+              } else {
+                if (window.Solin && window.Solin.toast) window.Solin.toast(_t("auth_still_pending", "Még jóváhagyásra vár…", "Still awaiting approval…"));
+              }
+            }
+          } catch (e) {}
+        });
+      }
+      const outBtn = gate.querySelector("#auth-pending-logout-btn");
+      if (outBtn) {
+        outBtn.addEventListener("click", () => {
+          clearSession();
+          renderAuthGate();
+        });
+      }
+      return;
+    }
+
+    const isLogin = authMode === "login";
     const savedGoogle = getSavedGoogleAccounts();
 
     gate.innerHTML = `
@@ -286,6 +344,8 @@ window.SolinAuth = (function () {
               <input id="google-email-in" type="email" required placeholder="pelda@gmail.com" autocomplete="email" />
               <label>${_t("auth_display_name", "Megjelenített név", "Display name")}</label>
               <input id="google-name-in" type="text" placeholder="${_t("auth_name_ph", "pl. Ágnes", "e.g. Agnes")}" autocomplete="name" />
+              <label>${_t("auth_invite_label", "Meghívókód (opcionális)", "Invite code (optional)")}</label>
+              <input id="google-invite-in" type="text" placeholder="${_t("auth_invite_ph", "Ha kaptál meghívókódot…", "If you have an invite code…")}" autocomplete="off" />
               <button type="submit" class="btn primary" style="width:100%;margin-top:6px;">
                 ${_t("auth_google_continue", "Belépés ezzel a Google-fiókkal", "Continue with this Google account")}
               </button>
@@ -312,6 +372,12 @@ window.SolinAuth = (function () {
             <label for="auth-password">${_t("auth_password_label", "Jelszó", "Password")}</label>
             <input id="auth-password" type="password" required minlength="6" placeholder="${isLogin ? "••••••••" : _t("auth_pw_min", "Legalább 6 karakter", "At least 6 characters")}" autocomplete="${isLogin ? "current-password" : "new-password"}" />
           </div>
+          ${!isLogin ? `
+            <div class="auth-field">
+              <label for="auth-invite">${_t("auth_invite_label", "Meghívókód (opcionális)", "Invite code (optional)")}</label>
+              <input id="auth-invite" type="text" placeholder="${_t("auth_invite_ph", "Azonnali hozzáféréshez", "For instant activation")}" autocomplete="off" />
+            </div>
+          ` : ""}
           <button type="submit" id="auth-submit-btn" class="btn primary auth-submit">
             ${isLogin ? _t("auth_login_submit", "Bejelentkezés", "Sign in") : _t("auth_register_submit", "Fiók létrehozása", "Create account")}
           </button>
@@ -380,8 +446,10 @@ window.SolinAuth = (function () {
         e.preventDefault();
         const email = (gate.querySelector("#google-email-in").value || "").trim();
         const displayName = (gate.querySelector("#google-name-in").value || "").trim();
+        const inviteEl = gate.querySelector("#google-invite-in");
+        const inviteCode = inviteEl ? (inviteEl.value || "").trim() : "";
         if (!email) return;
-        await handleGoogleLogin({ email, display_name: displayName });
+        await handleGoogleLogin({ email, display_name: displayName, invite_code: inviteCode });
       });
     }
 
@@ -394,16 +462,18 @@ window.SolinAuth = (function () {
         const password = gate.querySelector("#auth-password").value || "";
         const nameEl = gate.querySelector("#auth-name");
         const displayName = nameEl ? (nameEl.value || "").trim() : "";
-        await handleEmailAuth({ email, password, display_name: displayName });
+        const invEl = gate.querySelector("#auth-invite");
+        const inviteCode = invEl ? (invEl.value || "").trim() : "";
+        await handleEmailAuth({ email, password, display_name: displayName, invite_code: inviteCode });
       });
     }
   }
 
-  async function handleEmailAuth({ email, password, display_name }) {
+  async function handleEmailAuth({ email, password, display_name, invite_code }) {
     const endpoint = authMode === "register" ? "/api/v1/auth/register" : "/api/v1/auth/login";
     const lang = (window.SolinI18n && window.SolinI18n.getLang) ? window.SolinI18n.getLang() : "hu";
     const body = authMode === "register"
-      ? { email, password, display_name, language: lang }
+      ? { email, password, display_name, language: lang, invite_code: invite_code || undefined }
       : { email, password };
 
     try {
@@ -419,6 +489,10 @@ window.SolinAuth = (function () {
         return;
       }
       setSession(data.access_token, data.user);
+      if (data.user && data.user.status === "pending") {
+        lockApp();
+        return;
+      }
       unlockApp();
       if (window.Solin && window.Solin.toast) {
         window.Solin.toast(
@@ -432,13 +506,13 @@ window.SolinAuth = (function () {
     }
   }
 
-  async function handleGoogleLogin({ id_token, email, display_name, picture }) {
+  async function handleGoogleLogin({ id_token, email, display_name, picture, invite_code }) {
     const lang = (window.SolinI18n && window.SolinI18n.getLang) ? window.SolinI18n.getLang() : "hu";
     try {
       const res = await fetch(_apiBase() + "/api/v1/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token, email, display_name, picture, language: lang })
+        body: JSON.stringify({ id_token, email, display_name, picture, language: lang, invite_code: invite_code || undefined })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -451,6 +525,10 @@ window.SolinAuth = (function () {
       }
       googlePickerOpen = false;
       setSession(data.access_token, data.user);
+      if (data.user && data.user.status === "pending") {
+        lockApp();
+        return;
+      }
       unlockApp();
       if (window.Solin && window.Solin.toast) {
         window.Solin.toast(_t("auth_welcome_back", "Sikeres Google belépés: ", "Signed in with Google: ") + (data.user.display_name || "") + " ✓");
@@ -574,6 +652,8 @@ window.SolinAuth = (function () {
           <button type="submit" class="btn ghost">${_t("profile_pw_btn", "Jelszó frissítése", "Update password")}</button>
         </div>
       </form>
+
+      ${user.role === "owner" ? `<div id="profile-admin-panel" class="card profile-form-card"></div>` : ""}
     `;
 
     // Back button
@@ -693,6 +773,105 @@ window.SolinAuth = (function () {
         }
       });
     }
+
+    if (user.role === "owner") {
+      loadOwnerAdminPanel(box.querySelector("#profile-admin-panel"), user);
+    }
+  }
+
+  async function loadOwnerAdminPanel(panel, ownerUser) {
+    if (!panel) return;
+    try {
+      const res = await fetch(_apiBase() + "/api/v1/auth/admin/users");
+      if (!res.ok) return;
+      const data = await res.json();
+      const users = Array.isArray(data.users) ? data.users : [];
+      const cfg = data.settings || {};
+
+      panel.innerHTML = `
+        <h3>👑 ${_t("admin_title", "Tulajdonosi Biztonság & Felhasználók", "Owner Security & User Access")}</h3>
+        <p class="hint" style="margin-top:0;">${_t("admin_hint", "Itt szabályozhatod, hogy új regisztrálók azonnal hozzáférnek-e a receptekhez, vagy meghívókód / tulajdonosi jóváhagyás szükséges.", "Control whether new sign-ups require your approval or an invite code before accessing recipes.")}</p>
+
+        <form id="admin-settings-form" style="margin-bottom:18px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--bg);">
+          <label style="display:flex; align-items:center; gap:8px; font-weight:600; font-size:13.5px; cursor:pointer; margin-bottom:10px;">
+            <input type="checkbox" id="admin-req-approval" ${cfg.require_approval ? "checked" : ""} />
+            <span>🔒 ${_t("admin_req_approval_label", "Új regisztrációkhoz tulajdonosi jóváhagyás szükséges (ajánlott nyilvános weben)", "Require Owner approval for new accounts (recommended on public web)")}</span>
+          </label>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <label for="admin-invite-code" style="font-size:12.5px; font-weight:700;">🎟️ ${_t("admin_invite_code", "Meghívókód (azonnali belépéshez):", "Invite code (for instant access):")}</label>
+            <input id="admin-invite-code" type="text" value="${_esc(cfg.invite_code || "")}" placeholder="${_t("admin_invite_ph", "pl. CSALAD2026 (üres = nincs kód)", "e.g. FAMILY2026")}" style="flex:1; min-width:160px; padding:6px 10px;" />
+            <button type="submit" class="btn sm primary">${_t("save", "Mentés", "Save")}</button>
+          </div>
+        </form>
+
+        <h4 style="margin:0 0 10px; font-size:14px;">👥 ${_t("admin_users_list", "Regisztrált fiókok", "Registered accounts")} (${users.length})</h4>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          ${users.map((u) => {
+            const st = u.status || "active";
+            const stBadge = st === "active"
+              ? `<span class="pill" style="background:rgba(16,185,129,0.15);color:#065f46;">✅ Aktív</span>`
+              : st === "pending"
+              ? `<span class="pill" style="background:rgba(245,158,11,0.2);color:#92400e;">⏳ Jóváhagyásra vár</span>`
+              : `<span class="pill" style="background:rgba(239,68,68,0.15);color:#991b1b;">🚫 Tiltva</span>`;
+            const isSelf = u.id === ownerUser.id;
+            return `
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:10px 12px; border:1px solid var(--line); border-radius:10px;">
+                <div>
+                  <strong>${_esc(u.avatar || "👩‍🍳")} ${_esc(u.display_name || u.name || u.email)}</strong>
+                  <span class="muted" style="font-size:12px; margin-left:6px;">(${_esc(u.email)})</span>
+                  <div style="margin-top:4px; display:flex; gap:6px; align-items:center;">
+                    ${stBadge}
+                    <span class="pill" style="font-size:11px;">${u.role === "owner" ? "👑 Owner" : "👤 Member"}</span>
+                  </div>
+                </div>
+                ${!isSelf ? `
+                  <div style="display:flex; gap:6px;">
+                    ${st !== "active" ? `<button type="button" class="btn sm primary" data-user-act="approve" data-uid="${_esc(u.id)}">✓ ${_t("admin_approve", "Jóváhagyás", "Approve")}</button>` : ""}
+                    ${st !== "blocked" ? `<button type="button" class="btn sm ghost" data-user-act="block" data-uid="${_esc(u.id)}">🚫 ${_t("admin_block", "Tiltás", "Block")}</button>` : ""}
+                    <button type="button" class="btn sm ghost" data-user-act="delete" data-uid="${_esc(u.id)}" style="color:#dc2626;">🗑️</button>
+                  </div>
+                ` : ""}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+
+      const cfgForm = panel.querySelector("#admin-settings-form");
+      if (cfgForm) {
+        cfgForm.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const require_approval = panel.querySelector("#admin-req-approval").checked;
+          const invite_code = (panel.querySelector("#admin-invite-code").value || "").trim();
+          const r = await fetch(_apiBase() + "/api/v1/auth/admin/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ require_approval, invite_code })
+          });
+          if (r.ok && window.Solin && window.Solin.toast) {
+            window.Solin.toast(_t("admin_cfg_saved", "Biztonsági beállítások mentve ✓", "Security settings saved ✓"));
+          }
+        });
+      }
+
+      panel.querySelectorAll("[data-user-act]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const act = btn.dataset.userAct;
+          const uid = btn.dataset.uid;
+          if (act === "delete") {
+            await fetch(_apiBase() + "/api/v1/auth/admin/users/" + encodeURIComponent(uid), { method: "DELETE" });
+          } else {
+            const newStatus = act === "approve" ? "active" : "blocked";
+            await fetch(_apiBase() + "/api/v1/auth/admin/users/" + encodeURIComponent(uid), {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: newStatus })
+            });
+          }
+          loadOwnerAdminPanel(panel, ownerUser);
+        });
+      });
+    } catch (e) {}
   }
 
   async function init() {

@@ -60,6 +60,25 @@
     window.SolinAuth.init();
   }
 
+  // Handle Web Share Target (?share_url=... or ?share_text=...) from mobile share sheet
+  try {
+    const params = new URLSearchParams(location.search || "");
+    const rawShare = params.get("share_url") || params.get("share_text") || "";
+    const urlMatch = rawShare.match(/https?:\/\/[^\s"'<>]+/i);
+    if (urlMatch && urlMatch[0]) {
+      window.__SOLIN_SHARED_URL = urlMatch[0];
+      history.replaceState(history.state, "", location.pathname + "#add");
+      S.go("add");
+      setTimeout(() => {
+        const urlIn = document.getElementById("add-video-url-input");
+        if (urlIn) {
+          urlIn.value = window.__SOLIN_SHARED_URL;
+          urlIn.focus();
+        }
+      }, 150);
+    }
+  } catch (e) {}
+
   // Cross-device recipe synchronization on startup (when authenticated or when SolinAuth isn't loaded in unit tests)
   if (S.S && S.S.syncRecipesWithBackend && (!window.SolinAuth || window.SolinAuth.isAuthenticated())) {
     S.S.syncRecipesWithBackend().then((changed) => {

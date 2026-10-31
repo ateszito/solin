@@ -157,3 +157,94 @@ def test_auth_gate_blocks_unauthenticated_feature_routes(isolated_user_store, mo
 
     assert client.get("/api/v1/recipes/sync", headers=headers).status_code == 200
     assert client.get("/api/v1/kamra", headers=headers).status_code == 200
+
+
+def test_owner_approval_gate_and_invite_code(isolated_user_store, monkeypatch):
+    monkeypatch.setenv("SOLIN_REQUIRE_AUTH", "true")
+    client = TestClient(app)
+
+    # 1. First user registers -> becomes active Owner
+    owner_reg = client.post(
+        "/api/v1/auth/register",
+        json={"email": "owner@solin.hu", "password": "ownerPassword123", "display_name": "Owner"},
+    )
+    assert owner_reg.status_code == 201
+    owner_token = owner_reg.json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+    # 2. Owner enables require_approval + sets an invite code
+    cfg_resp = client.put(
+        "/api/v1/auth/admin/settings",
+        headers=owner_headers,
+        json={"require_approval": True, "invite_code": "CSALAD2026"},
+    )
+    assert cfg_resp.status_code == 200
+
+    # 3. Stranger registers WITHOUT invite code -> status is "pending", blocked by 403 on feature routes
+    stranger_reg = client.post(
+        "/api/v1/auth/register",
+        json={"email": "stranger@internet.com", "password": "strangerPassword123", "display_name": "Stranger"},
+    )
+    assert stranger_reg.status_code == 201
+    stranger_data = stranger_reg.json()
+    assert stranger_data["user"]["status"] == "pending"
+    stranger_headers = {"Authorization": f"Bearer {stranger_data['access_token']}"}
+    assert client.get("/api/v1/recipes/sync", headers=stranger_headers).status_code == 403
+    assert client.get("/api/v1/kamra", headers=stranger_headers).status_code == 403
+
+    # 4. Owner approves stranger -> stranger now gets 200 OK
+    approve = client.put(
+        f"/api/v1/auth/admin/users/{stranger_data['user']['id']}",
+        headers=owner_headers,
+        json={"status": "active"},
+    )
+    assert approve.status_code == 200
+    assert client.get("/api/v1/recipes/sync", headers=stranger_headers).status_code == 200
+
+    # 5. Family member registers WITH valid invite code -> immediately active!
+    fam_reg = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "family@solin.hu",
+            "password": "familyPassword123",
+            "display_name": "Family",
+            "invite_code": "CSALAD2026",
+        },
+    )
+    assert fam_reg.status_code == 201
+    assert fam_reg.json()["user"]["status"] == "active"
+
+
+def test_ssrf_url_validation_and_sync_tombstones(tmp_path):
+    from app.auth.security import validate_safe_public_url
+    from app.recipes.storage import RecipeStore
+
+    # SSRF checks
+    for bad_url in [
+        "file:///etc/passwd",
+        "http://127.0.0.1:8000/api/env",
+        "http://localhost/admin",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.1/router",
+        "http://10.0.0.5:5432/",
+        "http://solin-prod-db:5432/",
+    ]:
+        with pytest.raises(ValueError):
+            validate_safe_public_url(bad_url)
+
+    # Sync Tombstones: deleted recipe never comes back from stale client
+    rstore = RecipeStore(path=str(tmp_path / "recipes.json"))
+    rstore.sync(custom_recipes=[{"id": "u-test1", "title": "Test 1"}], edits={"r1": {"title": "Edited R1"}})
+    assert len(rstore.list_recipes()) == 1
+
+    # Device A deletes u-test1 and resets r1 edit
+    rstore.delete_recipe("u-test1")
+    res = rstore.sync(
+        custom_recipes=[{"id": "u-test1", "title": "Test 1"}],  # Device B still had it in localStorage
+        edits={"r1": {"title": "Edited R1"}},
+        reset_edit_ids=["r1"],
+    )
+    assert res["custom_recipes"] == []
+    assert "u-test1" in res["deleted_ids"]
+    assert "r1" not in res["edits"]
+

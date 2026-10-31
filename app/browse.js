@@ -84,12 +84,20 @@ window.Browse = (function () {
     const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
     $("#recipe-count").textContent = recipes.length + (isEn ? " recipes" : " recept");
 
-    // tag bar ("Mind" / "All" = clear filter)
+    // tag bar ("Mind" / "All" = clear filter + smart macro/time filters)
     const tags = allTags();
     const allLabel = isEn ? "All" : "Mind";
-    $("#tagbar").innerHTML = (tags.length
-      ? `<button type="button" data-tag="" class="${state.filterTag ? "" : "active"}" aria-pressed="${!state.filterTag}">${allLabel}</button>`
-      : "") +
+    const smartFilters = [
+      { id: "__high_protein", label: isEn ? "💪 High protein (≥25g)" : "💪 Magas fehérje (≥25g)" },
+      { id: "__low_kcal", label: "🔥 < 500 kcal" },
+      { id: "__quick", label: isEn ? "⚡ ≤ 25 min" : "⚡ ≤ 25 perc" }
+    ];
+    $("#tagbar").innerHTML =
+      `<button type="button" data-tag="" class="${state.filterTag ? "" : "active"}" aria-pressed="${!state.filterTag}">${allLabel}</button>` +
+      smartFilters.map((sf) => {
+        const on = state.filterTag === sf.id;
+        return `<button type="button" data-tag="${esc(sf.id)}" class="${on ? "active" : ""}" aria-pressed="${on}">${esc(sf.label)}</button>`;
+      }).join("") +
       tags.map((t) => {
         const on = t === state.filterTag;
         return `<button type="button" data-tag="${esc(t)}" class="${on ? "active" : ""}" aria-pressed="${on}">#${esc(t)}</button>`;
@@ -100,7 +108,21 @@ window.Browse = (function () {
     state.query = q;
 
     let list = recipes.slice();
-    if (state.filterTag) list = list.filter((r) => (r.tags || []).includes(state.filterTag));
+    if (state.filterTag === "__high_protein") {
+      list = list.filter((r) => Number((r.macrosPerServing || {}).protein || 0) >= 25);
+    } else if (state.filterTag === "__low_kcal") {
+      list = list.filter((r) => {
+        const k = Number((r.macrosPerServing || {}).kcal || 0);
+        return k > 0 && k < 500;
+      });
+    } else if (state.filterTag === "__quick") {
+      list = list.filter((r) => {
+        const tm = Number(r.totalMin || 0);
+        return tm > 0 && tm <= 25;
+      });
+    } else if (state.filterTag) {
+      list = list.filter((r) => (r.tags || []).includes(state.filterTag));
+    }
     if (q) list = list.filter((r) => matches(r, q));
 
     $("#recipe-grid").innerHTML = list.map(cardHTML).join("");

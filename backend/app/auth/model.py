@@ -28,6 +28,7 @@ class UserProfile(BaseModel):
     macro_goals: MacroGoals = Field(default_factory=MacroGoals)
     auth_provider: str = "local"  # "local" | "google" | "both"
     role: str = "user"            # "owner" | "user"
+    status: str = "active"        # "active" | "pending" | "blocked"
     created_at: str
     updated_at: str
 
@@ -46,6 +47,7 @@ class RegisterRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=120)
     display_name: Optional[str] = Field(default=None, max_length=120)
     language: str = Field(default="hu")
+    invite_code: Optional[str] = Field(default=None, max_length=120)
 
     @field_validator("email")
     @classmethod
@@ -84,6 +86,7 @@ class GoogleAuthRequest(BaseModel):
     picture: Optional[str] = None
     google_id: Optional[str] = None
     language: Optional[str] = "hu"
+    invite_code: Optional[str] = Field(default=None, max_length=120)
 
 
 class ProfileUpdateRequest(BaseModel):
