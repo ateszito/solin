@@ -17,9 +17,9 @@ from .photo_extractor import get_ollama_host
 logger = logging.getLogger(__name__)
 
 
-def _extract_via_regex(title: str, creator: str, description: str) -> Dict[str, Any]:
-    """Fallback parser using regex heuristics on the video title & description."""
-    text = f"{title}\n\n{description}".strip()
+def _extract_via_regex(title: str, creator: str, description: str, transcript: str = "") -> Dict[str, Any]:
+    """Fallback parser using regex heuristics on the video title, description, and transcript."""
+    text = f"{title}\n\n{description}\n\n{transcript}".strip()
 
     # 1. Macros / Nutrition
     kcal_match = re.search(r"(\d+)\s*(?:kcal|kalória|calories?)\b", text, re.IGNORECASE)
@@ -106,6 +106,36 @@ def _extract_via_regex(title: str, creator: str, description: str) -> Dict[str, 
                 "t": 0,
             })
 
+    # If steps were not found in description, extract from transcript lines [X s] ...
+    if not steps and transcript:
+        for t_line in transcript.splitlines():
+            t_line = t_line.strip()
+            tm = re.match(r"^\[(\d+)s?\]\s*(.+)", t_line)
+            if tm:
+                t_sec = int(tm.group(1))
+                txt = tm.group(2).strip()
+                # filter out very short conversational intros
+                if len(txt) > 8 and not any(skip in txt.lower() for skip in ["sziasztok", "köszönöm", "vedd meg a"]):
+                    steps.append({
+                        "number": len(steps) + 1,
+                        "instruction": txt[0].upper() + txt[1:],
+                        "t": t_sec,
+                    })
+
+    # If ingredients were not in description, scan transcript for units
+    if not ingredients and transcript:
+        for t_line in transcript.splitlines():
+            q_match = ing_unit_pattern.search(t_line)
+            if q_match:
+                q_str = q_match.group(0).strip()
+                # strip timestamp
+                no_time = re.sub(r"^\[\d+s?\]\s*", "", t_line).strip()
+                ingredients.append({
+                    "name": no_time,
+                    "qty": q_str,
+                    "note": "",
+                })
+
     return {
         "title": clean_title,
         "description": description[:300].strip(),
@@ -121,17 +151,18 @@ def _extract_via_regex(title: str, creator: str, description: str) -> Dict[str, 
 
 
 def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str = "auto") -> Dict[str, Any]:
-    """Extract complete structured recipe from video information and caption/description."""
+    """Extract complete structured recipe from video information, caption, and spoken audio transcript."""
     title = str(video_info.get("title") or "").strip()
     creator = str(video_info.get("creator") or "").strip()
     description = str(video_info.get("description") or "").strip()
+    transcript = str(video_info.get("transcript") or "").strip()
     video_url = video_info.get("video_url") or ""
     thumbnail_url = video_info.get("thumbnail_url") or ""
 
     host = get_ollama_host()
     parsed = None
 
-    if host and (description or title):
+    if host and (description or title or transcript):
         try:
             import os
             model = os.environ.get("OLLAMA_MODEL") or "qwen3.5:9b"
@@ -140,33 +171,41 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
                 lang_instruction = "Translate recipe title, ingredients, and instructions into Hungarian.\n"
             elif target_lang == "en":
                 lang_instruction = "Ensure all extracted fields are in English.\n"
+            else:
+                lang_instruction = "Preserve the original language spoken in the video or written in the caption (e.g. Hungarian or English).\n"
 
             prompt = (
                 f"You are an expert culinary AI. A user downloaded a cooking video recipe.\n"
                 f"Video Title: {title}\n"
                 f"Creator: {creator}\n"
-                f"Caption / Description:\n{description}\n\n"
+                f"Post Caption / Description:\n{description or '(No caption provided)'}\n\n"
+                f"Spoken Video Audio Transcript (with timestamps):\n{transcript or '(No transcript available)'}\n\n"
                 f"{lang_instruction}"
+                "IMPORTANT INSTRUCTIONS FOR STEPS AND INGREDIENTS:\n"
+                "- If the post caption/description does not contain all steps or ingredients, extract them directly from what is said in the spoken video transcript.\n"
+                "- For each step, include timestamp 't' (in seconds, as float/int) indicating when that step begins in the video transcript (or 0 if unknown).\n"
+                "- Extract all ingredients with amounts and units mentioned.\n"
+                "- Extract macros per serving and total servings.\n\n"
                 "Extract every detail accurately into strict JSON format:\n"
                 "- title: Clean, attractive recipe title\n"
                 "- description: Summary or teaser (1-2 sentences)\n"
                 "- servings: Number of servings as integer (e.g. 1, 2, 4, default 1)\n"
                 "- total_time_min: Total time in minutes (number or null)\n"
-                "- cuisine: Cuisine style (e.g. 'american', 'italian', 'mexican')\n"
-                "- tags: Array of keyword tags (e.g. ['highprotein', 'pizza'])\n"
+                "- cuisine: Cuisine style (e.g. 'american', 'italian', 'hungarian')\n"
+                "- tags: Array of keyword tags (e.g. ['highprotein', 'pasta'])\n"
                 "- dietary_info: Array of dietary tags (e.g. ['high-protein', 'low-carb'])\n"
                 "- nutrition: Object with calories, protein, carbs, fat per serving (all numbers)\n"
                 "- ingredients: Array of objects with name, qty, note\n"
-                "- steps: Array of objects with number, instruction, t (video timestamp in seconds or 0)\n\n"
+                "- steps: Array of objects with number, instruction, t (video timestamp in seconds)\n\n"
                 "STRICT REQUIREMENT: Output ONLY the valid JSON object starting with { and ending with }. No code fences."
             )
 
             payload = json.dumps({
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
+                "stream": True,
                 "think": False,
-                "options": {"temperature": 0.1, "num_predict": 2500},
+                "options": {"temperature": 0.1, "num_predict": 2000},
             }).encode("utf-8")
 
             req = urllib.request.Request(
@@ -174,18 +213,31 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
                 data=payload,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                resp_data = json.loads(resp.read().decode("utf-8"))
-                content = resp_data.get("message", {}).get("content", "").strip()
-                m = re.search(r"\{.*\}", content, re.DOTALL)
-                if m:
-                    parsed = json.loads(m.group(0))
+            chunks: List[str] = []
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                for raw_line in resp:
+                    if not raw_line:
+                        continue
+                    try:
+                        line_obj = json.loads(raw_line.decode("utf-8"))
+                        chunk = line_obj.get("message", {}).get("content", "")
+                        if chunk:
+                            chunks.append(chunk)
+                        if line_obj.get("done"):
+                            break
+                    except Exception:
+                        continue
+
+            content = "".join(chunks).strip()
+            m = re.search(r"\{.*\}", content, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group(0))
         except Exception as e:
             logger.warning("Ollama text recipe extraction failed: %s — falling back to regex parser", e)
             parsed = None
 
     if not parsed:
-        parsed = _extract_via_regex(title, creator, description)
+        parsed = _extract_via_regex(title, creator, description, transcript=transcript)
 
     nutrition = parsed.get("nutrition") or {}
 
@@ -205,6 +257,7 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
         "video_url": video_url,
         "image": thumbnail_url or None,
         "images": images,
+        "transcript": transcript or None,
         "macrosPerServing": {
             "kcal": nutrition.get("calories"),
             "protein": nutrition.get("protein"),

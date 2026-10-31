@@ -155,6 +155,7 @@
       servings: Number(d.servings) > 0 ? Number(d.servings) : 1,
       totalMin: Number(d.total_time) > 0 ? Number(d.total_time) : null,
       macrosPerServing: (d.nutrition && typeof d.nutrition === "object") ? null : null,
+      transcript: String(d.transcript || ""),
       ingredients: e.ing, steps: e.steps,
     };
   }
@@ -210,6 +211,7 @@
     doc.creator = data.creator || doc.creator || "";
     doc.source = data.source || doc.source || "";
     doc.video = data.video || data.video_url || "";
+    doc.transcript = data.transcript || "";
     doc.macrosPerServing = data.macrosPerServing || {};
     doc.ingredients = (data.ingredients || []).map(function (i) {
       return {

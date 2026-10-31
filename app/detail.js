@@ -157,6 +157,19 @@ window.Detail = (function () {
     </div>`;
   }
 
+  function transcriptSection(r) {
+    if (!r.transcript || !r.transcript.trim()) return "";
+    return `<div class="detail-section" id="transcript-section">
+      <button type="button" class="sec-head" data-toggle="transcript" aria-expanded="false">
+        <span>📝 Videó leirat</span>
+      </button>
+      <div class="sec-body" id="transcript-body">
+        <p class="hint" style="margin-top:6px;margin-bottom:8px;">A videó elhangzott szövege és időzítései:</p>
+        <div style="font-size:13px;line-height:1.6;color:var(--text,#1e293b);background:var(--surface-sunken,#f8fafc);padding:10px 12px;border-radius:8px;white-space:pre-wrap;max-height:220px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);">${esc(r.transcript)}</div>
+      </div>
+    </div>`;
+  }
+
   function fmt(t) {
     if (t == null) return "";
     const m = Math.floor(t / 60), s = Math.round(t % 60);
@@ -259,6 +272,7 @@ window.Detail = (function () {
       ${ingredientSection(r)}
       ${stepsSection(r)}
       ${scaleSection(r)}
+      ${transcriptSection(r)}
       <!-- t_a411a23e (spec §11.5): pairing card (incl. #pg-result + portion
            selector) is the LAST block; instructions sit above it.
            Inner card order unchanged (t_d6c25424): actions→portions→result→rows. -->

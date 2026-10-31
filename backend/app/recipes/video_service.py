@@ -110,11 +110,16 @@ def save_uploaded_video(
 
     has_thumb = _generate_thumbnail(final_mp4_path, thumb_path)
 
+    # Extract audio transcript (whisper ASR fallback)
+    from .transcript_service import extract_video_transcript
+    transcript = extract_video_transcript(final_mp4_path, ytdlp_info=None)
+
     return {
         "video_url": f"/api/v1/media/videos/{final_mp4_name}",
         "filename": final_mp4_name,
         "thumbnail_url": f"/api/v1/media/videos/{thumb_name}" if has_thumb else None,
         "description": None,
+        "transcript": transcript or None,
         "size_bytes": os.path.getsize(final_mp4_path),
     }
 
@@ -144,6 +149,9 @@ def download_video_from_url(
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": ["all"],
         "merge_output_format": "mp4",
         "postprocessors": [{
             "key": "FFmpegVideoRemuxer",
@@ -168,6 +176,10 @@ def download_video_from_url(
             thumb_path = os.path.join(vdir, thumb_name)
             has_thumb = _generate_thumbnail(final_path, thumb_path)
 
+            # Extract subtitles or audio transcript
+            from .transcript_service import extract_video_transcript
+            transcript = extract_video_transcript(final_path, ytdlp_info=info)
+
             return {
                 "video_url": f"/api/v1/media/videos/{final_basename}",
                 "filename": final_basename,
@@ -176,6 +188,7 @@ def download_video_from_url(
                 "duration": info.get("duration"),
                 "creator": info.get("uploader") or info.get("channel"),
                 "description": (info.get("description") or info.get("title") or "").strip(),
+                "transcript": transcript or None,
                 "size_bytes": os.path.getsize(final_path) if os.path.exists(final_path) else None,
             }
     except Exception as e:
