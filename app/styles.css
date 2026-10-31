@@ -337,18 +337,33 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 
 .step-list { counter-reset: step; list-style: none; margin: 0; padding: 0; }
 .step-list li {
-  display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px dashed var(--line);
-  position: relative; cursor: pointer;
+  display: flex; gap: 10px; padding: 12px 0; border-bottom: 1px dashed var(--line);
+  position: relative; cursor: pointer; align-items: flex-start;
 }
 .step-list li:last-child { border-bottom: none; }
+.step-ck {
+  width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--primary);
+  flex: 0 0 auto; margin-top: 3px; display: grid; place-items: center;
+  color: #fff; font-size: 13px; font-weight: 800; background: #fff;
+}
+.step-list li.done .step-ck { background: var(--success); border-color: var(--success); }
+.step-list li.done .step-desc { text-decoration: line-through; color: var(--text-2); }
+.step-list li.done .step-no { background: #94a3b8; }
 .step-list li .step-no {
   counter-increment: step; flex: 0 0 auto; width: 26px; height: 26px;
   border-radius: 50%; background: var(--primary); color: #fff;
   display: grid; place-items: center; font-size: 13px; font-weight: 800;
 }
 .step-list li .step-no::before { content: counter(step); }
-.step-t { margin: 0 0 2px; }
+.step-t { margin: 0; flex: 1 1 auto; }
 .step-t .t { font-size: 12px; font-weight: 700; color: var(--text-2); }
+.step-desc { line-height: 1.5; color: var(--text); }
+.step-jump-btn {
+  flex: 0 0 auto; align-self: flex-start; margin-left: auto; font-size: 11.5px;
+  padding: 3px 8px; border-radius: 999px; background: var(--surface-sunken, #f1f5f9);
+  border: 1px solid var(--line); color: var(--text); cursor: pointer; white-space: nowrap;
+}
+.step-jump-btn:hover { background: #e2e8f0; }
 .step-list li.tip::after {
   content: "✦ tip"; position: absolute; right: 0; top: 13px;
   font-size: 11px; font-weight: 700; color: var(--warn);
@@ -356,6 +371,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .step-list li.active { background: #FFF7F0; margin: 0 -16px; padding: 12px 16px; border-radius: 10px; }
 
 .ing-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+.step-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+.step-progress .btn { flex: 0 0 auto; padding: 3px 8px; font-size: 12px; }
 .prog-bar { flex: 1; height: 6px; border-radius: 99px; background: #EEE; overflow: hidden; }
 .prog-bar i { display: block; height: 100%; background: var(--success); border-radius: 99px; transition: width .2s; }
 
