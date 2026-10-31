@@ -7,6 +7,7 @@
 window.Detail = (function () {
   const { $, $$, S, state, esc, openEdit, go, toast } = window.Solin;
   const checked = {};          // {recipeId: Set} — cache, backed by SolinStore
+  const stepChecked = {};      // {recipeId: Set} — completed steps cache
 
   function getChecked(id) {
     if (!checked[id]) checked[id] = new Set(S.getChecks(id));
@@ -14,6 +15,14 @@ window.Detail = (function () {
   }
   function persistChecked(id) {
     S.setChecks(id, Array.from(getChecked(id)));
+  }
+
+  function getStepChecked(id) {
+    if (!stepChecked[id]) stepChecked[id] = new Set((S.getStepChecks ? S.getStepChecks(id) : []).map(Number));
+    return stepChecked[id];
+  }
+  function persistStepChecked(id) {
+    if (S.setStepChecks) S.setStepChecks(id, Array.from(getStepChecked(id)));
   }
 
   /* ---- cooking mode: keep the screen awake while cooking ---- */
@@ -51,30 +60,48 @@ window.Detail = (function () {
     const baseMap = {};
     (r.ingredients || []).forEach((i) => { baseMap[i.name] = i; });
     const list = scaleRes ? scaleRes.items : (r.ingredients || []);
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const isOrigEn = (r.original_lang === "en") || (r.video && !r.title_hu && /^[a-zA-Z0-9\s,.'"-]+$/.test(r.title));
+
     return list.map((it) => {
       const seed = baseMap[it.name] || {};
       const on = set.has(it.name);
       const subs = S.subsFor(it.name);
-      const subLine = subs.length ? `<span class="ing-alt">↳ alternatíva: ${esc(subs.join(" · "))}</span>` : "";
+      const subLine = subs.length ? `<span class="ing-alt">↳ ${isEn ? "substitute: " : "alternatíva: "}${esc(subs.join(" · "))}</span>` : "";
       let qtyHtml, extraCls = "", badge = "";
       if (scaleRes) {
         if (it.manual) {
           qtyHtml = `<b class="ing-manual-base" title="Nem skálázható — az alap marad">${esc(seed.qty || it.baseQty || "")}</b>`;
-          badge = `<span class="scale-badge manual">manuális</span>`;
+          badge = `<span class="scale-badge manual">${isEn ? "manual" : "manuális"}</span>`;
         } else {
           const txt = Scaler.fmtAmount(it.amount, it.unit);
           qtyHtml = it.scaled ? `<b class="ing-scaled">${esc(txt)}</b>` : `<b>${esc(txt)}</b>`;
           if (it.scaled) extraCls = " scaled";
         }
         if (scaleRes.anchor && scaleRes.anchor.name === it.name) {
-          badge = `<span class="scale-badge anchor" title="Választott horgony — a megadott mennyiség">★ horgony</span>`;
+          badge = `<span class="scale-badge anchor" title="Választott horgony — a megadott mennyiség">★ ${isEn ? "anchor" : "horgony"}</span>`;
         }
       } else {
         qtyHtml = `<b>${esc(seed.qty || "")}</b>`;
       }
+
+      // Bilingual representation: show original vs translated if available
+      let displayName = it.name;
+      let origBadge = "";
+      if (isEn) {
+        if (seed.name_en) {
+          displayName = seed.name_en;
+          origBadge = `<span class="ing-orig-tag" title="Eredeti magyar név" style="font-size:11px; background:#f1f5f9; color:#475569; padding:1px 6px; border-radius:999px; margin-left:6px; font-weight:normal;">🇭🇺 ${esc(it.name)}</span>`;
+        }
+      } else {
+        if (isOrigEn && (seed.name_en || it.name_en) && (seed.name_en || it.name_en) !== it.name) {
+          origBadge = `<span class="ing-orig-tag" title="Eredeti angol megnevezés" style="font-size:11px; background:#f1f5f9; color:#475569; padding:1px 6px; border-radius:999px; margin-left:6px; font-weight:normal;">🇬🇧 ${esc(seed.name_en || it.name_en)}</span>`;
+        }
+      }
+
       return `<li class="${on ? "done" : ""}${extraCls}" data-idx="${esc(it.name)}" role="checkbox" tabindex="0" aria-checked="${on}">
             <span class="ing-ck">${on ? "✓" : ""}</span>
-            <span class="ing-text">${qtyHtml} ${esc(it.name)}${seed.note ? ` <span class="muted">(${esc(seed.note)})</span>` : ""}${badge}${subLine}</span>
+            <span class="ing-text">${qtyHtml} ${esc(displayName)}${origBadge}${seed.note ? ` <span class="muted">(${esc(seed.note)})</span>` : ""}${badge}${subLine}</span>
           </li>`;
     }).join("");
   }
@@ -124,15 +151,17 @@ window.Detail = (function () {
     const id = getChecked(r.id);
     const total = (r.ingredients || []).length;
     const done = (r.ingredients || []).filter((i) => id.has(i.name)).length;
+    const i18n = window.SolinI18n || { t: (k, fb) => fb };
+    const isEn = (i18n.getLang ? i18n.getLang() : "hu") === "en";
 
     return `<div class="detail-section">
       <button type="button" class="sec-head" data-toggle="ing" aria-expanded="true">
-        <span>🥕 Hozzávalók</span>
+        <span>${i18n.t("ingredients", "🥕 Hozzávalók")}</span>
         <span>${done}/${total}</span>
       </button>
       <div class="sec-body open">
-        <div class="ing-progress"><span>${done} / ${total} kijelölve</span><div class="prog-bar"><i style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div>
-          <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="ing-clear">Pipák törlése</button></div>
+        <div class="ing-progress"><span>${done} / ${total} ${isEn ? "selected" : "kijelölve"}</span><div class="prog-bar"><i style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div>
+          <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="ing-clear">${i18n.t("clear_checks", "Pipák törlése")}</button></div>
         <ul class="ing-list" id="ing-list">${rowsHTML(r, null)}</ul>
         <p class="hint" style="margin-top:10px" id="ing-hint">${hintHTML(null)}</p>
       </div>
@@ -140,31 +169,53 @@ window.Detail = (function () {
   }
 
   function stepsSection(r) {
+    const i18n = window.SolinI18n || { t: (k, fb) => fb };
+    const stepChecks = getStepChecked(r.id);
+    const total = (r.steps || []).length;
+    const done = (r.steps || []).filter((_, idx) => stepChecks.has(idx)).length;
+    const isEn = (i18n.getLang ? i18n.getLang() : "hu") === "en";
+
     const rows = (r.steps || [])
-      .map((s, i) => `<li data-step="${i}" data-t="${s.t || 0}" tabindex="0" role="button" aria-label="${i + 1}. lépés — ugrás a videóban ide: ${esc(fmt(s.t))}">
-        <span class="step-no"></span>
-        <div class="step-t"><span class="t">${fmt(s.t)}</span> ${esc(s.text)}</div>
-      </li>`)
+      .map((s, i) => {
+        const isDone = stepChecks.has(i);
+        const hasJump = !!(r.video && s.t != null);
+        return `<li data-step="${i}" data-t="${s.t || 0}" class="${isDone ? "done" : ""}" tabindex="0" role="button" aria-label="${i + 1}. ${isEn ? "step" : "lépés"}">
+          <span class="step-ck" aria-hidden="true">${isDone ? "✓" : ""}</span>
+          <span class="step-no"></span>
+          <div class="step-t">
+            <div class="step-desc">${esc(s.text)}</div>
+          </div>
+          ${hasJump ? `<button type="button" class="btn sm ghost step-jump-btn" data-jump-t="${s.t || 0}" title="${isEn ? "Jump in video" : "Ugrás a videóban ide"}: ${esc(fmt(s.t))}">🎬 ${fmt(s.t)}</button>` : ""}
+        </li>`;
+      })
       .join("");
+
     return `<div class="detail-section">
       <button type="button" class="sec-head" data-toggle="steps" aria-expanded="true">
-        <span>👨‍🍳 Elkészítés ${r.video ? "(videó-szinkron)" : ""}</span>
+        <span>👨‍🍳 ${i18n.t("steps", "Elkészítés")} ${r.video ? `(${i18n.t("video_sync", "videó-szinkron")})` : ""}</span>
+        <span id="step-head-count">${done}/${total}</span>
       </button>
       <div class="sec-body open">
-        <ol class="step-list" id="step-list">${rows || `<li class="hint">Még nincsenek lépések.</li>`}</ol>
-        ${r.video ? `<p class="hint" style="margin-top:10px">Lejátszás közben az aktuális lépés kiemelődik. Egy lépésre koppintva oda ugrik a videó.</p>` : ""}
+        <div class="step-progress">
+          <span id="step-prog-text">${done} / ${total} ${i18n.t("done", "kész")}</span>
+          <div class="prog-bar"><i id="step-bar" style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div>
+          <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="step-clear">${i18n.t("clear_checks", "Pipák törlése")}</button>
+        </div>
+        <ol class="step-list" id="step-list">${rows || `<li class="hint">${isEn ? "No steps yet." : "Még nincsenek lépések."}</li>`}</ol>
+        <p class="hint" style="margin-top:10px">${i18n.t("step_progress_hint", "A lépésre koppintva megjelölheted késznek. A videós gombbal odaugorhatsz a lépéshez.")}</p>
       </div>
     </div>`;
   }
 
   function transcriptSection(r) {
     if (!r.transcript || !r.transcript.trim()) return "";
+    const i18n = window.SolinI18n || { t: (k, fb) => fb };
     return `<div class="detail-section" id="transcript-section">
       <button type="button" class="sec-head" data-toggle="transcript" aria-expanded="false">
-        <span>📝 Videó leirat</span>
+        <span>${i18n.t("transcript", "📝 Videó leirat")}</span>
       </button>
       <div class="sec-body" id="transcript-body">
-        <p class="hint" style="margin-top:6px;margin-bottom:8px;">A videó elhangzott szövege és időzítései:</p>
+        <p class="hint" style="margin-top:6px;margin-bottom:8px;">${i18n.t("transcript_desc", "A videó elhangzott szövege és időzítései:")}</p>
         <div style="font-size:13px;line-height:1.6;color:var(--text,#1e293b);background:var(--surface-sunken,#f8fafc);padding:10px 12px;border-radius:8px;white-space:pre-wrap;max-height:220px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);">${esc(r.transcript)}</div>
       </div>
     </div>`;
@@ -251,13 +302,17 @@ window.Detail = (function () {
       </div>`;
     }
 
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const isOrigEn = (r.original_lang === "en") || (r.video && !r.title_hu && /^[a-zA-Z0-9\s,.'"-]+$/.test(r.title));
+    const origLangBadge = `<span class="pill" style="font-weight:600; font-size:11.5px; background:var(--surface-sunken,#f1f5f9); color:var(--text-2,#475569); border:1px solid var(--border,#e2e8f0);">${isOrigEn ? (isEn ? "🇬🇧 Original: English" : "🇬🇧 Eredeti nyelv: Angol") : (isEn ? "🇭🇺 Original: Hungarian" : "🇭🇺 Eredeti nyelv: Magyar")}</span>`;
+
     box.innerHTML = `
       <div class="detail-wrap${hasMedia ? "" : " no-media"}">
       ${mediaHtml}
       <div class="detail-main">
       <div class="detail-head">
         <h2 class="detail-title">${esc(r.title)}</h2>
-        <p class="detail-sub">${meta}${hasEdits ? ' <span class="pill pill-ok">✎ szerkesztve</span>' : ""}</p>
+        <p class="detail-sub">${meta} ${origLangBadge}${hasEdits ? ' <span class="pill pill-ok">✎ szerkesztve</span>' : ""}</p>
         ${(r.dietary || []).length ? `<p class="detail-sub">${r.dietary.map((d) => `<span class="hashtag">${esc(d)}</span>`).join("")}</p>` : ""}
         <div class="detail-actions">
           ${(r.steps || []).length ? `<button class="btn primary" id="cook-listen" aria-pressed="false">▶ Főzés indítása</button>` : ""}
@@ -709,30 +764,113 @@ window.Detail = (function () {
       }
     }
 
-    // step ↔ video sync (only when the recipe has a video)
-    if (!video) return;
-    const stepsEls = Array.from(box.querySelectorAll("#step-list li[data-t]"));
-    const sync = () => {
-      const t = video.currentTime;
-      let active = -1;
-      stepsEls.forEach((el, i) => {
-        const st = parseFloat(el.dataset.t || 0);
-        if (t >= st) active = i;
-      });
-      stepsEls.forEach((el, i) => el.classList.toggle("active", i === active));
+    // step interaction & completion check-off
+    const stepEls = Array.from(box.querySelectorAll("#step-list li[data-step]"));
+    const stepClearBtn = box.querySelector("#step-clear");
+
+    const recomputeStepProgress = () => {
+      const set = getStepChecked(r.id);
+      const total = (r.steps || []).length;
+      const done = (r.steps || []).filter((_, idx) => set.has(idx)).length;
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      const headCnt = box.querySelector("#step-head-count");
+      const progTxt = box.querySelector("#step-prog-text");
+      const bar = box.querySelector("#step-bar");
+      const i18n = window.SolinI18n || { t: (k, fb) => fb };
+      if (headCnt) headCnt.textContent = `${done}/${total}`;
+      if (progTxt) progTxt.textContent = `${done} / ${total} ${i18n.t("done", "kész")}`;
+      if (bar) bar.style.width = `${pct}%`;
+      if (stepClearBtn) stepClearBtn.classList.toggle("hidden", done === 0);
     };
-    video.addEventListener("timeupdate", sync);
-    video.addEventListener("play", sync);
-    stepsEls.forEach((el) => {
-      const seek = () => {
-        video.currentTime = parseFloat(el.dataset.t || 0);
-        video.play().catch(() => {});
+
+    if (stepClearBtn) {
+      stepClearBtn.addEventListener("click", () => {
+        const i18n = window.SolinI18n || { t: (k, fb) => fb };
+        const before = Array.from(getStepChecked(r.id));
+        getStepChecked(r.id).clear();
+        persistStepChecked(r.id);
+        stepEls.forEach((el) => {
+          el.classList.remove("done");
+          const ck = el.querySelector(".step-ck");
+          if (ck) ck.textContent = "";
+        });
+        recomputeStepProgress();
+        toast(i18n.t("checks_cleared", "Pipák törölve"), null, {
+          label: i18n.t("undo", "Visszavonás"),
+          onClick: () => {
+            before.forEach((idx) => getStepChecked(r.id).add(idx));
+            persistStepChecked(r.id);
+            stepEls.forEach((el, idx) => {
+              const on = getStepChecked(r.id).has(idx);
+              el.classList.toggle("done", on);
+              const ck = el.querySelector(".step-ck");
+              if (ck) ck.textContent = on ? "✓" : "";
+            });
+            recomputeStepProgress();
+          }
+        });
+      });
+    }
+
+    stepEls.forEach((el) => {
+      const idx = parseInt(el.dataset.step, 10);
+      const jumpBtn = el.querySelector(".step-jump-btn");
+      if (jumpBtn) {
+        jumpBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const t = parseFloat(jumpBtn.dataset.jumpT || el.dataset.t || 0);
+          if (video) {
+            showVideo();
+            video.currentTime = t;
+            video.play().catch(() => {});
+            const mediaBox = box.querySelector("#detail-media-video-box") || box.querySelector("#detail-media") || video;
+            if (mediaBox) {
+              mediaBox.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }
+        });
+      }
+
+      const toggleStep = () => {
+        const set = getStepChecked(r.id);
+        if (set.has(idx)) set.delete(idx); else set.add(idx);
+        persistStepChecked(r.id);
+        const isDone = set.has(idx);
+        el.classList.toggle("done", isDone);
+        const ck = el.querySelector(".step-ck");
+        if (ck) ck.textContent = isDone ? "✓" : "";
+        recomputeStepProgress();
       };
-      el.addEventListener("click", seek);
+
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".step-jump-btn")) return;
+        toggleStep();
+      });
+
       el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); seek(); }
+        if (e.key === "Enter" || e.key === " ") {
+          if (e.target.closest(".step-jump-btn")) return;
+          e.preventDefault();
+          toggleStep();
+        }
       });
     });
+
+    // video timeupdate sync (when video is present)
+    if (video) {
+      const sync = () => {
+        const t = video.currentTime;
+        let active = -1;
+        stepEls.forEach((el, i) => {
+          const st = parseFloat(el.dataset.t || 0);
+          if (t >= st) active = i;
+        });
+        stepEls.forEach((el, i) => el.classList.toggle("active", i === active));
+      };
+      video.addEventListener("timeupdate", sync);
+      video.addEventListener("play", sync);
+    }
   }
 
   return { render, leave };

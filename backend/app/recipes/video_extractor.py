@@ -13,6 +13,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from .photo_extractor import get_ollama_host
+from ..kamra.translator import translate_ingredient
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,7 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
         "image": thumbnail_url or None,
         "images": images,
         "transcript": transcript or None,
+        "original_lang": "en" if (target_lang == "en" or not bool(re.search(r"[áéíóöőúüűÁÉÍÓÖŐÚÜŰ]", video_info.get("title", "")))) else "hu",
         "macrosPerServing": {
             "kcal": nutrition.get("calories"),
             "protein": nutrition.get("protein"),
@@ -266,7 +268,8 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
         },
         "ingredients": [
             {
-                "name": str(i.get("name") or "").strip(),
+                "name": translate_ingredient(str(i.get("name") or "").strip())[0] if target_lang != "en" else str(i.get("name") or "").strip(),
+                "name_en": translate_ingredient(str(i.get("name") or "").strip())[1] or str(i.get("name") or "").strip(),
                 "qty": str(i.get("qty") or "").strip(),
                 "note": str(i.get("note") or "").strip(),
             }

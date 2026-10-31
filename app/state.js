@@ -11,6 +11,7 @@ window.SolinStore = (function () {
     have:       "solin.have.v1",      // [string] — "what I have at home"
     ui:         "solin.ui.v1",       // last active tab, filters
     checks:     "solin.checks.v1",   // { recipeId: [ingredient name, ...] } — checked-off ingredients
+    stepChecks: "solin.step_checks.v1", // { recipeId: [stepIndex, ...] } — completed steps
     meals:      "solin.foodcounter.meals.v1" // [{id, name, items, totals, total_cost, saved_at}] — saved macro-count sessions
   };
 
@@ -49,6 +50,7 @@ window.SolinStore = (function () {
       if (r.id !== id || !r._blank) return r;
       const o = Object.assign({}, r); delete o._blank; return o;
     }));
+    syncRecipesWithBackend();
   }
   // Drop abandoned drafts (e.g. the tab was closed mid-edit), except
   // the one currently open in the editor.
@@ -64,11 +66,13 @@ window.SolinStore = (function () {
     const edits = load(K.edits, {});
     edits[id] = Object.assign({}, edits[id] || {}, patch);
     save(K.edits, edits);
+    syncRecipesWithBackend();
   }
   function resetEdits(id) {
     const edits = load(K.edits, {});
     delete edits[id];
     save(K.edits, edits);
+    syncRecipesWithBackend();
   }
   function hasEdits(id) {
     const e = load(K.edits, {})[id];
@@ -82,6 +86,75 @@ window.SolinStore = (function () {
     save(CUSTOM_KEY, load(CUSTOM_KEY, []).filter((r) => r.id !== id));
     resetEdits(id);
     setChecks(id, []);
+    setStepChecks(id, []);
+    // Delete on backend
+    try {
+      const base = (window.SolinCfg && window.SolinCfg.apiBase && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+      const endpoint = (base ? base.replace(/\/+$/, "") : "") + "/api/v1/recipes/" + encodeURIComponent(id);
+      fetch(endpoint, { method: "DELETE" }).catch(() => {});
+    } catch (e) {}
+    syncRecipesWithBackend();
+  }
+
+  async function syncRecipesWithBackend() {
+    try {
+      const base = (window.SolinCfg && window.SolinCfg.apiBase && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+      const endpoint = (base ? base.replace(/\/+$/, "") : "") + "/api/v1/recipes/sync";
+      const localCustom = load(CUSTOM_KEY, []);
+      const localEdits = load(K.edits, {});
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          custom_recipes: localCustom,
+          edits: localEdits
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        let changed = false;
+        if (data && Array.isArray(data.custom_recipes)) {
+          const remoteMap = {};
+          data.custom_recipes.forEach((r) => { if (r && r.id) remoteMap[r.id] = r; });
+          const merged = [];
+          const seen = new Set();
+          localCustom.forEach((lr) => {
+            if (lr._blank) {
+              merged.push(lr);
+              seen.add(lr.id);
+            } else if (remoteMap[lr.id]) {
+              merged.push(Object.assign({}, lr, remoteMap[lr.id]));
+              seen.add(lr.id);
+            } else {
+              merged.push(lr);
+              seen.add(lr.id);
+            }
+          });
+          data.custom_recipes.forEach((rr) => {
+            if (rr && rr.id && !seen.has(rr.id)) {
+              merged.push(rr);
+              seen.add(rr.id);
+              changed = true;
+            }
+          });
+          if (JSON.stringify(merged) !== JSON.stringify(localCustom)) {
+            save(CUSTOM_KEY, merged);
+            changed = true;
+          }
+        }
+        if (data && data.edits && typeof data.edits === "object") {
+          const mergedEdits = Object.assign({}, data.edits, localEdits);
+          if (JSON.stringify(mergedEdits) !== JSON.stringify(localEdits)) {
+            save(K.edits, mergedEdits);
+            changed = true;
+          }
+        }
+        return changed;
+      }
+    } catch (e) {
+      console.warn("Recipes background sync failed:", e);
+    }
+    return false;
   }
 
   /* ---- inventory ---- */
@@ -169,6 +242,17 @@ window.SolinStore = (function () {
     save(K.checks, all);
   }
 
+  /* ---- step completion check-off ---- */
+  function getStepChecks(id) {
+    const all = load(K.stepChecks, {});
+    return Array.isArray(all[id]) ? all[id] : [];
+  }
+  function setStepChecks(id, indices) {
+    const all = load(K.stepChecks, {});
+    if (indices && indices.length) all[id] = indices; else delete all[id];
+    save(K.stepChecks, all);
+  }
+
   /* ---- what I have ---- */
   function getHave()  { return load(K.have, []); }
   function setHave(l) { save(K.have, l); }
@@ -206,9 +290,10 @@ window.SolinStore = (function () {
   return {
     K, load, save,
     getRecipes, getRecipe, saveEdit, resetEdits, hasEdits, editFields, deleteCustomRecipe,
-    finalizeCustomRecipe, purgeBlankRecipes,
+    finalizeCustomRecipe, purgeBlankRecipes, syncRecipesWithBackend,
     getInventory, setInventory, syncKamraFromApi, findByBase, subsFor,
     getChecks, setChecks,
+    getStepChecks, setStepChecks,
     getHave, setHave,
     getUI, setUI,
     getMeals, saveMeals,

@@ -34,15 +34,16 @@ window.Inventory = (function () {
   }
 
   function getCategoryLabel(cat) {
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
     switch (cat) {
-      case "meat": return "🥩 Hús";
-      case "dairy": return "🥛 Tejtermék";
-      case "produce": return "🧅 Zöldség/Gyümölcs";
-      case "grain": return "🌾 Gabona";
-      case "spice": return "🌿 Fűszer";
-      case "oil": return "🫒 Olaj";
-      case "pantry": return "🥫 Kamra";
-      default: return "📦 Egyéb";
+      case "meat": return isEn ? "🥩 Meat" : "🥩 Hús";
+      case "dairy": return isEn ? "🥛 Dairy" : "🥛 Tejtermék";
+      case "produce": return isEn ? "🧅 Produce" : "🧅 Zöldség/Gyümölcs";
+      case "grain": return isEn ? "🌾 Grain" : "🌾 Gabona";
+      case "spice": return isEn ? "🌿 Spice" : "🌿 Fűszer";
+      case "oil": return isEn ? "🫒 Oil" : "🫒 Olaj";
+      case "pantry": return isEn ? "🥫 Pantry" : "🥫 Kamra";
+      default: return isEn ? "📦 Other" : "📦 Egyéb";
     }
   }
 
@@ -50,8 +51,9 @@ window.Inventory = (function () {
     const sel = $("#sub-for");
     if (!sel) return;
     const inv = S.getInventory();
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
     sel.innerHTML = inv.map((i) =>
-      `<option value="${esc(i.id || i.name)}">${esc(i.name)}${i.name_en ? ` (${esc(i.name_en)})` : ""}</option>`
+      `<option value="${esc(i.id || i.name)}">${esc(isEn ? (i.name_en || i.name) : i.name)}${i.name_en && !isEn ? ` (${esc(i.name_en)})` : (isEn && i.name ? ` (${esc(i.name)})` : "")}</option>`
     ).join("");
   }
 
@@ -59,8 +61,9 @@ window.Inventory = (function () {
     const inv = S.getInventory();
     refreshSubSelect();
 
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
     const countEl = $("#inv-count");
-    if (countEl) countEl.textContent = inv.length + " alapanyag";
+    if (countEl) countEl.textContent = inv.length + (isEn ? " ingredients" : " alapanyag");
 
     let displayList = inv;
     if (_searchQuery.trim()) {
@@ -94,14 +97,19 @@ window.Inventory = (function () {
         </span>`;
       }).join(" ");
 
+      const primaryName = isEn ? (i.name_en || i.name) : i.name;
+      const secondaryPill = isEn
+        ? (i.name ? `<span class="pill" style="font-size:11.5px; background:#f1f5f9; color:#475569;">🇭🇺 ${esc(i.name)}</span>` : "")
+        : (i.name_en ? `<span class="pill" style="font-size:11.5px; background:#f1f5f9; color:#475569;">🇬🇧 ${esc(i.name_en)}</span>` : "");
+
       return `<li style="display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:12px 0; border-bottom:1px solid var(--line);">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-            <span class="inv-name" style="font-size:15px; font-weight:700;">${esc(i.name)}</span>
-            ${i.name_en ? `<span class="pill" style="font-size:11.5px; background:#f1f5f9; color:#475569;">🇬🇧 ${esc(i.name_en)}</span>` : ""}
+            <span class="inv-name" style="font-size:15px; font-weight:700;">${esc(primaryName)}</span>
+            ${secondaryPill}
             <span class="pill" style="font-size:11px; background:#f8fafc; color:#64748b; border:1px solid #e2e8f0;">${getCategoryLabel(i.category)}</span>
           </div>
-          <button class="rm" data-rm="${esc(i.id || i.name)}" aria-label="${esc(i.name)} törlése" title="Törlés" style="align-self:flex-start;">×</button>
+          <button class="rm" data-rm="${esc(i.id || i.name)}" aria-label="${esc(primaryName)} törlése" title="Törlés" style="align-self:flex-start;">×</button>
         </div>
 
         <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:12px;">

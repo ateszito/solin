@@ -213,9 +213,11 @@
     doc.video = data.video || data.video_url || "";
     doc.transcript = data.transcript || "";
     doc.macrosPerServing = data.macrosPerServing || {};
+    doc.original_lang = data.original_lang || (data.target_lang === "en" ? "en" : "hu");
     doc.ingredients = (data.ingredients || []).map(function (i) {
       return {
         name: i.name || "",
+        name_en: i.name_en || "",
         qty: i.qty || (i.amount ? (i.amount + " " + (i.unit || "")) : ""),
         note: i.note || ""
       };
