@@ -69,24 +69,34 @@ window.FcApi = (function () {
     return api("/" + encodeURIComponent(id));
   }
 
+  function invalidateCache() {
+    window.__FCPI_BY = {};
+  }
+
   /* ---- create / update (POST / PUT /api/v1/inventory[...]) ----
      `body` follows the §3.4 independent-partial-fields contract. */
   async function createProduct(body) {
-    return api("", {
+    const res = await api("", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    invalidateCache();
+    return res;
   }
   async function updateProduct(id, body) {
-    return api("/" + encodeURIComponent(id), {
+    const res = await api("/" + encodeURIComponent(id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    invalidateCache();
+    return res;
   }
   async function deleteProduct(id) {
-    return api("/" + encodeURIComponent(id), { method: "DELETE" });
+    const res = await api("/" + encodeURIComponent(id), { method: "DELETE" });
+    invalidateCache();
+    return res;
   }
 
   /* ---- image upload (POST /inventory/{id}/images/{slot}) ----
@@ -182,7 +192,7 @@ window.FcApi = (function () {
 
   return {
     api, base, apiBase,
-    listProducts, listCached,
+    listProducts, listCached, invalidateCache,
     getProduct, createProduct, updateProduct, deleteProduct,
     uploadImage, countMacros,
     imgSrc, fmt,

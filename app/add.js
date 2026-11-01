@@ -540,6 +540,9 @@
           console.error("Recipe video extraction error:", err);
           videoBtn.disabled = false;
           var msg = (err && err.message) || String(err);
+          if (msg.includes("Load failed") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+            msg = "A kapcsolat megszakadt vagy hitelesítési hiba történt. Kérlek ellenőrizd, hogy be vagy-e jelentkezve, majd próbáld újra!";
+          }
           if (videoStatus) {
             videoStatus.innerHTML = '<p class="hint" style="color:#ef4444;margin-top:8px;"><b>Hiba történt:</b> ' + esc(msg) + '</p>';
           }

@@ -430,6 +430,16 @@ SECURITY_HEADERS = {
 }
 
 
+def _cors_security_headers(request: Request) -> Dict[str, str]:
+    headers = dict(SECURITY_HEADERS)
+    origin = (request.headers.get("Origin") or "").strip()
+    headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+    headers["Access-Control-Allow-Credentials"] = "true"
+    headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Origin, CF-Access-Client-Id, CF-Access-Client-Secret"
+    return headers
+
+
 def register(app: FastAPI) -> None:
     """Register auth router and global API authentication gate middleware."""
     app.include_router(router)
@@ -448,7 +458,7 @@ def register(app: FastAPI) -> None:
                             "detail": "Bejelentkezés szükséges. Kérjük, jelentkezz be! / Authentication required.",
                             "code": "AUTH_REQUIRED",
                         },
-                        headers=SECURITY_HEADERS,
+                        headers=_cors_security_headers(request),
                     )
                 u_status = user.get("status", "active")
                 if u_status == "blocked":
@@ -458,7 +468,7 @@ def register(app: FastAPI) -> None:
                             "detail": "Ez a fiók le van tiltva. / This account has been blocked.",
                             "code": "ACCOUNT_BLOCKED",
                         },
-                        headers=SECURITY_HEADERS,
+                        headers=_cors_security_headers(request),
                     )
                 if u_status == "pending" and path not in ("/api/v1/auth/me", "/api/v1/auth/change-password"):
                     return JSONResponse(
@@ -467,7 +477,7 @@ def register(app: FastAPI) -> None:
                             "detail": "Fiókod a tulajdonos jóváhagyására vár. / Your account is pending owner approval.",
                             "code": "ACCOUNT_PENDING_APPROVAL",
                         },
-                        headers=SECURITY_HEADERS,
+                        headers=_cors_security_headers(request),
                     )
                 request.state.user = user
         response = await call_next(request)

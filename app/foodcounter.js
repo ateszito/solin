@@ -26,14 +26,13 @@ window.FoodCounter = (function () {
     const b = window.SolinCfg && window.SolinCfg.apiBase;
     return (typeof b === "function" ? b() : b) || "";
   }
-  const API = apiBase() + "/api/v1/inventory";
 
   // One fetch wrapper: parse JSON + normalize the C8 error shape
   // {code,message,fields?} so views always toast `message`.
   // Note: no trailing slash after the inventory root — FastAPI 307-redirects
   // `/inventory/` → `/inventory`, which drops custom headers on non-GET.
   async function api(path, options) {
-    const url = (API + (path || "")).replace(/\/+$/, "");
+    const url = (apiBase() + "/api/v1/inventory" + (path || "")).replace(/\/+$/, "");
     const res = await fetch(url, options);
     let body = null;
     try { body = await res.json(); } catch (e) { body = null; }
@@ -1299,6 +1298,8 @@ window.FoodCounter = (function () {
         await api(`/${encodeURIComponent(newId)}/images/${slot}`, { method: "POST", body: fd });
       }
       FC.stagedSlots = {};
+      if (window.FcApi && window.FcApi.invalidateCache) window.FcApi.invalidateCache();
+      if (window.Inventory && window.Inventory.loadStoreProducts) window.Inventory.loadStoreProducts();
 
       toast("Mentve: " + (body.name || doc.name));
       renderList();
