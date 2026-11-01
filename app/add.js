@@ -229,6 +229,21 @@
     doc.images = (data.images || []).map(function (im) {
       return typeof im === "string" ? im : (im.data_url || im.url);
     });
+    var existingRecipes = S.getRecipes ? S.getRecipes() : [];
+    var normTitle = S.norm ? S.norm(doc.title) : (doc.title || "").toLowerCase().trim();
+    var dup = existingRecipes.find(function (r) {
+      if (doc.source && r.source && r.source.trim() === doc.source.trim()) return true;
+      if (normTitle && normTitle.length > 3 && S.norm && S.norm(r.title) === normTitle) return true;
+      return false;
+    });
+    var missingQty = doc.ingredients.filter(function (i) { return i.name && !String(i.qty || "").trim(); }).map(function (i) { return i.name; });
+    doc._importMeta = {
+      ingCount: doc.ingredients.length,
+      stepCount: doc.steps.length,
+      missingQtyNames: missingQty,
+      dupId: dup ? dup.id : null,
+      dupTitle: dup ? dup.title : null
+    };
     doc._blank = true;
     memSave(doc);
     stopUiTimer();

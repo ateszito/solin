@@ -9,8 +9,11 @@ import uuid
 from typing import Dict, Optional, Any
 
 from ..inventory.media import media_root
+from ..auth.security import validate_safe_public_url
 
 logger = logging.getLogger("uvicorn.error")
+
+MAX_VIDEO_UPLOAD_BYTES = 150 * 1024 * 1024  # 150 MB
 
 
 def _get_videos_dir() -> str:
@@ -74,8 +77,11 @@ def save_uploaded_video(
     """Save an uploaded video file, converting to MP4 if needed, and generating a poster thumbnail."""
     if not file_bytes:
         raise ValueError("Empty video file.")
+    if len(file_bytes) > MAX_VIDEO_UPLOAD_BYTES:
+        raise ValueError("Video file exceeds maximum allowed size (150 MB).")
 
-    ext = os.path.splitext(original_filename)[1].lower() or ".mp4"
+    safe_orig = os.path.basename(original_filename or "video.mp4")
+    ext = os.path.splitext(safe_orig)[1].lower() or ".mp4"
     if ext not in [".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"]:
         raise ValueError(f"Unsupported video format: {ext}")
 
@@ -132,7 +138,7 @@ def download_video_from_url(
     if not url or not url.strip():
         raise ValueError("URL is required.")
 
-    clean_url = url.strip()
+    clean_url = validate_safe_public_url(url.strip())
     token = (recipe_id or uuid.uuid4().hex[:8]).replace("-", "_")
     unique_name = f"rec_{token}_{uuid.uuid4().hex[:6]}"
     vdir = _get_videos_dir()
@@ -149,6 +155,8 @@ def download_video_from_url(
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "max_filesize": MAX_VIDEO_UPLOAD_BYTES,
+        "socket_timeout": 25,
         "writesubtitles": True,
         "writeautomaticsub": True,
         "subtitleslangs": ["all"],

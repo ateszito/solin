@@ -62,7 +62,8 @@ RUN set -eu \
     && mkdir -p /usr/share/nginx/html/api \
     && printf '{"status":"ok","env":"%s","app_version":"%s"}\n' "${SOLIN_ENV}" "${APP_VERSION}" \
         > /usr/share/nginx/html/api/healthz.json \
-    && echo "baked _solin.env.js + /healthz + /api/healthz.json for env=${SOLIN_ENV}"
+    && sed -i "s/\.js\"/.js?v=${APP_VERSION}\"/g; s/\.css\"/.css?v=${APP_VERSION}\"/g" /usr/share/nginx/html/index.html \
+    && echo "baked _solin.env.js + /healthz + /api/healthz.json + asset cache-busting for env=${SOLIN_ENV}"
 
 # ---- nginx: SPA + /healthz (/api/healthz.json static) + per-tier /api/ ----
 # Static-first (D3): exact-match blocks for the two CI-smoke probes are
@@ -93,12 +94,8 @@ RUN if [ "${SOLIN_ENV}" = "staging" ]; then \
     API_UPSTREAM='solin-dev-api:8000'; \
   fi && \
   API_LOC="location /api/ { proxy_pass http://${API_UPSTREAM}; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_connect_timeout 30s; proxy_send_timeout 300s; proxy_read_timeout 300s; }" && \
-  if [ "${SOLIN_ENV}" = "development" ]; then \
-    CC='add_header Cache-Control "no-store" always;'; \
-  else \
-    CC=''; \
-  fi && \
-  printf 'server {\n  listen 80;\n  client_max_body_size 50M;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
+  CC='add_header Cache-Control "no-store" always; add_header X-Content-Type-Options "nosniff" always; add_header X-Frame-Options "SAMEORIGIN" always; add_header Referrer-Policy "strict-origin-when-cross-origin" always;' && \
+  printf 'server {\n  listen 80;\n  client_max_body_size 150M;\n  root /usr/share/nginx/html;\n  index index.html;\n  include /etc/nginx/mime.types;\n  %s\n  location = /healthz { default_type text/plain; try_files /healthz =404; }\n  location = /api/healthz.json { default_type application/json; alias /usr/share/nginx/html/api/healthz.json; }\n  %s\n  location / { try_files $uri $uri/ /index.html; }\n}\n' "$CC" "$API_LOC" \
     > /etc/nginx/conf.d/default.conf \
     && echo "nginx config for env=${SOLIN_ENV} (proxy upstream=${API_UPSTREAM}, cache=${CC})"
 

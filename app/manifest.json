@@ -1,0 +1,19 @@
+{
+  "name": "Solin — Privát Recepttár & Kamra",
+  "short_name": "Solin",
+  "description": "Mobile-first recipe vault with TikTok/Instagram video extraction, bilingual Kamra, and real product macros.",
+  "start_url": "/#browse",
+  "display": "standalone",
+  "background_color": "#121214",
+  "theme_color": "#10b981",
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
+    "params": {
+      "title": "share_title",
+      "text": "share_text",
+      "url": "share_url"
+    }
+  }
+}

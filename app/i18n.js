@@ -14,7 +14,7 @@ window.SolinI18n = (function () {
       recipes: "Receptek",
       what_to_cook: "Mit főzzek?",
       kamra: "Kamra",
-      foodcounter: "Product Inventory",
+      foodcounter: "Termékek & Árak",
       add_recipe: "+ Recept",
       search_placeholder: "Keresés: recept, hozzávaló, címke…",
       ingredients: "🥕 Hozzávalók",

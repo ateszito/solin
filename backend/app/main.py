@@ -23,6 +23,7 @@ from .ingestion.register import register_ingestion
 from .kamra.routes import register as register_kamra
 from .kamra.service import default_kamra_service
 from .recipes.storage import default_recipe_store
+from .auth.routes import register as register_auth
 
 # App configuration — version, env label, and docs all come from the
 # environment (APP_VERSION / SOLIN_ENV), never hard-coded.
@@ -87,6 +88,9 @@ def healthz() -> dict:
         "app_version": settings.app_version,
         "db_configured": bool(settings.database_url),
     }
+
+# ------ User Authentication & Profile System + API Auth Gate ----------------
+register_auth(app)
 
 # ------ Inventory module (contract use_cases.md §3) ------------------------
 # Router + the two error handlers (C8 shape) live on the app.
@@ -287,18 +291,25 @@ except Exception as _e:
 class RecipeSyncPayload(BaseModel):
     custom_recipes: Optional[List[Dict[str, Any]]] = None
     edits: Optional[Dict[str, Dict[str, Any]]] = None
+    deleted_ids: Optional[List[str]] = None
+    reset_edit_ids: Optional[List[str]] = None
 
 # ------ API Endpoints ------
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
-    return HealthResponse(status="ok", platform="Solin", version="0.1.0", environment="development")
+    return HealthResponse(
+        status="ok",
+        platform="Solin",
+        version=settings.app_version,
+        environment=settings.env if settings.env != "unknown" else "development",
+    )
 
 @app.get("/api/v1/recipes", response_model=List[RecipeSummary])
 def list_recipes(limit: int = 20, offset: int = 0, cuisine: Optional[str] = None):
     recipes = [r for r in _store.values() if r.status == "published"]
     if cuisine:
-        recipes = [r for r in recipes if recipe.cuisine and cuisine.lower() in recipe.cuisine.lower()]
+        recipes = [r for r in recipes if r.cuisine and cuisine.lower() in r.cuisine.lower()]
     results = [RecipeSummary(
         id=r.id, title=r.title, cuisine=r.cuisine,
         rating=r.rating,
@@ -309,7 +320,7 @@ def list_recipes(limit: int = 20, offset: int = 0, cuisine: Optional[str] = None
 
 @app.get("/api/v1/recipes/search", response_model=SearchResponse)
 def search_recipes(q: str, limit: int = 20, offset: int = 0):
-    results = []
+    scored = []
     for r in _store.values():
         score = 0
         if q.lower() in r.title.lower():
@@ -321,13 +332,14 @@ def search_recipes(q: str, limit: int = 20, offset: int = 0):
         if any(q.lower() in s.instruction.lower() for s in r.steps):
             score += 2
         if score > 0:
-            results.append(RecipeSummary(
+            scored.append((score, RecipeSummary(
                 id=r.id, title=r.title, cuisine=r.cuisine,
                 rating=r.rating,
                 calories_per_serving=r.nutrition.calories,
                 creator=r.creator,
-            ))
-    results.sort(key=lambda x: 0)
+            )))
+    scored.sort(key=lambda item: (item[0], item[1].rating or 0), reverse=True)
+    results = [item[1] for item in scored]
     return SearchResponse(query=q, results=results[offset:offset+limit], total_count=len(results), limit=limit, offset=offset)
 
 @app.get("/api/v1/recipes/trending", response_model=List[RecipeSummary])
@@ -425,6 +437,13 @@ class VideoExtractRequest(BaseModel):
     target_lang: Optional[str] = "auto"
 
 
+class RecipeTranslateRequest(BaseModel):
+    title: str = ""
+    description: str = ""
+    steps: List[str] = []
+    target_lang: str = "hu"
+
+
 @app.post("/api/v1/recipes/video/upload")
 async def upload_recipe_video_endpoint(
     file: UploadFile = File(...),
@@ -447,9 +466,13 @@ async def upload_recipe_video_endpoint(
 
 
 @app.post("/api/v1/recipes/video/download")
-def download_recipe_video_endpoint(payload: VideoDownloadRequest):
+def download_recipe_video_endpoint(payload: VideoDownloadRequest, request: Request):
     """Download video from Instagram, TikTok, or YouTube Shorts link."""
     from .recipes.video_service import download_video_from_url
+    from .auth.security import rate_limiter
+    client_ip = (request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For") or (request.client.host if request.client else "unknown")).split(",")[0].strip()
+    if not rate_limiter.allow(f"video:{client_ip}", max_requests=8, window_sec=60.0):
+        raise HTTPException(status_code=429, detail="Túl sok videóletöltési kérés. Kérjük, várj egy percet!")
     try:
         res = download_video_from_url(payload.url, recipe_id=payload.recipe_id)
         if payload.recipe_id and payload.recipe_id in _store:
@@ -464,10 +487,14 @@ def download_recipe_video_endpoint(payload: VideoDownloadRequest):
 
 
 @app.post("/api/v1/recipes/extract-video")
-def extract_recipe_from_video_endpoint(payload: VideoExtractRequest):
+def extract_recipe_from_video_endpoint(payload: VideoExtractRequest, request: Request):
     """Download video and extract complete recipe (title, macros, ingredients, steps)."""
     from .recipes.video_service import download_video_from_url
     from .recipes.video_extractor import extract_recipe_from_video_info
+    from .auth.security import rate_limiter
+    client_ip = (request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For") or (request.client.host if request.client else "unknown")).split(",")[0].strip()
+    if not rate_limiter.allow(f"video:{client_ip}", max_requests=8, window_sec=60.0):
+        raise HTTPException(status_code=429, detail="Túl sok videókinyerési kérés. Kérjük, várj egy percet!")
     try:
         video_info = download_video_from_url(payload.url)
         video_info["source"] = payload.url
@@ -482,21 +509,134 @@ def extract_recipe_from_video_endpoint(payload: VideoExtractRequest):
 
 @app.get("/api/v1/recipes/sync")
 def get_synced_recipes():
-    """Retrieve all persisted custom recipes and edits."""
+    """Retrieve all persisted custom recipes, edits, and deletion tombstones."""
     return default_recipe_store.sync()
 
 @app.post("/api/v1/recipes/sync")
 def sync_recipes_endpoint(payload: RecipeSyncPayload):
-    """Sync client recipes and edits with persistent backend store.
-
-    Accepts custom recipes (e.g. from local storage) and edits, saves any new
-    recipes, auto-registers their ingredients into Kamra with bilingual
-    translations, and returns the full combined set.
-    """
+    """Sync client recipes, edits, and tombstones with persistent backend store."""
     return default_recipe_store.sync(
         custom_recipes=payload.custom_recipes,
         edits=payload.edits,
+        deleted_ids=payload.deleted_ids,
+        reset_edit_ids=payload.reset_edit_ids,
     )
+
+@app.delete("/api/v1/recipes/edits/{recipe_id}", status_code=204)
+def delete_recipe_edits_endpoint(recipe_id: str):
+    """Delete persisted edits for a recipe ('Visszaállítás eredetire')."""
+    default_recipe_store.reset_edit(recipe_id)
+    return JSONResponse(status_code=204, content=None)
+
+
+_CULINARY_EN_TO_HU = [
+    ("preheat oven to", "Melegítsd elő a sütőt erre:"),
+    ("preheat the oven to", "Melegítsd elő a sütőt erre:"),
+    ("in a large bowl", "Egy nagy tálban"),
+    ("in a bowl", "Egy tálban"),
+    ("mix together", "keverd össze:"),
+    ("mix well", "alaposan keverd össze"),
+    ("whisk together", "habverővel keverd össze"),
+    ("stir in", "keverd hozzá:"),
+    ("add the", "add hozzá:"),
+    ("bake for", "süsd"),
+    ("cook for", "főzd / süsd"),
+    ("simmer for", "párold / főzd"),
+    ("minutes", "percig"),
+    ("minute", "percig"),
+    ("until golden brown", "amíg aranybarna nem lesz"),
+    ("until cooked through", "amíg teljesen átsül"),
+    ("season with salt and pepper", "sózd és borsozd ízlés szerint"),
+    ("serve warm", "melegen tálald"),
+    ("enjoy", "jó étvágyat"),
+]
+
+_CULINARY_HU_TO_EN = [
+    ("melegítsd elő a sütőt", "Preheat the oven"),
+    ("egy nagy tálban", "In a large bowl"),
+    ("egy tálban", "In a bowl"),
+    ("keverd össze", "mix together"),
+    ("add hozzá", "add"),
+    ("süsd", "bake/cook"),
+    ("főzd", "cook"),
+    ("percig", "minutes"),
+    ("aranybarnára", "until golden brown"),
+    ("sózd és borsozd", "season with salt and pepper"),
+    ("tálald", "serve"),
+]
+
+
+def _fallback_translate_text(text: str, target_lang: str) -> str:
+    if not text:
+        return ""
+    import re
+    out = text
+    pairs = _CULINARY_EN_TO_HU if target_lang == "hu" else _CULINARY_HU_TO_EN
+    for src, dst in pairs:
+        out = re.sub(re.escape(src), dst, out, flags=re.IGNORECASE)
+    return out
+
+
+@app.post("/api/v1/recipes/translate")
+def translate_recipe_endpoint(payload: RecipeTranslateRequest):
+    """Translate recipe title, description, and steps between Hungarian and English."""
+    import json
+    import re
+    import urllib.request
+    from .recipes.photo_extractor import _get_ollama_host, _is_ollama_reachable
+
+    target = "en" if (payload.target_lang or "").lower() == "en" else "hu"
+    target_name = "English" if target == "en" else "Hungarian"
+
+    host = _get_ollama_host()
+    if _is_ollama_reachable(host):
+        try:
+            prompt = (
+                f"Translate the following recipe title, description, and cooking steps into natural {target_name}.\n"
+                "Keep measurements and numbers accurate. Output ONLY valid JSON with keys: "
+                "\"title\", \"description\", \"steps\" (array of strings).\n\n"
+                + json.dumps({
+                    "title": payload.title,
+                    "description": payload.description,
+                    "steps": payload.steps,
+                }, ensure_ascii=False)
+            )
+            req_body = json.dumps({
+                "model": os.environ.get("OLLAMA_TEXT_MODEL", "qwen3-vl:8b"),
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "think": False,
+                "options": {"temperature": 0.1},
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{host}/api/chat",
+                data=req_body,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                raw = json.loads(resp.read().decode("utf-8"))
+                content = raw.get("message", {}).get("content", "")
+                m = re.search(r"\{.*\}", content, re.DOTALL)
+                if m:
+                    parsed = json.loads(m.group(0))
+                    if isinstance(parsed.get("steps"), list):
+                        return {
+                            "title": str(parsed.get("title") or payload.title),
+                            "description": str(parsed.get("description") or payload.description),
+                            "steps": [str(s) for s in parsed["steps"]],
+                            "target_lang": target,
+                            "provider": "ollama",
+                        }
+        except Exception:
+            pass
+
+    return {
+        "title": _fallback_translate_text(payload.title, target),
+        "description": _fallback_translate_text(payload.description, target),
+        "steps": [_fallback_translate_text(s, target) for s in (payload.steps or [])],
+        "target_lang": target,
+        "provider": "dictionary",
+    }
 
 @app.get("/api/v1/recipes/{recipe_id}", response_model=RecipeResponse)
 def get_recipe(recipe_id: str):

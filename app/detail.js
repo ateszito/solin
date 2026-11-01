@@ -28,6 +28,55 @@ window.Detail = (function () {
   /* ---- cooking mode: keep the screen awake while cooking ---- */
   let wakeLock = null;
   let cooking = false;
+  const activeTimers = {}; // { timerKey: { remSec, totalSec, intervalId } }
+
+  function clearAllStepTimers() {
+    Object.keys(activeTimers).forEach((k) => {
+      if (activeTimers[k] && activeTimers[k].intervalId) {
+        clearInterval(activeTimers[k].intervalId);
+      }
+      delete activeTimers[k];
+    });
+  }
+
+  function parseStepDurationSec(text) {
+    if (!text) return 0;
+    const s = String(text);
+    // Match e.g. "15-20 perc", "10 percig", "25 min", "1.5 óra", "45 másodperc"
+    const minMatch = s.match(/\b(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?\s*(?:perc(?:ig|et|re)?|min(?:ute|utes|s)?)\b/i);
+    if (minMatch) {
+      const m = parseInt(minMatch[2] || minMatch[1], 10);
+      if (m > 0 && m <= 360) return m * 60;
+    }
+    const hrMatch = s.match(/\b(\d{1,2})\s*(?:óra|órát|óráig|hour|hours|hr|hrs)\b/i);
+    if (hrMatch) {
+      const h = parseInt(hrMatch[1], 10);
+      if (h > 0 && h <= 24) return h * 3600;
+    }
+    return 0;
+  }
+
+  function fmtTimer(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.max(0, sec % 60);
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function metricHintForQty(qtyStr) {
+    if (!qtyStr) return "";
+    const s = String(qtyStr).trim().toLowerCase();
+    const m = s.match(/^(\d+(?:[.,]\d+)?)\s*(cups?|oz|ounces?|lbs?|pounds?|tbsp|tablespoons?|tsp|teaspoons?)\b/i);
+    if (!m) return "";
+    const val = parseFloat(m[1].replace(",", "."));
+    if (!val || isNaN(val)) return "";
+    const unit = m[2].toLowerCase();
+    if (unit.startsWith("cup")) return `≈ ${Math.round(val * 240)} ml`;
+    if (unit.startsWith("oz") || unit.startsWith("ounce")) return `≈ ${Math.round(val * 28.35)} g`;
+    if (unit.startsWith("lb") || unit.startsWith("pound")) return `≈ ${Math.round(val * 453.6)} g`;
+    if (unit.startsWith("tbsp") || unit.startsWith("tablespoon")) return `≈ ${Math.round(val * 15)} ml`;
+    if (unit.startsWith("tsp") || unit.startsWith("teaspoon")) return `≈ ${Math.round(val * 5)} ml`;
+    return "";
+  }
   async function acquireWakeLock() {
     try {
       if (navigator.wakeLock && document.visibilityState === "visible") {
@@ -45,6 +94,7 @@ window.Detail = (function () {
   function leave() {
     cooking = false;
     releaseWakeLock();
+    clearAllStepTimers();
     document.body.classList.remove("cooking");
   }
 
@@ -82,7 +132,8 @@ window.Detail = (function () {
           badge = `<span class="scale-badge anchor" title="Választott horgony — a megadott mennyiség">★ ${isEn ? "anchor" : "horgony"}</span>`;
         }
       } else {
-        qtyHtml = `<b>${esc(seed.qty || "")}</b>`;
+        const mHint = metricHintForQty(seed.qty || "");
+        qtyHtml = `<b>${esc(seed.qty || "")}</b>${mHint ? ` <span class="pill" style="font-size:10.5px;padding:1px 5px;">${esc(mHint)}</span>` : ""}`;
       }
 
       // Bilingual representation: show original vs translated if available
@@ -114,7 +165,8 @@ window.Detail = (function () {
 
   function macroCards(r) {
     const m = r.macrosPerServing || {};
-    if (m.kcal == null && m.protein == null && m.carbs == null && m.fat == null) return "";
+    const estHtml = autoStoreEstimateCard(r);
+    if (m.kcal == null && m.protein == null && m.carbs == null && m.fat == null) return estHtml;
     const items = [
       [m.kcal, "kcal / adag"],
       [m.protein, "g fehérje"],
@@ -123,7 +175,58 @@ window.Detail = (function () {
     ];
     return `<div class="macro-cards">${items
       .map(([v, l]) => `<div class="macro-card"><div class="num">${esc(v ?? "–")}</div><div class="lbl">${l}</div></div>`)
-      .join("")}</div>`;
+      .join("")}</div>${estHtml}`;
+  }
+
+  function autoStoreEstimateCard(r) {
+    const prodsMap = (window.Inventory && window.Inventory.getProductsMap) ? window.Inventory.getProductsMap() : {};
+    const Scaler = window.SolinScale;
+    const servings = Math.max(1, Number(r.servings || 1));
+    let matchedCount = 0;
+    let totalKcal = 0, totalProt = 0, totalCarb = 0, totalFat = 0, totalHuf = 0;
+
+    (r.ingredients || []).forEach((ing) => {
+      const invItem = S.findByBase ? S.findByBase(ing.name) : null;
+      if (!invItem || !Array.isArray(invItem.product_ids) || !invItem.product_ids.length) return;
+      const prod = prodsMap[invItem.product_ids[0]];
+      if (!prod) return;
+      matchedCount++;
+      const pq = Scaler && Scaler.parseQty ? Scaler.parseQty(ing.qty || "") : { amount: 100, unit: "g", scalable: false };
+      let gramsOrMl = 100;
+      if (pq && pq.amount > 0) {
+        if (pq.unit === "kg" || pq.unit === "l") gramsOrMl = pq.amount * 1000;
+        else if (pq.unit === "dkg") gramsOrMl = pq.amount * 10;
+        else if (pq.unit === "dl") gramsOrMl = pq.amount * 100;
+        else if (pq.unit === "g" || pq.unit === "ml") gramsOrMl = pq.amount;
+        else if (prod.serving_size) gramsOrMl = pq.amount * Number(prod.serving_size);
+      } else if (prod.serving_size) {
+        gramsOrMl = Number(prod.serving_size);
+      }
+      const factor100 = gramsOrMl / 100.0;
+      const mp100 = prod.macros_per_100 || {};
+      totalKcal += (Number(mp100.calories) || 0) * factor100;
+      totalProt += (Number(mp100.protein) || 0) * factor100;
+      totalCarb += (Number(mp100.carbs) || 0) * factor100;
+      totalFat  += (Number(mp100.fat) || 0) * factor100;
+
+      if (prod.prices && prod.prices[0] && prod.prices[0].currency === "HUF") {
+        const pkgQty = Number(prod.prices[0].quantity || prod.serving_size || 100) || 100;
+        totalHuf += (Number(prod.prices[0].amount) || 0) * (gramsOrMl / pkgQty);
+      }
+    });
+
+    if (matchedCount === 0) return "";
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const kcalPer = Math.round(totalKcal / servings);
+    const protPer = Math.round(totalProt / servings);
+    const hufPer = Math.round(totalHuf / servings);
+
+    return `<div class="pill" style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:8px 0 12px; padding:8px 12px; border-radius:12px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); font-size:12.5px;">
+      <span>🏷️ <b>${isEn ? "Real Store Estimate" : "Valós bolti kalkuláció"}</b> (${matchedCount} ${isEn ? "linked Kamra products" : "csatolt Kamra termék alapján"}):</span>
+      <span style="font-weight:700; color:#065f46;">
+        ${hufPer > 0 ? `≈ ${hufPer} Ft / ${isEn ? "serving" : "adag"} · ` : ""}≈ ${kcalPer} kcal · ${protPer}g ${isEn ? "protein" : "fehérje"}
+      </span>
+    </div>`;
   }
 
   function scaleSection(r) {
@@ -161,7 +264,9 @@ window.Detail = (function () {
       </button>
       <div class="sec-body open">
         <div class="ing-progress"><span>${done} / ${total} ${isEn ? "selected" : "kijelölve"}</span><div class="prog-bar"><i style="width:${total ? Math.round((done / total) * 100) : 0}%"></i></div>
-          <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="ing-clear">${i18n.t("clear_checks", "Pipák törlése")}</button></div>
+          <button type="button" class="btn sm ghost${done ? "" : " hidden"}" id="ing-clear">${i18n.t("clear_checks", "Pipák törlése")}</button>
+          <button type="button" class="btn sm ghost" id="ing-to-shop" title="${isEn ? "Add missing ingredients to Shopping List" : "Hiányzó hozzávalók hozzáadása a bevásárlólistához"}">🛒 ${isEn ? "To shopping list" : "Bevásárlólistára"}</button>
+        </div>
         <ul class="ing-list" id="ing-list">${rowsHTML(r, null)}</ul>
         <p class="hint" style="margin-top:10px" id="ing-hint">${hintHTML(null)}</p>
       </div>
@@ -179,12 +284,28 @@ window.Detail = (function () {
       .map((s, i) => {
         const isDone = stepChecks.has(i);
         const hasJump = !!(r.video && s.t != null);
+        const rawText = (r._showTranslated && Array.isArray(r.translated_steps) && r.translated_steps[i])
+          ? r.translated_steps[i]
+          : s.text;
+        const stepTextWithTemp = String(rawText || "").replace(/\b(\d{3})\s*°?\s*F\b/g, (m, fVal) => {
+          const cVal = Math.round(((parseInt(fVal, 10) - 32) * 5) / 9 / 5) * 5;
+          return `${m} (≈ ${cVal} °C)`;
+        });
+        const durSec = parseStepDurationSec(rawText);
+        const timerBtn = durSec > 0
+          ? `<button type="button" class="btn sm ghost step-timer-btn" data-step-timer="${i}" data-dur="${durSec}" title="${isEn ? "Start/pause countdown timer" : "Visszaszámláló indítása / megállítása"}">⏱ ${fmtTimer(durSec)}</button>`
+          : "";
+        const ttsBtn = (typeof window !== "undefined" && "speechSynthesis" in window)
+          ? `<button type="button" class="btn sm ghost step-tts-btn" data-step-tts="${i}" title="${isEn ? "Read step aloud" : "Lépés felolvasása"}">🔊</button>`
+          : "";
         return `<li data-step="${i}" data-t="${s.t || 0}" class="${isDone ? "done" : ""}" tabindex="0" role="button" aria-label="${i + 1}. ${isEn ? "step" : "lépés"}">
           <span class="step-ck" aria-hidden="true">${isDone ? "✓" : ""}</span>
           <span class="step-no"></span>
           <div class="step-t">
-            <div class="step-desc">${esc(s.text)}</div>
+            <div class="step-desc">${esc(stepTextWithTemp)}</div>
           </div>
+          ${ttsBtn}
+          ${timerBtn}
           ${hasJump ? `<button type="button" class="btn sm ghost step-jump-btn" data-jump-t="${s.t || 0}" title="${isEn ? "Jump in video" : "Ugrás a videóban ide"}: ${esc(fmt(s.t))}">🎬 ${fmt(s.t)}</button>` : ""}
         </li>`;
       })
@@ -217,6 +338,34 @@ window.Detail = (function () {
       <div class="sec-body" id="transcript-body">
         <p class="hint" style="margin-top:6px;margin-bottom:8px;">${i18n.t("transcript_desc", "A videó elhangzott szövege és időzítései:")}</p>
         <div style="font-size:13px;line-height:1.6;color:var(--text,#1e293b);background:var(--surface-sunken,#f8fafc);padding:10px 12px;border-radius:8px;white-space:pre-wrap;max-height:220px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);">${esc(r.transcript)}</div>
+      </div>
+    </div>`;
+  }
+
+  function cookLogSection(r) {
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const count = Number(r.cook_count || 0);
+    const lastCooked = r.last_cooked_at ? new Date(r.last_cooked_at).toLocaleDateString(isEn ? "en-US" : "hu-HU") : "";
+    const personalNotes = r.personal_notes || "";
+    return `<div class="detail-section" id="cooklog-section">
+      <button type="button" class="sec-head" data-toggle="cooklog" aria-expanded="false">
+        <span>📓 ${isEn ? "Cook Log & Personal Notes" : "Főzési napló & Saját jegyzetek"}</span>
+        <span class="pill" id="cooklog-badge">🍳 ${count}×</span>
+      </button>
+      <div class="sec-body" id="cooklog-body">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <span id="cooklog-summary" style="font-size:13.5px; font-weight:600;">
+            ${count > 0
+              ? (isEn ? `Cooked ${count}× ${lastCooked ? `(Last: ${lastCooked})` : ""}` : `Elkészítve ${count} alkalommal ${lastCooked ? `(Utoljára: ${lastCooked})` : ""}`)
+              : (isEn ? "Not logged yet — tap when you cook it!" : "Még nem naplóztad — jelöld meg, ha elkészítetted!")}
+          </span>
+          <button type="button" class="btn sm primary" id="cooklog-inc-btn">🍳 +1 ${isEn ? "Cooked it today!" : "Ma elkészítettem!"}</button>
+        </div>
+        <label for="cooklog-notes" class="hint" style="display:block; margin-bottom:4px;">${isEn ? "Personal tweaks & notes (e.g. 190°C, extra garlic):" : "Saját tapasztalatok, módosítások (pl. 190 °C-on 18 perc elég):"}</label>
+        <textarea id="cooklog-notes" rows="2" placeholder="${isEn ? "Write your personal kitchen notes here…" : "Írd ide a saját megjegyzéseidet ehhez a recepthez…"}" style="width:100%; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:13px;">${esc(personalNotes)}</textarea>
+        <div style="margin-top:8px; display:flex; justify-content:flex-end;">
+          <button type="button" class="btn sm ghost" id="cooklog-save-notes">${isEn ? "Save note" : "Jegyzet mentése"}</button>
+        </div>
       </div>
     </div>`;
   }
@@ -316,6 +465,8 @@ window.Detail = (function () {
         ${(r.dietary || []).length ? `<p class="detail-sub">${r.dietary.map((d) => `<span class="hashtag">${esc(d)}</span>`).join("")}</p>` : ""}
         <div class="detail-actions">
           ${(r.steps || []).length ? `<button class="btn primary" id="cook-listen" aria-pressed="false">▶ Főzés indítása</button>` : ""}
+          <button class="btn ghost" id="recipe-translate-btn" type="button">🌐 ${r._showTranslated ? (isEn ? "Show Original" : "Eredeti szöveg") : (isEn ? "Translate (HU/EN)" : "Fordítás (HU/EN)")}</button>
+          <button class="btn ghost" id="recipe-share-btn" type="button">📤 ${isEn ? "Share" : "Megosztás"}</button>
           ${window.SolinCfg && window.SolinCfg.flag("edit") ? `<button class="btn" id="edit-open">✎ Szerkesztés</button>` : ""}
           ${r.source ? `<a class="btn ghost" href="${esc(r.source)}" target="_blank" rel="noopener">Forrás ↗</a>` : ""}
           ${isCustom ? `<button class="btn ghost danger" id="recipe-delete">Törlés</button>` : ""}
@@ -328,6 +479,7 @@ window.Detail = (function () {
       ${stepsSection(r)}
       ${scaleSection(r)}
       ${transcriptSection(r)}
+      ${cookLogSection(r)}
       <!-- t_a411a23e (spec §11.5): pairing card (incl. #pg-result + portion
            selector) is the LAST block; instructions sit above it.
            Inner card order unchanged (t_d6c25424): actions→portions→result→rows. -->
@@ -345,6 +497,71 @@ window.Detail = (function () {
     // wire interactions
     const editBtn = $("#edit-open");
     if (editBtn) editBtn.addEventListener("click", () => openEdit(r.id));
+
+    const shareBtn = box.querySelector("#recipe-share-btn");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", async () => {
+        const shareText = `🍽️ ${r.title}\n` +
+          (r.creator ? `👤 ${r.creator}\n` : "") +
+          `🥕 Hozzávalók:\n` +
+          (r.ingredients || []).map((i) => `- ${i.qty ? i.qty + " " : ""}${i.name}`).join("\n") +
+          (r.source ? `\n🔗 Eredeti videó: ${r.source}` : "") +
+          `\n📱 Solin: ${location.href}`;
+        if (navigator.share) {
+          try {
+            await navigator.share({ title: r.title, text: shareText, url: location.href });
+            return;
+          } catch (e) {}
+        }
+        try {
+          await navigator.clipboard.writeText(shareText);
+          toast("Recept és link a vágólapra másolva 📋✓");
+        } catch (e) {
+          toast("Link: " + location.href);
+        }
+      });
+    }
+
+    const transBtn = box.querySelector("#recipe-translate-btn");
+    if (transBtn) {
+      transBtn.addEventListener("click", async () => {
+        if (Array.isArray(r.translated_steps) && r.translated_steps.length) {
+          S.saveEdit(r.id, { _showTranslated: !r._showTranslated });
+          render(r.id);
+          return;
+        }
+        transBtn.disabled = true;
+        transBtn.textContent = "🌐 Fordítás folyamatban…";
+        try {
+          const base = (window.SolinCfg && window.SolinCfg.apiBase && (typeof window.SolinCfg.apiBase === "function" ? window.SolinCfg.apiBase() : window.SolinCfg.apiBase)) || "";
+          const targetLang = isOrigEn ? "hu" : "en";
+          const resp = await fetch((base ? base.replace(/\/+$/, "") : "") + "/api/v1/recipes/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: r.title,
+              description: r.description || "",
+              steps: (r.steps || []).map((s) => s.text || ""),
+              target_lang: targetLang
+            })
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            S.saveEdit(r.id, {
+              translated_title: data.title || r.title,
+              translated_steps: data.steps || [],
+              _showTranslated: true
+            });
+            toast(targetLang === "hu" ? "Lépések lefordítva magyarra 🇭🇺✓" : "Steps translated to English 🇬🇧✓");
+            render(r.id);
+            return;
+          }
+        } catch (e) {}
+        transBtn.disabled = false;
+        transBtn.textContent = "🌐 Fordítás (HU/EN)";
+        toast("Nem sikerült a fordítás.");
+      });
+    }
 
     // Media switcher interactions (if recipe has both video and photo)
     const tabVideo = box.querySelector("#media-tab-video");
@@ -516,6 +733,53 @@ window.Detail = (function () {
         }
       });
     });
+
+    const ingToShopBtn = box.querySelector("#ing-to-shop");
+    if (ingToShopBtn && S.addShoppingItems) {
+      ingToShopBtn.addEventListener("click", () => {
+        const set = getChecked(r.id);
+        const unchecked = (r.ingredients || []).filter((i) => !set.has(i.name));
+        const toAdd = unchecked.length ? unchecked : (r.ingredients || []);
+        const added = S.addShoppingItems(toAdd, r.title);
+        toast(
+          added
+            ? `${added} hozzávaló felkerült az Okos Bevásárlólistára 🛒`
+            : "Minden hozzávaló megvan otthon vagy már a bevásárlólistán van ✓",
+          3500,
+          {
+            label: "Bevásárlólista →",
+            onClick: () => go("match")
+          }
+        );
+      });
+    }
+
+    // Cook log & personal notes handlers
+    const cookIncBtn = box.querySelector("#cooklog-inc-btn");
+    if (cookIncBtn) {
+      cookIncBtn.addEventListener("click", () => {
+        const nextCount = Number(r.cook_count || 0) + 1;
+        const nowIso = new Date().toISOString();
+        r.cook_count = nextCount;
+        r.last_cooked_at = nowIso;
+        S.saveEdit(r.id, { cook_count: nextCount, last_cooked_at: nowIso });
+        const badge = box.querySelector("#cooklog-badge");
+        if (badge) badge.textContent = `🍳 ${nextCount}×`;
+        const sum = box.querySelector("#cooklog-summary");
+        if (sum) sum.textContent = `Elkészítve ${nextCount} alkalommal (Utoljára: ma) 🎉`;
+        toast(`Szuper! Feljegyezve: ${nextCount}. elkészítés 🧑‍🍳`);
+      });
+    }
+    const saveNotesBtn = box.querySelector("#cooklog-save-notes");
+    if (saveNotesBtn) {
+      saveNotesBtn.addEventListener("click", () => {
+        const notesEl = box.querySelector("#cooklog-notes");
+        const val = notesEl ? notesEl.value.trim() : "";
+        r.personal_notes = val;
+        S.saveEdit(r.id, { personal_notes: val });
+        toast("Saját jegyzet mentve ✓");
+      });
+    }
 
     if (ingListEl) {
       ingListEl.addEventListener("click", (e) => {
@@ -843,14 +1107,65 @@ window.Detail = (function () {
         recomputeStepProgress();
       };
 
+      const timerBtn = el.querySelector(".step-timer-btn");
+      if (timerBtn) {
+        timerBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const tKey = `${r.id}:${idx}`;
+          const totalSec = parseInt(timerBtn.dataset.dur, 10) || 60;
+          if (activeTimers[tKey] && activeTimers[tKey].intervalId) {
+            clearInterval(activeTimers[tKey].intervalId);
+            activeTimers[tKey].intervalId = null;
+            timerBtn.textContent = `⏸ ${fmtTimer(activeTimers[tKey].remSec)}`;
+            return;
+          }
+          if (!activeTimers[tKey] || activeTimers[tKey].remSec <= 0) {
+            activeTimers[tKey] = { remSec: totalSec, totalSec, intervalId: null };
+          }
+          timerBtn.classList.add("primary");
+          timerBtn.classList.remove("ghost");
+          timerBtn.textContent = `⏳ ${fmtTimer(activeTimers[tKey].remSec)}`;
+          activeTimers[tKey].intervalId = setInterval(() => {
+            if (!activeTimers[tKey]) return;
+            activeTimers[tKey].remSec -= 1;
+            if (activeTimers[tKey].remSec <= 0) {
+              clearInterval(activeTimers[tKey].intervalId);
+              delete activeTimers[tKey];
+              timerBtn.classList.remove("primary");
+              timerBtn.classList.add("ghost");
+              timerBtn.textContent = `🔔 Kész! (${fmtTimer(totalSec)})`;
+              toast(`⏰ Lejárt az időzítő a(z) ${idx + 1}. lépésnél! 🔔`, 6000);
+            } else {
+              timerBtn.textContent = `⏳ ${fmtTimer(activeTimers[tKey].remSec)}`;
+            }
+          }, 1000);
+        });
+      }
+
+      const ttsBtn = el.querySelector(".step-tts-btn");
+      if (ttsBtn) {
+        ttsBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          if (!("speechSynthesis" in window)) return;
+          window.speechSynthesis.cancel();
+          const descEl = el.querySelector(".step-desc");
+          const utter = new SpeechSynthesisUtterance(descEl ? descEl.textContent : "");
+          utter.lang = isEn ? "en-US" : "hu-HU";
+          window.speechSynthesis.speak(utter);
+          toast(isEn ? `🔊 Reading step ${idx + 1}…` : `🔊 ${idx + 1}. lépés felolvasása…`);
+        });
+      }
+
       el.addEventListener("click", (e) => {
-        if (e.target.closest(".step-jump-btn")) return;
+        if (e.target.closest(".step-jump-btn") || e.target.closest(".step-timer-btn") || e.target.closest(".step-tts-btn")) return;
         toggleStep();
       });
 
       el.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
-          if (e.target.closest(".step-jump-btn")) return;
+          if (e.target.closest(".step-jump-btn") || e.target.closest(".step-timer-btn") || e.target.closest(".step-tts-btn")) return;
           e.preventDefault();
           toggleStep();
         }

@@ -65,7 +65,7 @@ window.Solin = (function () {
   // entered from a main tab, so the browser / Android back button returns
   // to where the user came from instead of leaving the app. Moves between
   // drill-down screens and between main tabs just replace the entry.
-  const isDrill = (h) => /^(recipe|edit)\/|^add$/.test(h || "");
+  const isDrill = (h) => /^(recipe|edit)\/|^add$|^profile$/.test(h || "");
   function setHash(h) {
     h = h || "browse";
     const want = "#" + h;
@@ -97,10 +97,12 @@ window.Solin = (function () {
     }
     state.view = view;
     state.tab = view === "edit" ? "recipe" : view;
-    ["browse", "add", "recipe", "edit", "inventory", "match", "foodcounter"].forEach((v) =>
-      $("#view-" + v).classList.add("hidden")
-    );
-    $("#view-" + view).classList.remove("hidden");
+    ["browse", "add", "recipe", "edit", "inventory", "match", "foodcounter", "profile"].forEach((v) => {
+      const el = $("#view-" + v);
+      if (el) el.classList.add("hidden");
+    });
+    const activeEl = $("#view-" + view);
+    if (activeEl) activeEl.classList.remove("hidden");
     // recipe/edit are children of "browse" — keep that tab highlighted
     const navKey = (view === "recipe" || view === "edit" || view === "add") ? "browse" : view;
     $$("#bottom-nav button").forEach((b) => {
@@ -115,7 +117,8 @@ window.Solin = (function () {
     if (view === "match")     Match.render();
     if (view === "add" && window.AddRecipe) AddRecipe.mount();
     if (view === "foodcounter" && window.FoodCounter) FoodCounter.render();
-    S.setUI({ tab: state.tab === "recipe" ? "browse" : state.tab });
+    if (view === "profile" && window.SolinAuth) window.SolinAuth.renderProfile();
+    S.setUI({ tab: (state.tab === "recipe" || state.tab === "profile") ? "browse" : state.tab });
     const restore = view === "browse" && (prev === "recipe" || prev === "edit") && state.browseScroll;
     window.scrollTo({ top: restore ? state.browseScroll : 0 });
   }
@@ -136,7 +139,7 @@ window.Solin = (function () {
     const h = location.hash.replace(/^#\/?/, "");
     if (/^recipe\/(.+)$/.test(h)) { state.activeRecipe = h.split("/")[1]; tab("recipe"); }
     else if (/^edit\/(.+)$/.test(h)) { state.activeRecipe = h.split("/")[1]; tab("edit"); }
-    else tab(["add", "inventory", "match", "foodcounter"].includes(h) ? h : "browse");
+    else tab(["add", "inventory", "match", "foodcounter", "profile"].includes(h) ? h : "browse");
   }
 
   function initNav() {
