@@ -221,6 +221,8 @@ class KamraService:
         for item in all_items:
             cur_hu = item.get("name", "")
             cur_en = item.get("name_en", "")
+            if item.get("bilingual_v") == 2 and cur_hu and cur_en and cur_hu.lower() != cur_en.lower():
+                continue
             hu_trans, en_trans, cat_trans = translate_ingredient(cur_hu, cur_en)
 
             changed = False
@@ -242,6 +244,10 @@ class KamraService:
                     syns.append(candidate.lower())
                     changed = True
             item["synonyms"] = syns
+
+            if item.get("bilingual_v") != 2:
+                item["bilingual_v"] = 2
+                changed = True
 
             if changed:
                 item["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()

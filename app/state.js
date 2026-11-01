@@ -15,7 +15,8 @@ window.SolinStore = (function () {
     meals:          "solin.foodcounter.meals.v1", // [{id, name, items, totals, total_cost, saved_at}]
     deletedRecipes: "solin.deleted_recipes.v1",   // [recipeId, ...] tombstones for cross-device delete sync
     resetEdits:     "solin.reset_edits.v1",       // [recipeId, ...] pending edit resets
-    shoppingList:   "solin.shopping_list.v1"      // [{id, name, qty, category, checked, recipe_title}]
+    shoppingList:   "solin.shopping_list.v1",     // [{id, name, qty, category, checked, recipe_title}]
+    mealPlan:       "solin.meal_plan.v1"          // { mon: [recipeId, ...], tue: [...], ... }
   };
 
   function load(key, fallback) {
@@ -387,6 +388,14 @@ window.SolinStore = (function () {
   function getMeals() { return load(K.meals, []); }
   function saveMeals(l) { save(K.meals, l); }
 
+  /* ---- weekly meal planner ---- */
+  function getMealPlan() {
+    return load(K.mealPlan, { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] });
+  }
+  function setMealPlan(plan) {
+    save(K.mealPlan, plan || { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] });
+  }
+
   // Hungarian-tolerant normalization for ingredient matching
   function norm(s) {
     return String(s || "")
@@ -420,6 +429,7 @@ window.SolinStore = (function () {
     getShoppingList, setShoppingList, addShoppingItems,
     getUI, setUI,
     getMeals, saveMeals,
+    getMealPlan, setMealPlan,
     norm, similar
   };
 })();

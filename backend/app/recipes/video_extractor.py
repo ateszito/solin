@@ -244,6 +244,23 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
 
     images = [thumbnail_url] if thumbnail_url else []
 
+    built_ingredients = []
+    for i in (parsed.get("ingredients") or []):
+        raw_ing_name = str(i.get("name") or "").strip()
+        if not raw_ing_name:
+            continue
+        hu_name, en_name, _ = translate_ingredient(raw_ing_name)
+        built_ingredients.append({
+            "name": hu_name if target_lang != "en" else raw_ing_name,
+            "name_en": en_name or raw_ing_name,
+            "qty": str(i.get("qty") or "").strip(),
+            "note": str(i.get("note") or "").strip(),
+        })
+
+    detected_orig_lang = str(parsed.get("original_lang") or "").strip().lower()
+    if detected_orig_lang not in ("hu", "en"):
+        detected_orig_lang = "en" if (target_lang == "en" or not bool(re.search(r"[áéíóöőúüűÁÉÍÓÖŐÚÜŰ]", video_info.get("title", "")))) else "hu"
+
     return {
         "title": str(parsed.get("title") or title or "Új recept videóból").strip(),
         "description": str(parsed.get("description") or description or "").strip(),
@@ -259,23 +276,14 @@ def extract_recipe_from_video_info(video_info: Dict[str, Any], target_lang: str 
         "image": thumbnail_url or None,
         "images": images,
         "transcript": transcript or None,
-        "original_lang": "en" if (target_lang == "en" or not bool(re.search(r"[áéíóöőúüűÁÉÍÓÖŐÚÜŰ]", video_info.get("title", "")))) else "hu",
+        "original_lang": detected_orig_lang,
         "macrosPerServing": {
             "kcal": nutrition.get("calories"),
             "protein": nutrition.get("protein"),
             "carbs": nutrition.get("carbs"),
             "fat": nutrition.get("fat"),
         },
-        "ingredients": [
-            {
-                "name": translate_ingredient(str(i.get("name") or "").strip())[0] if target_lang != "en" else str(i.get("name") or "").strip(),
-                "name_en": translate_ingredient(str(i.get("name") or "").strip())[1] or str(i.get("name") or "").strip(),
-                "qty": str(i.get("qty") or "").strip(),
-                "note": str(i.get("note") or "").strip(),
-            }
-            for i in (parsed.get("ingredients") or [])
-            if str(i.get("name") or "").strip()
-        ],
+        "ingredients": built_ingredients,
         "steps": [
             {
                 "t": float(s.get("t") or 0),

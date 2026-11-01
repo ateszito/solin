@@ -88,5 +88,10 @@
     });
   }
 
+  // Register Offline PWA Service Worker
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+
   console.log("Solin v3 ready —", S.S.getRecipes().length, "recipes loaded");
 })();

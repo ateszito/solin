@@ -353,13 +353,158 @@ window.Match = (function () {
     }
   }
 
+  function renderMealPlanner() {
+    const viewMatch = $("#view-match");
+    if (!viewMatch || !S.getMealPlan) return;
+    let mp = $("#meal-planner-panel");
+    if (!mp) {
+      mp = document.createElement("div");
+      mp.id = "meal-planner-panel";
+      mp.className = "card";
+      mp.style.marginTop = "18px";
+      viewMatch.appendChild(mp);
+    }
+    const isEn = (window.SolinI18n && window.SolinI18n.getLang ? window.SolinI18n.getLang() : "hu") === "en";
+    const plan = S.getMealPlan();
+    const recipes = S.getRecipes();
+    const user = (window.SolinAuth && window.SolinAuth.getUser && window.SolinAuth.getUser()) || null;
+    const goals = (user && user.macro_goals) || { kcal: 2000, protein: 140 };
+    const days = [
+      { key: "mon", label: isEn ? "Mon" : "Hétfő" },
+      { key: "tue", label: isEn ? "Tue" : "Kedd" },
+      { key: "wed", label: isEn ? "Wed" : "Szerda" },
+      { key: "thu", label: isEn ? "Thu" : "Csütörtök" },
+      { key: "fri", label: isEn ? "Fri" : "Péntek" },
+      { key: "sat", label: isEn ? "Sat" : "Szombat" },
+      { key: "sun", label: isEn ? "Sun" : "Vasárnap" }
+    ];
+
+    const recOptions = `<option value="">${isEn ? "+ Add recipe to day…" : "+ Recept hozzáadása a naphoz…"}</option>` +
+      recipes.map((r) => `<option value="${esc(r.id)}">${esc(r.title)}</option>`).join("");
+
+    let weekKcal = 0, weekProt = 0, plannedCount = 0;
+
+    const dayRows = days.map((d) => {
+      const ids = Array.isArray(plan[d.key]) ? plan[d.key] : [];
+      let dayKcal = 0, dayProt = 0;
+      const pills = ids.map((rid, idx) => {
+        const rec = S.getRecipe(rid);
+        if (!rec) return "";
+        const m = rec.macrosPerServing || {};
+        dayKcal += Number(m.kcal) || 0;
+        dayProt += Number(m.protein) || 0;
+        plannedCount++;
+        return `<span class="chip" style="font-size:12px;">
+          <a href="#recipe/${encodeURIComponent(rid)}" style="color:inherit;text-decoration:none;font-weight:600;">${esc(rec.title)}</a>
+          <button type="button" data-mp-rm="${esc(d.key)}:${idx}" aria-label="Törlés">×</button>
+        </span>`;
+      }).join("");
+      weekKcal += dayKcal;
+      weekProt += dayProt;
+
+      const macroBadge = (dayKcal > 0 || dayProt > 0)
+        ? `<span class="pill" style="font-size:11px; background:${dayProt >= (goals.protein || 140) * 0.6 ? "rgba(16,185,129,0.15);color:#065f46" : "var(--bg-soft)"};">${Math.round(dayKcal)} kcal · ${Math.round(dayProt)}g prot</span>`
+        : `<span class="muted" style="font-size:11.5px;">${isEn ? "No meals planned" : "Nincs tervezett étel"}</span>`;
+
+      return `
+        <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--line);">
+          <div style="min-width:95px; font-weight:700; font-size:13px;">${esc(d.label)}</div>
+          <div style="flex:1; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+            ${pills}
+            <select data-mp-add="${esc(d.key)}" style="padding:4px 8px; border-radius:6px; border:1px solid var(--line); font-size:12px; max-width:210px;">
+              ${recOptions}
+            </select>
+          </div>
+          <div>${macroBadge}</div>
+        </div>
+      `;
+    }).join("");
+
+    mp.innerHTML = `
+      <details ${plannedCount > 0 ? "open" : ""}>
+        <summary style="cursor:pointer; font-weight:700; font-size:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <span>📅 ${isEn ? "Weekly Meal Planner & Macro Tracker" : "Heti Étrend & Makró Tervező"} <span class="pill">${plannedCount}</span></span>
+          ${plannedCount > 0 ? `<span class="pill" style="font-size:12px;">∑ ${Math.round(weekKcal)} kcal · ${Math.round(weekProt)}g fehérje</span>` : ""}
+        </summary>
+        <div style="margin-top:12px;">
+          ${dayRows}
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-top:12px;">
+            <button type="button" id="mp-to-shop" class="btn sm primary" ${plannedCount === 0 ? "disabled" : ""}>
+              🛒 ${isEn ? "Add week's missing ingredients to Shopping List" : "Heti hiányzó hozzávalók a Bevásárlólistára"}
+            </button>
+            ${plannedCount > 0 ? `<button type="button" id="mp-clear" class="btn sm ghost">${isEn ? "Clear week" : "Heti terv ürítése"}</button>` : ""}
+          </div>
+        </div>
+      </details>
+    `;
+
+    mp.querySelectorAll("[data-mp-add]").forEach((sel) => {
+      sel.addEventListener("change", () => {
+        const day = sel.dataset.mpAdd;
+        const rid = sel.value;
+        if (!day || !rid) return;
+        const cur = S.getMealPlan();
+        cur[day] = (cur[day] || []).concat([rid]);
+        S.setMealPlan(cur);
+        renderMealPlanner();
+      });
+    });
+
+    mp.querySelectorAll("[data-mp-rm]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const parts = (btn.dataset.mpRm || "").split(":");
+        const day = parts[0], idx = Number(parts[1]);
+        const cur = S.getMealPlan();
+        if (Array.isArray(cur[day])) {
+          cur[day].splice(idx, 1);
+          S.setMealPlan(cur);
+          renderMealPlanner();
+        }
+      });
+    });
+
+    const shopBtn = mp.querySelector("#mp-to-shop");
+    if (shopBtn) {
+      shopBtn.addEventListener("click", () => {
+        const cur = S.getMealPlan();
+        const have = S.getHave();
+        let totalAdded = 0;
+        Object.values(cur).forEach((ids) => {
+          (ids || []).forEach((rid) => {
+            const rec = S.getRecipe(rid);
+            if (!rec) return;
+            const evalRes = evaluateRecipe(rec, have);
+            if (evalRes.missing && evalRes.missing.length) {
+              const itemsWithQty = evalRes.missing.map((ms) => {
+                const ingObj = (rec.ingredients || []).find((i) => i.name === ms.name);
+                return { name: ms.name, qty: ingObj ? (ingObj.qty || "") : "" };
+              });
+              totalAdded += S.addShoppingItems(itemsWithQty, rec.title);
+            }
+          });
+        });
+        renderShoppingList();
+        toast(totalAdded > 0 ? `${totalAdded} heti hiányzó alapanyag bekerült a bevásárlólistára 🛒` : "Minden heti hozzávaló megvan vagy már a listán szerepel ✓");
+      });
+    }
+
+    const clearMp = mp.querySelector("#mp-clear");
+    if (clearMp) {
+      clearMp.addEventListener("click", () => {
+        S.setMealPlan({ mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] });
+        renderMealPlanner();
+      });
+    }
+  }
+
   function render() {
     init();
     renderChipInput();
     renderPresets();
     liveRefresh();
     renderShoppingList();
+    renderMealPlanner();
   }
 
-  return { init, render, runMatch, addChip, renderShoppingList };
+  return { init, render, runMatch, addChip, renderShoppingList, renderMealPlanner };
 })();
