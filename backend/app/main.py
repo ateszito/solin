@@ -437,6 +437,13 @@ class VideoExtractRequest(BaseModel):
     target_lang: Optional[str] = "auto"
 
 
+class RecipeTranslateRequest(BaseModel):
+    title: str = ""
+    description: str = ""
+    steps: List[str] = []
+    target_lang: str = "hu"
+
+
 @app.post("/api/v1/recipes/video/upload")
 async def upload_recipe_video_endpoint(
     file: UploadFile = File(...),
@@ -520,6 +527,116 @@ def delete_recipe_edits_endpoint(recipe_id: str):
     """Delete persisted edits for a recipe ('Visszaállítás eredetire')."""
     default_recipe_store.reset_edit(recipe_id)
     return JSONResponse(status_code=204, content=None)
+
+
+_CULINARY_EN_TO_HU = [
+    ("preheat oven to", "Melegítsd elő a sütőt erre:"),
+    ("preheat the oven to", "Melegítsd elő a sütőt erre:"),
+    ("in a large bowl", "Egy nagy tálban"),
+    ("in a bowl", "Egy tálban"),
+    ("mix together", "keverd össze:"),
+    ("mix well", "alaposan keverd össze"),
+    ("whisk together", "habverővel keverd össze"),
+    ("stir in", "keverd hozzá:"),
+    ("add the", "add hozzá:"),
+    ("bake for", "süsd"),
+    ("cook for", "főzd / süsd"),
+    ("simmer for", "párold / főzd"),
+    ("minutes", "percig"),
+    ("minute", "percig"),
+    ("until golden brown", "amíg aranybarna nem lesz"),
+    ("until cooked through", "amíg teljesen átsül"),
+    ("season with salt and pepper", "sózd és borsozd ízlés szerint"),
+    ("serve warm", "melegen tálald"),
+    ("enjoy", "jó étvágyat"),
+]
+
+_CULINARY_HU_TO_EN = [
+    ("melegítsd elő a sütőt", "Preheat the oven"),
+    ("egy nagy tálban", "In a large bowl"),
+    ("egy tálban", "In a bowl"),
+    ("keverd össze", "mix together"),
+    ("add hozzá", "add"),
+    ("süsd", "bake/cook"),
+    ("főzd", "cook"),
+    ("percig", "minutes"),
+    ("aranybarnára", "until golden brown"),
+    ("sózd és borsozd", "season with salt and pepper"),
+    ("tálald", "serve"),
+]
+
+
+def _fallback_translate_text(text: str, target_lang: str) -> str:
+    if not text:
+        return ""
+    import re
+    out = text
+    pairs = _CULINARY_EN_TO_HU if target_lang == "hu" else _CULINARY_HU_TO_EN
+    for src, dst in pairs:
+        out = re.sub(re.escape(src), dst, out, flags=re.IGNORECASE)
+    return out
+
+
+@app.post("/api/v1/recipes/translate")
+def translate_recipe_endpoint(payload: RecipeTranslateRequest):
+    """Translate recipe title, description, and steps between Hungarian and English."""
+    import json
+    import re
+    import urllib.request
+    from .recipes.photo_extractor import _get_ollama_host, _is_ollama_reachable
+
+    target = "en" if (payload.target_lang or "").lower() == "en" else "hu"
+    target_name = "English" if target == "en" else "Hungarian"
+
+    host = _get_ollama_host()
+    if _is_ollama_reachable(host):
+        try:
+            prompt = (
+                f"Translate the following recipe title, description, and cooking steps into natural {target_name}.\n"
+                "Keep measurements and numbers accurate. Output ONLY valid JSON with keys: "
+                "\"title\", \"description\", \"steps\" (array of strings).\n\n"
+                + json.dumps({
+                    "title": payload.title,
+                    "description": payload.description,
+                    "steps": payload.steps,
+                }, ensure_ascii=False)
+            )
+            req_body = json.dumps({
+                "model": os.environ.get("OLLAMA_TEXT_MODEL", "qwen3-vl:8b"),
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "think": False,
+                "options": {"temperature": 0.1},
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{host}/api/chat",
+                data=req_body,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                raw = json.loads(resp.read().decode("utf-8"))
+                content = raw.get("message", {}).get("content", "")
+                m = re.search(r"\{.*\}", content, re.DOTALL)
+                if m:
+                    parsed = json.loads(m.group(0))
+                    if isinstance(parsed.get("steps"), list):
+                        return {
+                            "title": str(parsed.get("title") or payload.title),
+                            "description": str(parsed.get("description") or payload.description),
+                            "steps": [str(s) for s in parsed["steps"]],
+                            "target_lang": target,
+                            "provider": "ollama",
+                        }
+        except Exception:
+            pass
+
+    return {
+        "title": _fallback_translate_text(payload.title, target),
+        "description": _fallback_translate_text(payload.description, target),
+        "steps": [_fallback_translate_text(s, target) for s in (payload.steps or [])],
+        "target_lang": target,
+        "provider": "dictionary",
+    }
 
 @app.get("/api/v1/recipes/{recipe_id}", response_model=RecipeResponse)
 def get_recipe(recipe_id: str):

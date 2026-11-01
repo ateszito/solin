@@ -165,7 +165,29 @@ window.Edit = (function () {
       ? Object.assign({}, r, { ingredients: [{ name: "", qty: "" }], steps: [{ t: "", text: "" }] })
       : r;
 
+    const meta = r._importMeta || null;
+    let importBannerHtml = "";
+    if (meta) {
+      const dupHtml = meta.dupId
+        ? `<div style="margin-top:6px; padding:8px 10px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); border-radius:8px; color:#991b1b; font-size:12.5px;">
+            ⚠️ <b>Már létező recept gyanúja:</b> „${esc(meta.dupTitle || "")}” már szerepel a gyűjteményedben.
+            <a href="#recipe/${encodeURIComponent(meta.dupId)}" class="btn sm ghost" style="margin-left:6px; padding:2px 8px; font-size:11.5px;">Meglévő megnyitása →</a>
+           </div>`
+        : "";
+      const missQtyHtml = (meta.missingQtyNames && meta.missingQtyNames.length)
+        ? `<div style="margin-top:4px; font-size:12px; color:#92400e;">🔸 Mennyiség hiányzik (${meta.missingQtyNames.length}): <b>${esc(meta.missingQtyNames.slice(0, 5).join(", "))}</b> — kérlek ellenőrizd!</div>`
+        : `<div style="margin-top:4px; font-size:12px; color:#065f46;">✓ Minden hozzávalóhoz sikerült mennyiséget társítani.</div>`;
+      importBannerHtml = `
+        <div style="margin-bottom:14px; padding:10px 14px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.3); border-radius:10px;">
+          <div style="font-weight:700; font-size:13px; color:#065f46;">🤖 AI Kinyerés Összesítő: ${meta.ingCount || 0} hozzávaló · ${meta.stepCount || 0} lépés</div>
+          ${missQtyHtml}
+          ${dupHtml}
+        </div>
+      `;
+    }
+
     $("#edit-form").innerHTML = `
+      ${importBannerHtml}
       <div class="field"><label for="ed-title">Cím${isNew ? " *" : ""}</label><input id="ed-title" name="title" value="${esc(r.title)}" ${isNew ? 'placeholder="pl. Csirkés tészta" required' : ""}/></div>
       <div class="grid2">${row("Szerző", "creator", r.creator)}${row("Konyha", "cuisine", r.cuisine)}</div>
       <div class="grid3">

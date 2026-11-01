@@ -88,6 +88,7 @@ window.Browse = (function () {
     const tags = allTags();
     const allLabel = isEn ? "All" : "Mind";
     const smartFilters = [
+      { id: "__can_cook", label: isEn ? "🏠 Can cook now" : "🏠 Most megfőzhető" },
       { id: "__high_protein", label: isEn ? "💪 High protein (≥25g)" : "💪 Magas fehérje (≥25g)" },
       { id: "__low_kcal", label: "🔥 < 500 kcal" },
       { id: "__quick", label: isEn ? "⚡ ≤ 25 min" : "⚡ ≤ 25 perc" }
@@ -108,7 +109,19 @@ window.Browse = (function () {
     state.query = q;
 
     let list = recipes.slice();
-    if (state.filterTag === "__high_protein") {
+    if (state.filterTag === "__can_cook") {
+      const have = S.getHave ? S.getHave() : [];
+      list = list.filter((r) => {
+        const ings = r.ingredients || [];
+        if (!ings.length || !have.length) return false;
+        return ings.every((ing) => {
+          const name = ing.name || "";
+          if (have.some((h) => S.similar(h, name))) return true;
+          const subs = S.subsFor ? S.subsFor(name) : [];
+          return subs.some((s) => have.some((h) => S.similar(h, s)));
+        });
+      });
+    } else if (state.filterTag === "__high_protein") {
       list = list.filter((r) => Number((r.macrosPerServing || {}).protein || 0) >= 25);
     } else if (state.filterTag === "__low_kcal") {
       list = list.filter((r) => {
