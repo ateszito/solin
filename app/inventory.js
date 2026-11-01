@@ -20,7 +20,7 @@ window.Inventory = (function () {
 
   async function loadStoreProducts() {
     try {
-      const url = (apiBase() + "/api/v1/inventory?limit=100").replace(/\/+$/, "");
+      const url = (apiBase() + "/api/v1/inventory?limit=50").replace(/\/+$/, "");
       const res = await fetch(url);
       if (res.ok) {
         const body = await res.json();
@@ -429,5 +429,5 @@ window.Inventory = (function () {
     });
   }
 
-  return { init, render, onInventoryChanged, getProductsMap: () => _productsMap };
+  return { init, render, onInventoryChanged, loadStoreProducts, getProductsMap: () => _productsMap };
 })();

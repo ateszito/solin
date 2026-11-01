@@ -236,9 +236,12 @@ window.Pairing = (function () {
   }
 
   /* ---------- products cache (shared picker source) ---------- */
-  async function ensureProducts() {
-    if (PRODUCTS.length) return PRODUCTS;
-    PRODUCTS = await Fc.listCached("pairing");
+  async function ensureProducts(force) {
+    if (!force && PRODUCTS.length) return PRODUCTS;
+    const list = await Fc.listCached("pairing", !!force);
+    if (Array.isArray(list) && list.length) {
+      PRODUCTS = list;
+    }
     return PRODUCTS;
   }
 
@@ -250,22 +253,45 @@ window.Pairing = (function () {
       .replace(/\s+/g, " ").trim();
     const n = norm(ingName);
     if (!n) return null;
+
+    // If the ingredient is linked to a store product in Kamra, prefer that exact product!
+    const invItem = S && S.findByBase ? S.findByBase(ingName) : null;
+    if (invItem && Array.isArray(invItem.product_ids) && invItem.product_ids.length) {
+      const linked = products.find((p) => invItem.product_ids.includes(p.id));
+      if (linked) return linked;
+    }
+
+    // Build candidate names (original ingredient name + bilingual Kamra name_hu / name_en / synonyms)
+    const candidates = [n];
+    if (invItem) {
+      if (invItem.name) candidates.push(norm(invItem.name));
+      if (invItem.name_en) candidates.push(norm(invItem.name_en));
+      if (Array.isArray(invItem.synonyms)) {
+        invItem.synonyms.forEach((syn) => { if (syn) candidates.push(norm(syn)); });
+      }
+    }
+
     let best = null, bestScore = 0;
     for (const p of products) {
       const pn = norm(p.name), pb = norm(p.brand);
       let score = 0;
-      if (pn === n) score = 100;
-      else if (pn.includes(n) || n.includes(pn)) score = 60 + pn.length;
-      else {
-        const words = new Set(n.split(" "));
-        const pwords = (pn + " " + pb).split(" ");
-        let hit = 0;
-        pwords.forEach((w) => { if (words.has(w) && w.length > 2) hit++; });
-        if (hit) score = hit * 15;
+      for (const cand of candidates) {
+        if (!cand) continue;
+        let s = 0;
+        if (pn === cand) s = 100;
+        else if (pn.includes(cand) || cand.includes(pn)) s = 60 + Math.min(pn.length, cand.length);
+        else {
+          const words = new Set(cand.split(" "));
+          const pwords = (pn + " " + pb).split(" ");
+          let hit = 0;
+          pwords.forEach((w) => { if (words.has(w) && w.length > 2) hit++; });
+          if (hit) s = hit * 20;
+        }
+        if (s > score) score = s;
       }
       if (score > bestScore) { bestScore = score; best = p; }
     }
-    return bestScore >= 45 ? best : null; // weak guess → don't auto-pair
+    return bestScore >= 40 ? best : null; // weak guess → don't auto-pair
   }
 
   /* ---------- row state for the mounted recipe ---------- */
@@ -495,8 +521,8 @@ window.Pairing = (function () {
     wireCard();
     refreshBadge();
     renderPortions();
-    // ensure product cache so pickers are populated
-    ensureProducts().then(() => { renderRows(); wireCard(); }).catch(() => {});
+    // ensure product cache is refreshed so pickers always include newly added products
+    ensureProducts(true).then(() => { renderRows(); wireCard(); }).catch(() => {});
     // restored result? re-render it with the stored portion split (no fetch)
     if (LAST_RES) applyResult(LAST_RES);
 
@@ -645,7 +671,7 @@ window.Pairing = (function () {
     sec.dataset.wired = "1";
 
     sec.querySelector("#pg-autopair").addEventListener("click", async () => {
-      ensureProducts().then((list) => {
+      ensureProducts(true).then((list) => {
         let n = 0;
         (ROWS || []).forEach((row) => {
           if (row.product_id) return;
@@ -804,6 +830,7 @@ window.Pairing = (function () {
           toast("Mentve a termékek közé: " + c.name);
           window.FcApi.listProducts().then((list) => {
             PRODUCTS = list || PRODUCTS;     // FRESH listing (never the cached snapshot)
+            renderRows();
             refreshBadge();
             refreshPreview();                // totals refresh AFTER a save (Task 2)
           }, () => {});
